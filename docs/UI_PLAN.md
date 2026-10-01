@@ -1,6 +1,15 @@
 # UI redesign plan
 
-Status: Batch 1 implemented. Batches 2 and 3 are not.
+## Status
+
+Batches 1, 2, and 3 are implemented.
+
+Still needs a check on a real iPhone or iPad:
+
+- iPhone: home-indicator clearance under the sheet (`safe-area-inset-bottom` is 0 in headless Chrome), the `black-translucent` status bar, and the full-screen button staying hidden (`fullscreenEnabled` is false in Safari).
+- iPad: the 1024×1366 portrait shots are from touch emulation, not hardware.
+- Camera flights in `src/render` still run under reduced motion. Left as a follow-up.
+
 Base: `main` at `293e8f8` (after audit batch 5).
 Scope: `index.html`, `src/styles.css`, `src/main.ts`, `src/app/ViewerApp.ts`, `src/app/registerUpdate.ts`,
 new files under `src/ui/`, and one new Playwright spec. Nothing under `src/render`, `src/loaders`, `src/core`,
@@ -1081,12 +1090,12 @@ At desktop dark only, also capture `samples-menu` (menu open).
 
 | # | Task | Files and selectors | Done when |
 | --- | --- | --- | --- |
-| 3.1 | The More menu, and the phone top bar reduced to Open, Settings and More (section 4.13). `buildSamples` also fills `#more-samples`. | `index.html` (`#more-btn`, `#more-menu`), `src/app/ViewerApp.ts` (`buildSamples`, new action wiring), `src/styles.css` (`.menu-item-row`, `.show-phone`) | At 390 px the top-right island has exactly three 44 px buttons. Every action in More works. |
-| 3.2 | Bottom sheet, swipe to close, phone landscape drawer, iOS meta tags (section 4.13). | `src/styles.css` (`@media (max-width: 640px)` and the landscape query), `index.html` (`<head>` meta), `src/app/ViewerApp.ts` (swipe handler) | At 390x844 the sheet covers ≤70% of the height with a grip. Its last control clears the home-indicator safe area (check with Playwright `isMobile`). At 844x390 the panel is a right drawer. |
-| 3.3 | New shortcuts `O U I G T Esc` and the `dialog[open]` guard (section 5). | `src/app/ViewerApp.ts` (keydown handler, new `toggleHud`, `toggleGrid`) | Each key works, and none of them fire while typing in the URL input or while a dialog is open. In fly mode, `WASD`/`QE`/`Space` still move the camera. |
-| 3.4 | First-visit nav hint (section 4.15). | `index.html` (`#nav-hint`), `src/styles.css` (`.nav-hint`, `.hint-mouse`, `.hint-touch`), `src/app/ViewerApp.ts` | A fresh profile sees the hint after the first load. It disappears on the first canvas pointerdown and never shows again. Touch emulation shows the touch copy. |
-| 3.5 | Accessibility pass (section 6): aria-labels, canvas label, tab order, contrast spot-check with DevTools, reduced-motion check (`page.emulateMedia({ reducedMotion: 'reduce' })` → no panel, sheet, toast or menu animations). | All UI files | The section 6 checklist is ticked item by item in the PR description. |
-| 3.6 | Bundle budget check (section 7) and final full screenshot matrix. | none | The numbers are in the PR and within limits. |
+| [x] 3.1 | The More menu, and the phone top bar reduced to Open, Settings and More (section 4.13). `buildSamples` also fills `#more-samples`. | `index.html` (`#more-btn`, `#more-menu`), `src/app/ViewerApp.ts` (`buildSamples`, new action wiring), `src/styles.css` (`.menu-item-row`, `.show-phone`) | At 390 px the top-right island has exactly three 44 px buttons. Every action in More works. |
+| [x] 3.2 | Bottom sheet, swipe to close, phone landscape drawer, iOS meta tags (section 4.13). | `src/styles.css` (`@media (max-width: 640px)` and the landscape query), `index.html` (`<head>` meta), `src/app/ViewerApp.ts` (swipe handler) | At 390x844 the sheet covers ≤70% of the height with a grip. Its last control clears the home-indicator safe area (check with Playwright `isMobile`). At 844x390 the panel is a right drawer. |
+| [x] 3.3 | New shortcuts `O U I G T Esc` and the `dialog[open]` guard (section 5). | `src/app/ViewerApp.ts` (keydown handler, new `toggleHud`, `toggleGrid`) | Each key works, and none of them fire while typing in the URL input or while a dialog is open. In fly mode, `WASD`/`QE`/`Space` still move the camera. |
+| [x] 3.4 | First-visit nav hint (section 4.15). | `index.html` (`#nav-hint`), `src/styles.css` (`.nav-hint`, `.hint-mouse`, `.hint-touch`), `src/app/ViewerApp.ts` | A fresh profile sees the hint after the first load. It disappears on the first canvas pointerdown and never shows again. Touch emulation shows the touch copy. |
+| [x] 3.5 | Accessibility pass (section 6): aria-labels, canvas label, tab order, contrast spot-check with DevTools, reduced-motion check (`page.emulateMedia({ reducedMotion: 'reduce' })` → no panel, sheet, toast or menu animations). | All UI files | The section 6 checklist is ticked item by item in the PR description. |
+| [x] 3.6 | Bundle budget check (section 7) and final full screenshot matrix. | none | The numbers are in the PR and within limits. |
 
 **Batch 3 screenshots:** the full matrix from Appendix A, at both sizes and both themes:
 `loaded`, `panel`, `empty-error`, `url-dialog`, `help`, `loading`. At phone dark only, also capture `more-menu`.

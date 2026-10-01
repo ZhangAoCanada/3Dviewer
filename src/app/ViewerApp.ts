@@ -37,6 +37,8 @@ export class ViewerApp {
   private stageStarted = 0;
   private geoCopy = '';
   private hintHeld = false;
+  private hintCleanup: (() => void) | null = null;
+  private readonly menus: { button: HTMLButtonElement; menu: HTMLElement; close: () => void }[] = [];
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -124,6 +126,7 @@ export class ViewerApp {
     this.bindToast();
 
     this.buildSamples();
+    this.bindSheetSwipe();
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
     must('#focus-btn').addEventListener('click', () => this.focusCenter());
@@ -181,9 +184,8 @@ export class ViewerApp {
     });
 
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !document.querySelector('dialog[open]') && !must('#loading').hidden) {
-        event.preventDefault();
-        this.cancelLoad();
+      if (event.key === 'Escape') {
+        this.onEscape(event);
         return;
       }
       if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -192,11 +194,17 @@ export class ViewerApp {
         this.openHelp();
         return;
       }
-      if (event.code === 'KeyU') {
+      if (event.code === 'KeyO') {
+        must<HTMLInputElement>('#file-input').click();
+      } else if (event.code === 'KeyU') {
         this.openUrlDialog();
-        return;
-      }
-      if (event.code === 'KeyR') {
+      } else if (event.code === 'KeyI') {
+        this.toggleHud();
+      } else if (event.code === 'KeyG') {
+        this.toggleGrid();
+      } else if (event.code === 'KeyT') {
+        this.toggleTheme();
+      } else if (event.code === 'KeyR') {
         this.host.resetView();
       } else if (event.code === 'KeyF') {
         this.focusCenter();
@@ -320,6 +328,7 @@ export class ViewerApp {
     this.beginLoadingClock();
     this.setLoading(true, 'Building a synthetic drone slab', undefined, undefined, 'detect');
     must('#loading-file').textContent = 'Synthetic drone slab';
+    let loaded = false;
     try {
       const renderable = await createDemoSlab(count);
       this.host.clear();
@@ -327,11 +336,13 @@ export class ViewerApp {
       this.host.setFlip(false);
       this.syncUpLabel();
       this.renderSceneInfo();
+      loaded = true;
     } catch (error) {
       this.toast(explainLoadError(error), 'error');
       this.setEmpty(this.host.items.length === 0);
     } finally {
       this.setLoading(false);
+      if (loaded) this.maybeShowHint();
     }
   }
 
@@ -353,24 +364,10 @@ export class ViewerApp {
     const menu = must('#samples-menu');
     const button = must<HTMLButtonElement>('#samples-btn');
     const samplesRoot = must('#empty-samples');
+    const moreSamples = must('#more-samples');
     for (const sample of SAMPLES) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'menu-item';
-      item.setAttribute('role', 'menuitem');
-      const label = document.createElement('span');
-      label.textContent = sample.label;
-      item.append(label);
-      if (sample.note) {
-        const note = document.createElement('small');
-        note.textContent = sample.note;
-        item.append(note);
-      }
-      item.addEventListener('click', () => {
-        this.setQuery({ sample: sample.id });
-        void this.loadSample(sample);
-      });
-      menu.append(item);
+      menu.append(this.sampleItem(sample));
+      moreSamples.append(this.sampleItem(sample));
     }
     for (const sample of SAMPLES.slice(1)) {
       const chip = document.createElement('button');
@@ -383,7 +380,94 @@ export class ViewerApp {
       });
       samplesRoot.append(chip);
     }
-    bindMenu(button, menu);
+    this.trackMenu(button, menu);
+    const moreButton = must<HTMLButtonElement>('#more-btn');
+    const moreMenu = must('#more-menu');
+    moreMenu.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
+      if (action === 'url') this.openUrlDialog();
+      else if (action === 'theme') this.toggleTheme();
+      else if (action === 'help') this.openHelp();
+    });
+    this.trackMenu(moreButton, moreMenu);
+  }
+
+  private sampleItem(sample: SampleAsset): HTMLButtonElement {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'menu-item';
+    item.setAttribute('role', 'menuitem');
+    const label = document.createElement('span');
+    label.textContent = sample.label;
+    item.append(label);
+    if (sample.note) {
+      const note = document.createElement('small');
+      note.textContent = sample.note;
+      item.append(note);
+    }
+    item.addEventListener('click', () => {
+      this.setQuery({ sample: sample.id });
+      void this.loadSample(sample);
+    });
+    return item;
+  }
+
+  private trackMenu(button: HTMLButtonElement, menu: HTMLElement): void {
+    const handle = bindMenu(button, menu);
+    this.menus.push({ button, menu, close: () => handle.close() });
+  }
+
+  private bindSheetSwipe(): void {
+    const head = document.querySelector<HTMLElement>('.panel-head');
+    if (!head) return;
+    let startY = 0;
+    let tracking = false;
+    head.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      startY = event.clientY;
+      tracking = true;
+      if (event.target instanceof Element && event.target.closest('button')) return;
+      head.setPointerCapture(event.pointerId);
+    });
+    head.addEventListener('pointerup', (event) => {
+      if (!tracking) return;
+      tracking = false;
+      if (event.target instanceof Element && event.target.closest('button')) return;
+      if (event.clientY - startY > 64) this.togglePanel();
+    });
+  }
+
+  private onEscape(event: KeyboardEvent): void {
+    if (document.querySelector('dialog[open]')) return;
+    const openMenu = this.menus.find((entry) => !entry.menu.hidden);
+    if (openMenu) {
+      event.preventDefault();
+      openMenu.close();
+      openMenu.button.focus();
+      return;
+    }
+    if (!must('#loading').hidden) {
+      event.preventDefault();
+      this.cancelLoad();
+      return;
+    }
+    const panel = must('#panel');
+    if (panel.classList.contains('is-collapsed')) return;
+    const focusInside = panel.contains(document.activeElement);
+    if (!focusInside && !this.phoneSheet()) return;
+    event.preventDefault();
+    this.togglePanel();
+    must<HTMLButtonElement>('#panel-btn').focus();
+  }
+
+  private phoneSheet(): boolean {
+    const narrow = window.matchMedia('(max-width: 640px)').matches;
+    const landscapeDrawer = window.matchMedia(
+      '(max-width: 960px) and (max-height: 520px) and (pointer: coarse)',
+    ).matches;
+    return narrow && !landscapeDrawer;
   }
 
   private async boot(): Promise<void> {
@@ -444,6 +528,7 @@ export class ViewerApp {
     this.setEmpty(false);
     this.beginLoadingClock();
     this.setLoading(true, `Opening ${source.name}`, undefined, undefined, 'detect');
+    let loaded = false;
     try {
       const header = PROBE_EXTENSIONS.has(source.extension)
         ? await readProbe(source, 65536, abort.signal)
@@ -485,6 +570,7 @@ export class ViewerApp {
       this.setEmpty(false);
       const note = renderable.getStats().extra?.note;
       if (typeof note === 'string' && note.length > 0) this.toast(note, 'warn');
+      loaded = true;
     } catch (error) {
       if (generation !== this.generation) return;
       this.toast(explainLoadError(error), 'error');
@@ -492,7 +578,10 @@ export class ViewerApp {
     } finally {
       watchdog.clear();
       if (this.loadAbort === abort) this.loadAbort = null;
-      if (generation === this.generation) this.setLoading(false);
+      if (generation === this.generation) {
+        this.setLoading(false);
+        if (loaded) this.maybeShowHint();
+      }
     }
   }
 
@@ -524,6 +613,21 @@ export class ViewerApp {
   private syncThemeButton(): void {
     const light = document.documentElement.dataset.theme === 'light';
     must('#theme-btn').setAttribute('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
+    const label = document.querySelector('.theme-label');
+    if (label) label.textContent = light ? 'Dark theme' : 'Light theme';
+  }
+
+  private toggleHud(): void {
+    const on = must('#hud').hidden;
+    must('#hud').hidden = !on;
+    must<HTMLInputElement>('#hud-switch').checked = on;
+    writeStorage('3dviewer-hud', on ? 'on' : 'off');
+  }
+
+  private toggleGrid(): void {
+    this.settings.showGrid = !this.settings.showGrid;
+    must<HTMLInputElement>('#grid').checked = this.settings.showGrid;
+    this.host.applySettings(this.settings);
   }
 
   private togglePanel(): void {
@@ -606,8 +710,9 @@ export class ViewerApp {
     if (active) {
       if (!hint.hidden) this.hintHeld = true;
       hint.hidden = true;
-    } else if (this.hintHeld && must('#toast').hidden) {
+    } else if (this.hintHeld && must('#toast').hidden && !this.hintSeen()) {
       hint.hidden = false;
+      hint.classList.remove('is-leaving');
       this.hintHeld = false;
     } else {
       this.hintHeld = false;
@@ -730,6 +835,54 @@ export class ViewerApp {
     this.toastTimer = window.setTimeout(() => {
       must('#toast').hidden = true;
     }, ms);
+  }
+
+  private hintSeen(): boolean {
+    try {
+      return localStorage.getItem('3dviewer-hint') === 'seen';
+    } catch {
+      return false;
+    }
+  }
+
+  private maybeShowHint(): void {
+    if (this.hintCleanup || this.hintSeen()) return;
+    const hint = must('#nav-hint');
+    if (must('#toast').hidden) {
+      hint.classList.remove('is-leaving');
+      hint.hidden = false;
+    }
+    const view = must('#view');
+    const dismiss = () => this.dismissNavHint();
+    view.addEventListener('pointerdown', dismiss);
+    view.addEventListener('wheel', dismiss);
+    const timer = window.setTimeout(dismiss, 8000);
+    this.hintCleanup = () => {
+      view.removeEventListener('pointerdown', dismiss);
+      view.removeEventListener('wheel', dismiss);
+      window.clearTimeout(timer);
+      this.hintCleanup = null;
+    };
+  }
+
+  private dismissNavHint(): void {
+    const hint = must('#nav-hint');
+    if (!this.hintCleanup && (hint.hidden || this.hintSeen())) return;
+    this.hintCleanup?.();
+    writeStorage('3dviewer-hint', 'seen');
+    if (hint.hidden) return;
+    hint.classList.add('is-leaving');
+    const hide = () => {
+      hint.hidden = true;
+      hint.classList.remove('is-leaving');
+    };
+    const done = (event: TransitionEvent) => {
+      if (event.propertyName !== 'opacity') return;
+      hint.removeEventListener('transitionend', done);
+      hide();
+    };
+    hint.addEventListener('transitionend', done);
+    window.setTimeout(hide, 400);
   }
 
   private toast(message: string, kind: 'error' | 'warn' | 'info' = 'error'): void {

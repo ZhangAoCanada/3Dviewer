@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#0c0f14" />
     <meta
       name="description"
@@ -57,14 +59,6 @@
 <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></symbol>
     </svg>
     <div id="app">
-      <div id="viewport">
-        <canvas id="view" tabindex="0" aria-label="3D viewport"></canvas>
-        <p id="nav-hint" class="nav-hint">
-          <span class="hint-mouse">Drag orbit · Right-drag pan · Scroll zooms to cursor · Double-click flies in</span>
-          <span class="hint-touch">Drag to orbit · Two-finger drag to pan · Pinch to zoom · Double-tap to focus</span>
-        </p>
-      </div>
-
       <header class="topbar">
         <div class="brand island">
           <span class="mark" aria-hidden="true"></span>
@@ -80,7 +74,7 @@
           </div>
         </div>
         <div class="top-actions island">
-          <button id="open-btn" class="btn btn-primary" type="button" title="Open file (O)">
+          <button id="open-btn" class="btn btn-primary" type="button" aria-label="Open file" title="Open file (O)">
             <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg><span class="btn-label">Open</span>
           </button>
           <input id="file-input" type="file" hidden accept=".ply,.splat,.spz,.ksplat,.sog,.rad,.glb,.gltf,.obj,.zip" />
@@ -88,7 +82,7 @@
             <svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>
           </button>
           <div class="menu hide-phone">
-            <button id="samples-btn" class="btn btn-ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="samples-menu">
+            <button id="samples-btn" class="btn btn-ghost" type="button" aria-label="Samples" title="Samples" aria-haspopup="menu" aria-expanded="false" aria-controls="samples-menu">
               <svg class="icon" aria-hidden="true"><use href="#i-shapes"/></svg><span class="btn-label">Samples</span>
               <svg class="icon icon-sm btn-label" aria-hidden="true"><use href="#i-chevron-down"/></svg>
             </button>
@@ -105,9 +99,44 @@
           <button id="panel-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Settings" title="Settings (H)" aria-expanded="false" aria-controls="panel">
             <svg class="icon" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>
           </button>
-          <!-- batch 3: #more-btn + #more-menu -->
+          <div class="menu show-phone">
+            <button id="more-btn" class="btn btn-ghost btn-icon" type="button" aria-label="More" title="More" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu"><svg class="icon" aria-hidden="true"><use href="#i-ellipsis"/></svg></button>
+            <div id="more-menu" class="menu-pop" role="menu" aria-label="More" hidden>
+              <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="url"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>Open from URL</button>
+              <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="theme"><svg class="icon only-dark" aria-hidden="true"><use href="#i-sun"/></svg><svg class="icon only-light" aria-hidden="true"><use href="#i-moon"/></svg><span class="theme-label">Light theme</span></button>
+              <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="help"><svg class="icon" aria-hidden="true"><use href="#i-circle-help"/></svg>Controls</button>
+              <div class="menu-heading" role="presentation">Samples</div>
+              <div id="more-samples" role="none"></div>
+            </div>
+          </div>
         </div>
       </header>
+
+      <section id="hud" class="hud island" aria-label="Performance stats">
+        <button id="hud-toggle" class="hud-summary" type="button" aria-expanded="false" aria-controls="hud-detail" title="Stats (I)">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-activity"/></svg>
+          <span><strong id="hud-fps">—</strong> <span class="hud-unit">fps</span></span>
+          <span class="hud-dot" aria-hidden="true">·</span>
+          <span id="hud-summary-count">—</span>
+          <span class="hud-dot" aria-hidden="true">·</span>
+          <span id="hud-summary-gpu">—</span>
+        </button>
+        <dl id="hud-detail" class="hud-detail" hidden>
+          <div><dt>Frame</dt><dd id="hud-ms">—</dd></div>
+          <div data-hud-row="splats"><dt>Splats</dt><dd id="hud-splats">—</dd></div>
+          <div data-hud-row="points"><dt>Points</dt><dd id="hud-points">—</dd></div>
+          <div data-hud-row="tris"><dt>Triangles</dt><dd id="hud-tris">—</dd></div>
+          <div><dt>GPU est.</dt><dd id="hud-gpu">—</dd></div>
+        </dl>
+      </section>
+
+      <div id="viewport">
+        <canvas id="view" tabindex="0" aria-label="3D viewport. Press question mark for controls."></canvas>
+        <p id="nav-hint" class="nav-hint" hidden>
+          <span class="hint-mouse">Drag to orbit · Right-drag to pan · Scroll to zoom · Double-click to fly in · <kbd>?</kbd> for help</span>
+          <span class="hint-touch">Drag to orbit · Two fingers to pan and zoom · Double-tap to fly in</span>
+        </p>
+      </div>
 
       <nav id="toolbar" class="toolbar island" aria-label="View controls">
         <div class="segment" role="group" aria-label="Navigation mode">
@@ -131,23 +160,6 @@
         </button>
       </nav>
 
-      <section id="hud" class="hud island" aria-label="Performance stats">
-        <button id="hud-toggle" class="hud-summary" type="button" aria-expanded="false" aria-controls="hud-detail" title="Stats (I)">
-          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-activity"/></svg>
-          <span><strong id="hud-fps">—</strong> <span class="hud-unit">fps</span></span>
-          <span class="hud-dot" aria-hidden="true">·</span>
-          <span id="hud-summary-count">—</span>
-          <span class="hud-dot" aria-hidden="true">·</span>
-          <span id="hud-summary-gpu">—</span>
-        </button>
-        <dl id="hud-detail" class="hud-detail" hidden>
-          <div><dt>Frame</dt><dd id="hud-ms">—</dd></div>
-          <div data-hud-row="splats"><dt>Splats</dt><dd id="hud-splats">—</dd></div>
-          <div data-hud-row="points"><dt>Points</dt><dd id="hud-points">—</dd></div>
-          <div data-hud-row="tris"><dt>Triangles</dt><dd id="hud-tris">—</dd></div>
-          <div><dt>GPU est.</dt><dd id="hud-gpu">—</dd></div>
-        </dl>
-      </section>
 
       <section id="empty" class="empty" hidden aria-labelledby="empty-title">
         <div class="empty-card">
@@ -173,7 +185,7 @@
         <div class="panel-head">
           <span class="sheet-grip" aria-hidden="true"></span>
           <h2 id="panel-title" class="panel-title">Settings</h2>
-          <button id="panel-close" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Close settings">
+          <button id="panel-close" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Close settings" title="Close settings">
             <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
           </button>
         </div>
@@ -260,7 +272,7 @@
         <div id="toast" class="toast" role="status" data-kind="error" hidden>
           <svg class="icon toast-icon" aria-hidden="true"><use id="toast-icon" href="#i-circle-alert"/></svg>
           <p id="toast-msg" class="toast-msg"></p>
-          <button id="toast-close" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Dismiss"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          <button id="toast-close" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Dismiss" title="Dismiss"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
         </div>
         <div id="update-toast" class="toast toast-update" role="status" hidden>
           <svg class="icon toast-icon" aria-hidden="true"><use href="#i-refresh-cw"/></svg>
@@ -273,7 +285,7 @@
         <form id="url-form" method="dialog">
           <div class="dialog-head">
             <h2 id="url-title">Open from URL</h2>
-            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" formnovalidate aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" formnovalidate aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
           </div>
           <label class="field"><span>File URL</span>
             <input id="url-input" class="input" type="url" required inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://example.com/scan.ply" />
@@ -290,7 +302,7 @@
         <form method="dialog">
           <div class="dialog-head">
             <h2 id="help-title">Controls and shortcuts</h2>
-            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
           </div>
           <div class="help-grid">
             <section>
