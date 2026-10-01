@@ -36,6 +36,7 @@ export class ViewerApp {
   private elapsedTimer = 0;
   private stageStarted = 0;
   private geoCopy = '';
+  private hintHeld = false;
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -599,8 +600,18 @@ export class ViewerApp {
     stage?: LoadProgress['stage'],
   ): void {
     const overlay = must('#loading');
+    const hint = must('#nav-hint');
     overlay.hidden = !active;
     must('#loading-cancel').hidden = this.loadAbort === null;
+    if (active) {
+      if (!hint.hidden) this.hintHeld = true;
+      hint.hidden = true;
+    } else if (this.hintHeld && must('#toast').hidden) {
+      hint.hidden = false;
+      this.hintHeld = false;
+    } else {
+      this.hintHeld = false;
+    }
     if (!active) {
       window.clearInterval(this.elapsedTimer);
       this.elapsedTimer = 0;

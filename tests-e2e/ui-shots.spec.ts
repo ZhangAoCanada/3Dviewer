@@ -57,9 +57,36 @@ for (const size of sizes) {
         await shot(page, 'empty-error');
       });
       test('loading', async ({ page }) => {
+        // The 1.5M slab finishes before a screenshot can land. Hold #loading open
+        // just long enough to capture the card; the app still hides it itself.
+        await page.addInitScript(() => {
+          const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden');
+          if (!desc || !desc.set || !desc.get) return;
+          const setHidden = desc.set;
+          const getHidden = desc.get;
+          Object.defineProperty(HTMLElement.prototype, 'hidden', {
+            configurable: true,
+            get() {
+              return getHidden.call(this);
+            },
+            set(value) {
+              if (this.id === 'nav-hint' && value === false && document.documentElement.dataset.holdHint === '1') return;
+              if (this.id === 'loading' && value) {
+                document.documentElement.dataset.holdHint = '1';
+                window.setTimeout(() => {
+                  delete document.documentElement.dataset.holdHint;
+                  const card = document.querySelector('#loading');
+                  if (card) setHidden.call(card, true);
+                }, 4000);
+                return;
+              }
+              setHidden.call(this, value);
+            },
+          });
+        });
         await page.goto('?demo=slab&n=1500000');
         await expect(page.locator('#loading')).toBeVisible();
-        await page.waitForTimeout(300);
+        await expect(page.locator('#loading-file')).toHaveText('Synthetic drone slab');
         await shot(page, 'loading');
       });
       test('url-dialog', async ({ page }) => {
