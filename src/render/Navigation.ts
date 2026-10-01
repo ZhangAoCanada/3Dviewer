@@ -149,6 +149,13 @@ export class NavigationController {
     this.startAnim(point.clone().add(approach), point);
   }
 
+  /** True while a drag, coast, flight, or camera animation is changing the view. */
+  isMoving(): boolean {
+    if (this.animating || this.drag !== 'none') return true;
+    if (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4) return true;
+    return this.mode === 'fly' && this.keys.size > 0;
+  }
+
   update(dt: number): void {
     if (this.animating) {
       this.animT += dt;
@@ -161,6 +168,12 @@ export class NavigationController {
     }
     if (this.mode === 'orbit') {
       if (this.drag === 'none' && (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4)) {
+        const remain = Math.hypot(this.yawVel, this.pitchVel) / INERTIA_DECAY;
+        if (remain < 0.01) {
+          this.yawVel = 0;
+          this.pitchVel = 0;
+          return;
+        }
         orbitAround(this.camera.position, this.pivot, this.worldUp, this.yawVel * dt, this.pitchVel * dt);
         this.lookAtPivot();
         const decay = Math.exp(-INERTIA_DECAY * dt);
