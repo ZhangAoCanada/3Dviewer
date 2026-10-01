@@ -142,6 +142,13 @@
           </p>
         </section>
         <section>
+          <h2>About</h2>
+          <dl class="kv">
+            <dt>Build</dt>
+            <dd id="build-id">dev</dd>
+          </dl>
+        </section>
+        <section>
           <h2>Controls</h2>
           <ul class="help">
             <li><b>Orbit</b> drag, right-drag or two-finger pan, wheel or pinch zoom</li>
@@ -165,6 +172,10 @@
         </div>
       </div>
       <div id="toast" class="toast" hidden role="status"></div>
+      <div id="update-toast" class="update-toast" hidden role="status">
+        <span>New version available</span>
+        <button id="update-reload" class="btn primary" type="button">Reload</button>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
