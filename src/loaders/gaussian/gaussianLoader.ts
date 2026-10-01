@@ -3,6 +3,7 @@ import type { AssetSource, FormatLoader, LoadContext, MemoryBudget } from '../..
 import { sniffGaussian } from '../../core/sniff';
 import { GaussianRenderable, splatCount, type GaussianSceneInfo } from '../../renderables/gaussianRenderable';
 import { decodeGaussianPly, GaussianPlyUnsupported, inspectGaussianPly, type DecodedGaussian } from './decodeGaussianPly';
+import { disposeIfAborted, throwIfAborted } from './disposeIfAborted';
 import { explainLoadError } from './explainLoadError';
 
 const FILE_TYPES: Record<string, SplatFileType> = {
@@ -29,13 +30,6 @@ async function contentLength(url: string, signal: AbortSignal): Promise<number |
   } catch {
     return undefined;
   }
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (!signal.aborted) return;
-  const reason = signal.reason;
-  if (reason instanceof Error && reason.name !== 'AbortError') throw reason;
-  throw new DOMException('Load aborted', 'AbortError');
 }
 
 async function blobOf(source: AssetSource, ctx: LoadContext): Promise<Blob> {
@@ -78,7 +72,7 @@ function decodeInWorker(
       return;
     }
     ctx.signal.addEventListener('abort', onAbort, { once: true });
-    worker.onmessage = (event: MessageEvent<{ type: string; progress?: { loaded: number; total: number; message: string }; data?: DecodedGaussian; message?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ type: string; progress?: { loaded: number; total: number; message: string }; data?: DecodedGaussian; message?: string; name?: string }>) => {
       const payload = event.data;
       if (payload.type === 'progress' && payload.progress) {
         ctx.onProgress({
@@ -93,7 +87,14 @@ function decodeInWorker(
         finish(undefined, payload.data);
         return;
       }
-      if (payload.type === 'error') finish(new Error(payload.message || 'Gaussian decode failed'));
+      if (payload.type === 'error') {
+        const error = new Error(payload.message || 'Gaussian decode failed');
+        if (payload.name) error.name = payload.name;
+        finish(error);
+      }
+    };
+    worker.onmessageerror = () => {
+      finish(new Error('Gaussian decode result could not be transferred'));
     };
     worker.onerror = (event) => {
       finish(new Error(event.message || 'Gaussian decode worker failed'));
@@ -120,12 +121,6 @@ function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean): GaussianSceneIn
 
 async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: LoadContext): Promise<{ mesh: SplatMesh; lodBuilt: boolean }> {
   throwIfAborted(ctx.signal);
-  ctx.onProgress({
-    loaded: decoded.count,
-    total: decoded.sourceCount,
-    stage: 'gpu',
-    message: `Uploading ${decoded.count.toLocaleString()} splats`,
-  });
   const encoding = {
     rgbMin: decoded.limits.rgbMin,
     rgbMax: decoded.limits.rgbMax,
@@ -155,7 +150,7 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
     mesh = new SplatMesh({
       extSplats: ext,
       fileName: name,
-      raycastable: decoded.count <= 1_000_000,
+      raycastable: false,
     });
   } else if (decoded.packedArray) {
     const packed = new PackedSplats({
@@ -168,33 +163,56 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
       packedSplats: packed,
       fileName: name,
       splatEncoding: encoding,
-      raycastable: decoded.count <= 1_000_000,
+      raycastable: false,
     });
   } else {
     throw new Error('Gaussian decode produced no splat buffer.');
   }
-  mesh.maxSh = decoded.shDegree;
-  mesh.numSplats = decoded.count;
-  await mesh.initialized;
-  let lodBuilt = false;
-  if (decoded.lod) {
+  let disposed = false;
+  const release = () => {
+    if (disposed) return;
+    disposed = true;
+    mesh.dispose();
+  };
+  try {
+    mesh.maxSh = decoded.shDegree;
+    mesh.numSplats = decoded.count;
     ctx.onProgress({
       loaded: decoded.count,
-      total: decoded.count,
+      total: decoded.sourceCount,
       stage: 'gpu',
-      message: `Building level of detail for ${decoded.count.toLocaleString()} splats`,
+      message: `Uploading ${decoded.count.toLocaleString()} splats`,
     });
-    try {
-      await mesh.createLodSplats();
-      mesh.enableLod = true;
-      lodBuilt = true;
-    } catch (error) {
-      const note = `Level of detail was skipped (${explainLoadError(error)}).`;
-      decoded.warning = decoded.warning ? `${decoded.warning} ${note}` : note;
-      decoded.notes.push(note);
+    await mesh.initialized;
+    disposeIfAborted({ dispose: release }, ctx.signal);
+    let lodBuilt = false;
+    if (decoded.lod) {
+      ctx.onProgress({
+        loaded: decoded.count,
+        total: decoded.count,
+        stage: 'gpu',
+        message: `Building level of detail for ${decoded.count.toLocaleString()} splats`,
+      });
+      try {
+        await mesh.createLodSplats();
+        disposeIfAborted({ dispose: release }, ctx.signal);
+        mesh.enableLod = true;
+        lodBuilt = true;
+      } catch (error) {
+        if (ctx.signal.aborted) {
+          release();
+          throwIfAborted(ctx.signal);
+        }
+        const note = `Level of detail was skipped (${explainLoadError(error)}).`;
+        decoded.warning = decoded.warning ? `${decoded.warning} ${note}` : note;
+        decoded.notes.push(note);
+      }
     }
+    return { mesh, lodBuilt };
+  } catch (error) {
+    release();
+    throw error;
   }
-  return { mesh, lodBuilt };
 }
 
 async function loadStandardPly(source: AssetSource, blob: Blob, ctx: LoadContext, started: number): Promise<GaussianRenderable> {
@@ -205,6 +223,8 @@ async function loadStandardPly(source: AssetSource, blob: Blob, ctx: LoadContext
     decoded = await decodeInWorker(blob, ctx.budget, preferExtended, ctx);
   } catch (error) {
     if (ctx.signal.aborted) throw error;
+    const name = error instanceof Error ? error.name : '';
+    if (name === 'GaussianPlyError' || name === 'GaussianPlyUnsupported') throw error;
     if (blob.size > 64 * 1024 * 1024) throw new Error(explainLoadError(error));
     decoded = await decodeGaussianPly(blob, {
       budget: ctx.budget,
@@ -298,7 +318,9 @@ async function loadViaSpark(
 
   if (source.file) {
     if (source.file.size >= STREAM_BYTES) {
-      options.stream = source.file.stream();
+      const stream = new TransformStream<Uint8Array, Uint8Array>();
+      source.file.stream().pipeTo(stream.writable, { signal: ctx.signal }).catch(() => {});
+      options.stream = stream.readable;
       options.streamLength = source.file.size;
     } else {
       options.fileBytes = new Uint8Array(await source.file.arrayBuffer());
@@ -313,28 +335,38 @@ async function loadViaSpark(
 
   throwIfAborted(ctx.signal);
   const mesh = new SplatMesh(options);
+  let disposed = false;
+  const release = () => {
+    if (disposed) return;
+    disposed = true;
+    mesh.dispose();
+  };
+  const onAbort = () => release();
+  ctx.signal.addEventListener('abort', onAbort);
   try {
     await mesh.initialized;
+    disposeIfAborted({ dispose: release }, ctx.signal);
+    const count = splatCount(mesh);
+    ctx.onProgress({
+      loaded: count,
+      total: count,
+      stage: 'ready',
+      message: `${count.toLocaleString()} splats`,
+    });
+    return new GaussianRenderable(
+      source.name,
+      {
+        fileName: source.name,
+        loaderId: gaussianLoader.id,
+        loadMs: performance.now() - started,
+        bytes: size ?? source.file?.size,
+      },
+      mesh,
+    );
   } catch (error) {
-    mesh.dispose();
+    release();
     throw new Error(explainLoadError(error));
+  } finally {
+    ctx.signal.removeEventListener('abort', onAbort);
   }
-  throwIfAborted(ctx.signal);
-  const count = splatCount(mesh);
-  ctx.onProgress({
-    loaded: count,
-    total: count,
-    stage: 'ready',
-    message: `${count.toLocaleString()} splats`,
-  });
-  return new GaussianRenderable(
-    source.name,
-    {
-      fileName: source.name,
-      loaderId: gaussianLoader.id,
-      loadMs: performance.now() - started,
-      bytes: size ?? source.file?.size,
-    },
-    mesh,
-  );
 }

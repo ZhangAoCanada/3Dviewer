@@ -1,4 +1,5 @@
 import { detectMemoryBudget } from '../core/memoryBudget';
+import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
 import { readProbe, sourceFromFile, sourceFromUrl } from '../core/sniff';
 import {
@@ -25,6 +26,7 @@ export class ViewerApp {
   private generation = 0;
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
+  private lastSource: AssetSource | null = null;
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -35,6 +37,26 @@ export class ViewerApp {
       shDegree: budget.maxSh,
     };
     this.host = new SceneHost(canvas, budget);
+    this.host.onContextLost = () => {
+      this.toast('The GPU reset. Reloading the scene…', 'warn');
+    };
+    this.host.onContextRestored = () => {
+      const source = this.lastSource;
+      this.host.clear();
+      this.renderSceneInfo();
+      if (!source || (source.origin === 'url' && source.sizeBytes == null)) {
+        this.setEmpty(true);
+        if (source) {
+          this.toast(
+            'The GPU reset. This scene came from a URL of unknown size, so it was not reloaded. Open it again if you still need it. A multi-gigabyte file can take several minutes.',
+            'warn',
+          );
+        }
+        return;
+      }
+      this.toast('The GPU reset. Reloading the scene… A multi-gigabyte file can take several minutes.', 'warn');
+      void this.load(source);
+    };
     this.host.setBackground(this.canvasColor());
     this.host.applySettings(this.settings);
     this.syncControls();
@@ -307,14 +329,22 @@ export class ViewerApp {
     this.loadAbort?.abort();
     const abort = new AbortController();
     this.loadAbort = abort;
-    const timeoutMs = loadTimeoutMs(source.sizeBytes);
-    const timer = window.setTimeout(() => {
-      abort.abort(
-        new Error(
-          'This file is taking too long to decode. It is still on disk; try again, or convert it to a paged .rad so the next open does not read the whole PLY.',
-        ),
-      );
-    }, timeoutMs);
+    const stallFor = (stage?: string) => (stage === 'gpu' ? 10 * 60_000 : 90_000);
+    let stallMs = stallFor();
+    const stall = () => {
+      abort.abort(new Error(stallMessage(stallMs)));
+    };
+    let watchdog: StallWatchdog = createStallWatchdog(stallMs, stall);
+    const arm = (stage?: string) => {
+      const next = stallFor(stage);
+      if (next !== stallMs) {
+        watchdog.clear();
+        stallMs = next;
+        watchdog = createStallWatchdog(stallMs, stall);
+        return;
+      }
+      watchdog.kick();
+    };
     this.setEmpty(false);
     this.setLoading(true, `Opening ${source.name}`);
     try {
@@ -328,11 +358,19 @@ export class ViewerApp {
           `Unsupported file "${source.name}". Supported: ${this.registry.extensions().map((ext) => `.${ext}`).join(', ')}`,
         );
       }
+      const large =
+        (source.sizeBytes ?? Infinity) >= 64 * 1024 * 1024 ||
+        this.host.items.some((item) => (item.getStats().memoryBytes ?? 0) >= 256 * 1024 * 1024);
+      if (large) {
+        this.host.clear();
+        this.renderSceneInfo();
+      }
       const renderable = await loader.load(source, {
         signal: abort.signal,
         budget: detectMemoryBudget(),
         extendedPrecision: this.settings.extendedPrecision,
         onProgress: (progress) => {
+          arm(progress.stage);
           if (generation !== this.generation) return;
           this.setLoading(true, progress.message ?? 'Loading', progress.loaded, progress.total);
         },
@@ -343,6 +381,7 @@ export class ViewerApp {
       }
       this.host.clear();
       this.host.add(renderable, this.settings);
+      this.lastSource = source;
       this.host.setFlip(this.settings.flipY);
       this.syncUpLabel();
       this.renderSceneInfo();
@@ -354,7 +393,7 @@ export class ViewerApp {
       this.toast(explainLoadError(error), 'error');
       this.setEmpty(this.host.items.length === 0);
     } finally {
-      window.clearTimeout(timer);
+      watchdog.clear();
       if (generation === this.generation) this.setLoading(false);
     }
   }
@@ -494,11 +533,9 @@ export class ViewerApp {
   }
 }
 
-function loadTimeoutMs(sizeBytes: number | undefined): number {
-  const mb = (sizeBytes ?? 0) / (1024 * 1024);
-  if (mb >= 512) return 45 * 60_000;
-  if (mb >= 64) return 10 * 60_000;
-  return 3 * 60_000;
+function stallMessage(ms: number): string {
+  const label = ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`;
+  return `Loading stalled: no progress for ${label}. The file is still on disk; try again, or convert it to a paged .rad so the next open does not read the whole PLY.`;
 }
 
 function must<T extends Element = HTMLElement>(selector: string): T {

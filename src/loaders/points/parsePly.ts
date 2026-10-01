@@ -54,7 +54,11 @@ const CHUNK = 4 * 1024 * 1024;
  * subsampled to `maxPoints`, so a multi-hundred-MB cloud does not have to
  * become a single JS array of every vertex.
  */
-export async function parsePlyPoints(blob: Blob, maxPoints: number): Promise<PointCloudData> {
+export async function parsePlyPoints(
+  blob: Blob,
+  maxPoints: number,
+  onProgress?: (loadedVerts: number, totalVerts: number) => void,
+): Promise<PointCloudData> {
   const header = await readHeader(blob);
   const elements = parseElements(header.text);
   const vertex = elements.find((el) => el.name === 'vertex');
@@ -81,8 +85,21 @@ export async function parsePlyPoints(blob: Blob, maxPoints: number): Promise<Poi
     preBytes += el.count * el.bytes;
   }
 
+  let lastReport = 0;
+  let lastLoaded = -1;
+  const report = (loaded: number, force = false) => {
+    if (!onProgress) return;
+    if (loaded === lastLoaded) return;
+    const now = performance.now();
+    if (!force && now - lastReport < 150) return;
+    lastReport = now;
+    lastLoaded = loaded;
+    onProgress(loaded, vertex.count);
+  };
+  report(0, true);
+
   if (header.format === 'ascii') {
-    await readAscii(blob, header.byteLength, vertex, colorProps, stride, positions, colors);
+    await readAscii(blob, header.byteLength, vertex, colorProps, stride, positions, colors, report);
   } else {
     const little = header.format === 'binary_little_endian';
     await readBinary(
@@ -97,8 +114,10 @@ export async function parsePlyPoints(blob: Blob, maxPoints: number): Promise<Poi
       little,
       positions,
       colors,
+      report,
     );
   }
+  report(vertex.count, true);
 
   return {
     positions,
@@ -227,6 +246,7 @@ async function readBinary(
   little: boolean,
   positions: Float32Array,
   colors: Float32Array | null,
+  report?: (loaded: number) => void,
 ): Promise<void> {
   const strideBytes = vertex.bytes;
   const bodyBytes = vertex.count * strideBytes;
@@ -260,6 +280,7 @@ async function readBinary(
       out += 1;
     }
     filePos += verts * strideBytes;
+    report?.(baseIndex + verts);
     if (verts === 0) break;
   }
 }
@@ -272,6 +293,7 @@ async function readAscii(
   stride: number,
   positions: Float32Array,
   colors: Float32Array | null,
+  report?: (loaded: number) => void,
 ): Promise<void> {
   const col = new Map(vertex.props.map((prop, index) => [prop.name, index]));
   const xi = col.get('x');
@@ -313,6 +335,7 @@ async function readAscii(
       }
       index += 1;
     }
+    report?.(index);
   }
   if (carry.trim() && index < vertex.count && index % stride === 0) {
     const parts = carry.trim().split(/\s+/);

@@ -54,6 +54,9 @@ export class SceneHost {
   private readonly pivotMarker = createPivotMarker();
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
+  contextLost = false;
+  onContextLost?: () => void;
+  onContextRestored?: () => void;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -67,6 +70,15 @@ export class SceneHost {
       powerPreference: 'high-performance',
     });
     if (!gl) throw new Error('WebGL2 is required. This browser cannot create a WebGL2 context.');
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      this.contextLost = true;
+      this.onContextLost?.();
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this.onContextRestored?.();
+    });
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       context: gl,
@@ -295,6 +307,7 @@ export class SceneHost {
     this.running = true;
     this.lastTime = performance.now();
     this.renderer.setAnimationLoop((time) => {
+      if (this.contextLost) return;
       const elapsed = Math.max(0, (time - this.lastTime) / 1000);
       this.lastTime = time;
       const dt = Math.min(0.05, elapsed);
