@@ -1,7 +1,10 @@
 import { SparkRenderer } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import type { MemoryBudget, Renderable, RenderSettings } from '../core/types';
-import { NavigationController, type NavMode } from './Navigation';
+import { detectUpAxis } from './cameraMotion';
+import { NavigationController, type NavMode, type UpMode } from './Navigation';
+import { buildCoarse, collectCoarsePoints, disableSplatRaycast, isSplatObject, pickScene, type SceneHit } from './scenePick';
+import type { CoarseSurface } from './coarseSurface';
 
 const DEFAULT_STD_DEV = Math.sqrt(8);
 
@@ -35,7 +38,12 @@ export class SceneHost {
   private fpsElapsed = 0;
   private frameMs = 0;
   private fps = 0;
-  private sceneRadius = 2;
+  upMode: UpMode = 'auto';
+  private coarse: CoarseSurface | null = null;
+  private readonly bounds = new THREE.Box3();
+  private hasBounds = false;
+  private readonly overlay = new THREE.Scene();
+  private readonly pivotMarker = createPivotMarker();
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
 
@@ -84,7 +92,13 @@ export class SceneHost {
     this.grid = new THREE.GridHelper(10, 20, 0x3d4c63, 0x2a3546);
     this.grid.visible = false;
     this.scene.add(this.grid);
+    this.overlay.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
+    this.navigation.pick = (x, y) => this.pick(x, y);
+    this.navigation.onPivot = (point) => {
+      this.pivotMarker.visible = point !== null;
+      if (point) this.pivotMarker.position.copy(point);
+    };
     this.resize();
   }
 
@@ -107,6 +121,7 @@ export class SceneHost {
   }
 
   add(renderable: Renderable, settings: RenderSettings): void {
+    disableSplatRaycast(renderable.object);
     this.renderables.push(renderable);
     this.content.add(renderable.object);
     renderable.applySettings(settings);
@@ -133,6 +148,19 @@ export class SceneHost {
     this.frameAll();
   }
 
+  setUpMode(mode: UpMode): void {
+    this.upMode = mode;
+    this.frameAll();
+  }
+
+  setSensitivity(value: number): void {
+    this.navigation.setSensitivity(value);
+  }
+
+  get upAxis(): 'y' | 'z' {
+    return this.navigation.up;
+  }
+
   frameAll(): void {
     const box = new THREE.Box3();
     let any = false;
@@ -143,26 +171,63 @@ export class SceneHost {
       any = true;
     }
     if (!any) return;
-    this.sceneRadius = this.navigation.frame(box);
+    this.bounds.copy(box);
+    this.hasBounds = true;
     const size = box.getSize(new THREE.Vector3());
-    const span = Math.max(size.x, size.z, 0.5);
-    this.grid.scale.setScalar(span / 10);
-    this.grid.position.y = box.min.y;
+    this.navigation.up = this.upMode === 'auto' ? detectUpAxis(size) : this.upMode;
+    this.rebuildCoarse();
+    this.navigation.frame(box);
+    this.placeGrid(box, size);
+  }
+
+  resetView(): void {
+    this.navigation.reset(true);
   }
 
   focusPointer(clientX: number, clientY: number): boolean {
-    const rect = this.canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    this.raycaster.setFromCamera(ndc, this.camera);
-    this.raycaster.params.Points.threshold = Math.max(this.sceneRadius * 0.01, 0.01);
-    const hits = this.raycaster.intersectObjects(this.content.children, true);
-    const hit = hits[0];
+    const hit = this.pick(clientX, clientY);
     if (!hit) return false;
     this.navigation.focusOn(hit.point);
     return true;
+  }
+
+  private placeGrid(box: THREE.Box3, size: THREE.Vector3): void {
+    const center = box.getCenter(new THREE.Vector3());
+    const span = Math.max(size.x, size.y, size.z, 0.5);
+    this.grid.scale.setScalar(span / 10);
+    if (this.navigation.up === 'z') {
+      this.grid.rotation.set(Math.PI / 2, 0, 0);
+      this.grid.position.set(center.x, center.y, box.min.z);
+      return;
+    }
+    this.grid.rotation.set(0, 0, 0);
+    this.grid.position.set(center.x, box.min.y, center.z);
+  }
+
+  private rebuildCoarse(): void {
+    this.coarse = buildCoarse(collectCoarsePoints(this.content));
+  }
+
+  private pick(clientX: number, clientY: number): SceneHit | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1,
+      -((clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const meshes: THREE.Object3D[] = [];
+    this.content.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh && !isSplatObject(object)) meshes.push(object);
+    });
+    return pickScene(
+      this.raycaster.ray.origin,
+      this.raycaster.ray.direction,
+      this.coarse,
+      meshes,
+      this.raycaster,
+      this.hasBounds ? this.bounds : null,
+      this.navigation.pivot,
+    );
   }
 
   resize(): void {
@@ -189,8 +254,10 @@ export class SceneHost {
       const dt = Math.min(0.05, (time - this.lastTime) / 1000);
       this.lastTime = time;
       this.navigation.update(dt);
+      this.updatePivotMarker();
       for (const item of this.renderables) item.update(dt);
       this.renderer.render(this.scene, this.camera);
+      this.renderPivotMarker();
       this.fpsFrames += 1;
       this.fpsElapsed += dt;
       if (this.fpsElapsed >= 0.4) {
@@ -226,6 +293,25 @@ export class SceneHost {
     this.grid.visible = settings.showGrid;
   }
 
+  private updatePivotMarker(): void {
+    if (!this.pivotMarker.visible) return;
+    this.pivotMarker.quaternion.copy(this.camera.quaternion);
+    const dist = Math.max(this.camera.position.distanceTo(this.pivotMarker.position), 1e-3);
+    const height = Math.max(this.canvas.clientHeight, 1);
+    const world = (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * dist * 18) / height;
+    this.pivotMarker.scale.setScalar(world);
+  }
+
+  /** Drawn after splats so the ring stays visible on a dense cloud. */
+  private renderPivotMarker(): void {
+    if (!this.pivotMarker.visible) return;
+    const autoClear = this.renderer.autoClear;
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.renderer.render(this.overlay, this.camera);
+    this.renderer.autoClear = autoClear;
+  }
+
   private estimateGpuBytes(): number {
     let bytes = 0;
     for (const item of this.renderables) bytes += item.getStats().memoryBytes ?? 0;
@@ -233,4 +319,36 @@ export class SceneHost {
     bytes += info.textures * 1024 * 64;
     return bytes;
   }
+}
+
+function createPivotMarker(): THREE.Group {
+  const group = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.72, 1, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0x7ee0c6,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  const dot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.14, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  ring.frustumCulled = false;
+  dot.frustumCulled = false;
+  group.add(ring, dot);
+  group.visible = false;
+  group.frustumCulled = false;
+  return group;
 }

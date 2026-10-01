@@ -13,6 +13,7 @@ import { SceneHost } from '../render/SceneHost';
 import type { NavMode } from '../render/Navigation';
 import { isTypingTarget } from '../render/Navigation';
 import { explainLoadError } from '../loaders/gaussian/explainLoadError';
+import { createDemoSlab } from '../render/demoSlab';
 import { formatBytes, formatCount, formatFixed } from '../ui/format';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
@@ -24,7 +25,6 @@ export class ViewerApp {
   private generation = 0;
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
-  private lastPointer = { x: 0, y: 0, t: 0 };
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -38,6 +38,7 @@ export class ViewerApp {
     this.host.setBackground(this.canvasColor());
     this.host.applySettings(this.settings);
     this.syncControls();
+    this.restoreNavPrefs();
     this.bind(canvas);
     this.renderSceneInfo();
     this.renderPerf(this.host.stats());
@@ -69,7 +70,7 @@ export class ViewerApp {
     this.buildSamples();
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
-    must('#reset-btn').addEventListener('click', () => this.host.frameAll());
+    must('#reset-btn').addEventListener('click', () => this.host.resetView());
     must('#theme-btn').addEventListener('click', () => this.toggleTheme());
     must('#panel-btn').addEventListener('click', () => this.togglePanel());
 
@@ -95,21 +96,10 @@ export class ViewerApp {
       if (file) void this.load(sourceFromFile(file));
     });
 
-    canvas.addEventListener('pointerup', (event) => {
-      const now = performance.now();
-      const dx = event.clientX - this.lastPointer.x;
-      const dy = event.clientY - this.lastPointer.y;
-      if (now - this.lastPointer.t < 320 && Math.hypot(dx, dy) < 14) {
-        const hit = this.host.focusPointer(event.clientX, event.clientY);
-        if (!hit && this.host.items.length > 0) this.toast('Nothing under the pointer to focus.');
-      }
-      this.lastPointer = { x: event.clientX, y: event.clientY, t: now };
-    });
-
     window.addEventListener('keydown', (event) => {
       if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.code === 'KeyR') {
-        this.host.frameAll();
+        this.host.resetView();
       } else if (event.code === 'KeyF') {
         const rect = canvas.getBoundingClientRect();
         const hit = this.host.focusPointer(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -183,6 +173,60 @@ export class ViewerApp {
       this.settings.showGrid = on;
       this.host.applySettings(this.settings);
     });
+    must<HTMLSelectElement>('#up-axis').addEventListener('change', (event) => {
+      const value = (event.target as HTMLSelectElement).value;
+      if (value !== 'auto' && value !== 'y' && value !== 'z') return;
+      this.host.setUpMode(value);
+      localStorage.setItem('3dviewer-up', value);
+      this.syncUpLabel();
+    });
+    const sensitivity = must<HTMLInputElement>('#sensitivity');
+    sensitivity.addEventListener('input', () => {
+      const value = Number(sensitivity.value);
+      this.host.setSensitivity(value);
+      must('#out-sensitivity').textContent = formatFixed(value);
+      localStorage.setItem('3dviewer-sensitivity', String(value));
+    });
+  }
+
+  private restoreNavPrefs(): void {
+    try {
+      const up = localStorage.getItem('3dviewer-up');
+      if (up === 'auto' || up === 'y' || up === 'z') {
+        this.host.upMode = up;
+        must<HTMLSelectElement>('#up-axis').value = up;
+      }
+      const sensitivity = Number(localStorage.getItem('3dviewer-sensitivity'));
+      if (Number.isFinite(sensitivity) && sensitivity >= 0.4 && sensitivity <= 2) {
+        this.host.setSensitivity(sensitivity);
+        must<HTMLInputElement>('#sensitivity').value = String(sensitivity);
+        must('#out-sensitivity').textContent = formatFixed(sensitivity);
+      }
+    } catch {
+      /* private mode */
+    }
+  }
+
+  private syncUpLabel(): void {
+    must('#up-using').textContent = this.host.upAxis === 'z' ? 'Z-up' : 'Y-up';
+  }
+
+  private async loadDemoSlab(): Promise<void> {
+    this.setEmpty(false);
+    this.setLoading(true, 'Building a synthetic drone slab');
+    try {
+      const renderable = await createDemoSlab();
+      this.host.clear();
+      this.host.add(renderable, this.settings);
+      this.host.setFlip(false);
+      this.syncUpLabel();
+      this.renderSceneInfo();
+    } catch (error) {
+      this.toast(explainLoadError(error), 'error');
+      this.setEmpty(this.host.items.length === 0);
+    } finally {
+      this.setLoading(false);
+    }
   }
 
   private syncControls(): void {
@@ -229,6 +273,10 @@ export class ViewerApp {
     const params = new URLSearchParams(location.search);
     const url = params.get('url');
     const sampleId = params.get('sample');
+    if (params.get('demo') === 'slab') {
+      await this.loadDemoSlab();
+      return;
+    }
     if (url) {
       await this.load(sourceFromUrl(url));
       return;
@@ -293,6 +341,7 @@ export class ViewerApp {
       this.host.clear();
       this.host.add(renderable, this.settings);
       this.host.setFlip(this.settings.flipY);
+      this.syncUpLabel();
       this.renderSceneInfo();
       this.setEmpty(false);
       const note = renderable.getStats().extra?.note;
