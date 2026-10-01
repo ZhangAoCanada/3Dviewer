@@ -39,7 +39,7 @@ export class NavigationController {
   private readonly anchor = new THREE.Vector3();
   private readonly pinchCam = new THREE.Vector3();
   private readonly pinchPivot = new THREE.Vector3();
-  private sceneRadius = 2;
+  sceneRadius = 2;
   private hasHome = false;
   private drag: 'none' | 'arm' | 'orbit' | 'pan' | 'pinch' | 'fly' = 'none';
   private dragId = -1;

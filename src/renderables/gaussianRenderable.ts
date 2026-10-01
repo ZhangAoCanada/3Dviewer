@@ -43,10 +43,10 @@ export class GaussianRenderable implements Renderable {
   update(): void {}
 
   applySettings(settings: RenderSettings): void {
-    this.object.lodScale = settings.lodSplatScale;
-    if (this.object.maxSh === settings.shDegree) return;
-    this.object.maxSh = settings.shDegree;
-    this.object.splats?.setMaxSh(settings.shDegree);
+    const want = Math.min(settings.shDegree, this.sceneInfo?.shDegree ?? 3);
+    if (this.object.maxSh === want) return;
+    this.object.maxSh = want;
+    this.object.splats?.setMaxSh(want);
     try {
       this.object.updateGenerator();
     } catch {

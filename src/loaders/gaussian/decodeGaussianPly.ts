@@ -325,6 +325,8 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     maxZ: -Infinity,
     reservoir: new Float32Array(RESERVOIR * 3),
     seen: 0,
+    reservoirNext: Number.POSITIVE_INFINITY,
+    reservoirW: 1,
     skippedNonFinite: 0,
   };
   let kept = 0;
@@ -444,6 +446,83 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
   };
 }
 
+/** Packed float32 path. Locals stay unboxed; the shared Sample object is for the other paths. */
+function consumePackedFloats(
+  floats: Float32Array,
+  verts: number,
+  base: number,
+  header: GaussianPlyHeader,
+  plan: GaussianDecodePlan,
+  limits: SplatEncodingLimits,
+  kept: number,
+  accum: DecodeAccum,
+  packed: Uint32Array,
+  sh1: Uint32Array | undefined,
+  sh2: Uint32Array | undefined,
+  sh3: Uint32Array | undefined,
+  sh1Scratch: Float32Array | null,
+  sh2Scratch: Float32Array | null,
+  sh3Scratch: Float32Array | null,
+): number {
+  const stride = header.stride >> 2;
+  const layout = header.layout;
+  const xw = layout.x >> 2;
+  const yw = layout.y >> 2;
+  const zw = layout.z >> 2;
+  const dc0 = layout.dc0 >> 2;
+  const dc1 = layout.dc1 >> 2;
+  const dc2 = layout.dc2 >> 2;
+  const opacityW = layout.opacity >> 2;
+  const scale0 = layout.scale0 >> 2;
+  const scale1 = layout.scale1 >> 2;
+  const scale2 = layout.scale2 >> 2;
+  const rot0 = layout.rot0 >> 2;
+  const rot1 = layout.rot1 >> 2;
+  const rot2 = layout.rot2 >> 2;
+  const rot3 = layout.rot3 >> 2;
+  const restW = layout.restBase >> 2;
+  const step = plan.stride;
+  const sh = plan.shDegree;
+  const nRest = header.nRest;
+  const collect = sh1Scratch !== null && nRest >= 3 && layout.restBase >= 0;
+  const ox = accum.originX;
+  const oy = accum.originY;
+  const oz = accum.originZ;
+  for (let i = 0; i < verts; i += 1) {
+    const index = base + i;
+    if (step > 1 && index % step !== 0) continue;
+    const at = i * stride;
+    const x = floats[at + xw]! - ox;
+    const y = floats[at + yw]! - oy;
+    const z = floats[at + zw]! - oz;
+    if (!Number.isFinite(x + y + z)) {
+      accum.skippedNonFinite += 1;
+      continue;
+    }
+    rememberCenter(accum, x, y, z);
+    const r = 0.5 + SH_C0 * floats[at + dc0]!;
+    const g = 0.5 + SH_C0 * floats[at + dc1]!;
+    const b = 0.5 + SH_C0 * floats[at + dc2]!;
+    const opacity = sigmoid(floats[at + opacityW]!);
+    const sx = Math.exp(floats[at + scale0]!);
+    const sy = Math.exp(floats[at + scale1]!);
+    const sz = Math.exp(floats[at + scale2]!);
+    const qw = floats[at + rot0]!;
+    const qx = floats[at + rot1]!;
+    const qy = floats[at + rot2]!;
+    const qz = floats[at + rot3]!;
+    writePackedSplat(packed, kept, x, y, z, sx, sy, sz, qx, qy, qz, qw, opacity, r, g, b, limits);
+    if (collect && sh1Scratch) {
+      fillRestFloats(floats, at + restW, nRest, sh, sh1Scratch, sh2Scratch, sh3Scratch);
+      if (sh >= 1 && sh1) writePackedSh1(sh1, kept, sh1Scratch, limits.sh1Max);
+      if (sh >= 2 && sh2 && sh2Scratch) writePackedSh2(sh2, kept, sh2Scratch, limits.sh2Max);
+      if (sh >= 3 && sh3 && sh3Scratch) writePackedSh3(sh3, kept, sh3Scratch, limits.sh3Max);
+    }
+    kept += 1;
+  }
+  return kept;
+}
+
 function consumeFloats(
   floats: Float32Array,
   verts: number,
@@ -463,6 +542,25 @@ function consumeFloats(
   sh2Scratch: Float32Array | null,
   sh3Scratch: Float32Array | null,
 ): number {
+  if (packed && !plan.extended) {
+    return consumePackedFloats(
+      floats,
+      verts,
+      base,
+      header,
+      plan,
+      limits,
+      kept,
+      accum,
+      packed,
+      sh1,
+      sh2,
+      sh3,
+      sh1Scratch,
+      sh2Scratch,
+      sh3Scratch,
+    );
+  }
   const stride = header.stride / 4;
   const layout = header.layout;
   const step = plan.stride;
@@ -596,6 +694,9 @@ interface DecodeAccum {
   maxZ: number;
   reservoir: Float32Array;
   seen: number;
+  /** Next kept-center index that replaces a reservoir slot. Algorithm L. */
+  reservoirNext: number;
+  reservoirW: number;
   skippedNonFinite: number;
 }
 
@@ -622,22 +723,21 @@ function readFloats(
   sh2: Float32Array | null,
   sh3: Float32Array | null,
 ): void {
-  const f = (word: number) => floats[at + word] ?? 0;
-  if (sh1 && nRest >= 3) fillRestFloats(floats, at + layout.restBase / 4, nRest, sh, sh1, sh2, sh3);
-  sample.x = f(layout.x / 4);
-  sample.y = f(layout.y / 4);
-  sample.z = f(layout.z / 4);
-  sample.r = 0.5 + SH_C0 * f(layout.dc0 / 4);
-  sample.g = 0.5 + SH_C0 * f(layout.dc1 / 4);
-  sample.b = 0.5 + SH_C0 * f(layout.dc2 / 4);
-  sample.opacity = sigmoid(f(layout.opacity / 4));
-  sample.sx = Math.exp(f(layout.scale0 / 4));
-  sample.sy = Math.exp(f(layout.scale1 / 4));
-  sample.sz = Math.exp(f(layout.scale2 / 4));
-  sample.qw = f(layout.rot0 / 4);
-  sample.qx = f(layout.rot1 / 4);
-  sample.qy = f(layout.rot2 / 4);
-  sample.qz = f(layout.rot3 / 4);
+  if (sh1 && nRest >= 3) fillRestFloats(floats, at + (layout.restBase >> 2), nRest, sh, sh1, sh2, sh3);
+  sample.x = floats[at + (layout.x >> 2)] ?? 0;
+  sample.y = floats[at + (layout.y >> 2)] ?? 0;
+  sample.z = floats[at + (layout.z >> 2)] ?? 0;
+  sample.r = 0.5 + SH_C0 * (floats[at + (layout.dc0 >> 2)] ?? 0);
+  sample.g = 0.5 + SH_C0 * (floats[at + (layout.dc1 >> 2)] ?? 0);
+  sample.b = 0.5 + SH_C0 * (floats[at + (layout.dc2 >> 2)] ?? 0);
+  sample.opacity = sigmoid(floats[at + (layout.opacity >> 2)] ?? 0);
+  sample.sx = Math.exp(floats[at + (layout.scale0 >> 2)] ?? 0);
+  sample.sy = Math.exp(floats[at + (layout.scale1 >> 2)] ?? 0);
+  sample.sz = Math.exp(floats[at + (layout.scale2 >> 2)] ?? 0);
+  sample.qw = floats[at + (layout.rot0 >> 2)] ?? 0;
+  sample.qx = floats[at + (layout.rot1 >> 2)] ?? 0;
+  sample.qy = floats[at + (layout.rot2 >> 2)] ?? 0;
+  sample.qz = floats[at + (layout.rot3 >> 2)] ?? 0;
   sample.sh1 = sh1;
   sample.sh2 = sh2;
   sample.sh3 = sh3;
@@ -655,6 +755,12 @@ function acceptSample(accum: DecodeAccum): boolean {
   sample.x = x;
   sample.y = y;
   sample.z = z;
+  rememberCenter(accum, x, y, z);
+  return true;
+}
+
+/** Min/max plus Vitter's Algorithm L. Replacements are O(k log n), not one random per splat. */
+function rememberCenter(accum: DecodeAccum, x: number, y: number, z: number): void {
   if (x < accum.minX) accum.minX = x;
   if (y < accum.minY) accum.minY = y;
   if (z < accum.minZ) accum.minZ = z;
@@ -662,15 +768,40 @@ function acceptSample(accum: DecodeAccum): boolean {
   if (y > accum.maxY) accum.maxY = y;
   if (z > accum.maxZ) accum.maxZ = z;
   const seen = accum.seen;
-  const slot = seen < RESERVOIR ? seen : Math.floor(Math.random() * (seen + 1));
-  if (slot < RESERVOIR) {
-    const offset = slot * 3;
+  if (seen < RESERVOIR) {
+    const offset = seen * 3;
     accum.reservoir[offset] = x;
     accum.reservoir[offset + 1] = y;
     accum.reservoir[offset + 2] = z;
+    const filled = seen + 1;
+    accum.seen = filled;
+    if (filled === RESERVOIR) {
+      accum.reservoirW = Math.exp(Math.log(unitRandom()) / RESERVOIR);
+      accum.reservoirNext = filled + reservoirSkip(accum.reservoirW);
+    }
+    return;
   }
-  accum.seen += 1;
-  return true;
+  if (seen === accum.reservoirNext) {
+    const slot = Math.floor(Math.random() * RESERVOIR) * 3;
+    accum.reservoir[slot] = x;
+    accum.reservoir[slot + 1] = y;
+    accum.reservoir[slot + 2] = z;
+    accum.reservoirW *= Math.exp(Math.log(unitRandom()) / RESERVOIR);
+    accum.reservoirNext = seen + 1 + reservoirSkip(accum.reservoirW);
+  }
+  accum.seen = seen + 1;
+}
+
+function unitRandom(): number {
+  const u = Math.random();
+  return u === 0 ? Number.MIN_VALUE : u;
+}
+
+function reservoirSkip(w: number): number {
+  const gap = Math.log(1 - w);
+  if (!(gap < 0)) return Number.POSITIVE_INFINITY;
+  const skip = Math.floor(Math.log(unitRandom()) / gap);
+  return skip > 0 ? skip : 0;
 }
 
 function fillRestFloats(
@@ -700,9 +831,9 @@ function copyRest(
   const b = restAt + nRest * 2;
   for (let k = 0; k < coeffs; k += 1) {
     const coeff = k + from;
-    band[k * 3] = floats[restAt + coeff] ?? 0;
-    band[k * 3 + 1] = floats[g + coeff] ?? 0;
-    band[k * 3 + 2] = floats[b + coeff] ?? 0;
+    band[k * 3] = floats[restAt + coeff]!;
+    band[k * 3 + 1] = floats[g + coeff]!;
+    band[k * 3 + 2] = floats[b + coeff]!;
   }
 }
 
