@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { detectUpAxis, orbitAround, orbitCamera, panInViewPlane, polarAngle, zoomToward } from '../src/render/cameraMotion';
+import {
+  detectUpAxis,
+  orbitAround,
+  orbitCamera,
+  panInViewPlane,
+  polarAngle,
+  releaseVelocity,
+  zoomToward,
+} from '../src/render/cameraMotion';
 import { CoarseSurface, halfToFloat, sampleStride } from '../src/render/coarseSurface';
 import { toHalf } from '../src/loaders/gaussian/packSplat';
 
@@ -207,19 +215,56 @@ describe('zoom', () => {
   });
 });
 
+function projectPx(camera: THREE.PerspectiveCamera, point: THREE.Vector3, width: number, height: number): THREE.Vector2 {
+  const ndc = point.clone().project(camera);
+  return new THREE.Vector2((ndc.x * 0.5 + 0.5) * width, (-ndc.y * 0.5 + 0.5) * height);
+}
+
 describe('pan', () => {
   it('matches pointer motion at the pivot depth', () => {
-    const camera = new THREE.Vector3(0, 2, 10);
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 100);
+    camera.position.set(0, 2, 10);
     const pivot = new THREE.Vector3(0, 2, 0);
+    camera.lookAt(pivot);
+    camera.updateMatrixWorld(true);
+    const anchor = pivot.clone();
     const fov = 55;
     const height = 800;
-    const depth = camera.distanceTo(pivot);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const depth = Math.max(anchor.clone().sub(camera.position).dot(forward), 1e-4);
     const worldPerPixel = (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2) * depth) / height;
-    panInViewPlane(camera, pivot, new THREE.Vector3(0, 1, 0), fov, height, 20, -10, depth);
-    expect(camera.x).toBeCloseTo(-20 * worldPerPixel, 5);
-    expect(camera.y).toBeCloseTo(2 - 10 * worldPerPixel, 5);
-    expect(pivot.x).toBeCloseTo(camera.x, 5);
-    expect(camera.z).toBeCloseTo(10, 5);
+    panInViewPlane(camera, pivot, fov, height, 20, -10, anchor);
+    expect(camera.position.x).toBeCloseTo(-20 * worldPerPixel, 5);
+    expect(camera.position.y).toBeCloseTo(2 - 10 * worldPerPixel, 5);
+    expect(pivot.x).toBeCloseTo(camera.position.x, 5);
+    expect(camera.position.z).toBeCloseTo(10, 5);
+  });
+
+  it('keeps an off-axis anchor under the cursor', () => {
+    const width = 1280;
+    const height = 720;
+    const camera = new THREE.PerspectiveCamera(55, width / height, 0.01, 100);
+    camera.position.set(0, 0, 0);
+    camera.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(30));
+    camera.updateMatrixWorld(true);
+    const anchor = new THREE.Vector3(0, 0, -10);
+    const pivot = new THREE.Vector3(0, 0, -8);
+    const before = projectPx(camera, anchor, width, height);
+    panInViewPlane(camera, pivot, 55, height, 37, -21, anchor);
+    camera.updateMatrixWorld(true);
+    const after = projectPx(camera, anchor, width, height);
+    expect(Math.abs(after.x - before.x - 37)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(after.y - before.y - -21)).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe('release velocity', () => {
+  it('matches 8 ms and 16 ms streams of equal angular speed', () => {
+    const speed = 0.4;
+    const fast = Array.from({ length: 24 }, () => ({ dtMs: 8, angle: speed * 0.008 }));
+    const slow = Array.from({ length: 24 }, () => ({ dtMs: 16, angle: speed * 0.016 }));
+    expect(releaseVelocity(fast)).toBeCloseTo(releaseVelocity(slow), 5);
+    expect(releaseVelocity(fast)).toBeCloseTo(speed, 2);
   });
 });
 

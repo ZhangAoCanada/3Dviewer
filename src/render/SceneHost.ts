@@ -64,6 +64,11 @@ export class SceneHost {
   private readonly stillQuat = new THREE.Quaternion();
   private readonly pickForward = new THREE.Vector3();
   private readonly pickPoint = new THREE.Vector3();
+  private readonly pickNdc = new THREE.Vector2();
+  private readonly pickMeshes: THREE.Object3D[] = [];
+  private readonly wheelMeshes: THREE.Object3D[] = [];
+  private indexStamp = '';
+  private flipVersion = 0;
   private readonly pivotMarker = createPivotMarker();
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
@@ -129,7 +134,7 @@ export class SceneHost {
     this.scene.add(this.grid);
     this.scene.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
-    this.navigation.pick = (x, y) => this.pick(x, y);
+    this.navigation.pick = (x, y, kind) => this.pick(x, y, kind);
     this.navigation.onPivot = (point) => {
       const visible = point !== null;
       if (this.pivotMarker.visible !== visible) this.viewDirty = true;
@@ -160,9 +165,11 @@ export class SceneHost {
     this.content.clear();
     this.index = null;
     this.indexJob = null;
+    this.indexStamp = '';
     this.coarse = null;
     this.hasBounds = false;
     this.viewDirty = true;
+    this.rebuildPickMeshes();
   }
 
   add(renderable: Renderable, settings: RenderSettings): void {
@@ -171,6 +178,7 @@ export class SceneHost {
     this.content.add(renderable.object);
     renderable.applySettings(settings);
     this.applyEnvironment(settings);
+    this.rebuildPickMeshes();
     this.viewDirty = true;
   }
 
@@ -194,6 +202,7 @@ export class SceneHost {
       else item.object.quaternion.identity();
       item.object.updateMatrixWorld(true);
     }
+    this.flipVersion += 1;
     this.frameAll();
   }
 
@@ -228,6 +237,9 @@ export class SceneHost {
     this.navigation.frame(box);
     this.placeGrid(box, size);
     this.viewDirty = true;
+    const stamp = this.indexKey();
+    if (stamp === this.indexStamp && (this.index || this.indexJob)) return;
+    this.indexStamp = stamp;
     this.startIndex(box);
   }
 
@@ -265,17 +277,14 @@ export class SceneHost {
     this.indexJob = sources.length > 0 ? new SplatIndexJob(sources, box) : null;
   }
 
-  private pick(clientX: number, clientY: number): SceneHit | null {
+  private pick(clientX: number, clientY: number, kind?: 'wheel'): SceneHit | null {
     const rect = this.canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
+    this.pickNdc.set(
       ((clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1,
       -((clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1,
     );
-    this.raycaster.setFromCamera(ndc, this.camera);
-    const meshes: THREE.Object3D[] = [];
-    this.content.traverse((object) => {
-      if ((object as THREE.Mesh).isMesh && !isSplatObject(object)) meshes.push(object);
-    });
+    this.raycaster.setFromCamera(this.pickNdc, this.camera);
+    const meshes = kind === 'wheel' ? this.wheelPickMeshes() : this.pickMeshes;
     let indexPoint: THREE.Vector3 | null = null;
     if (this.index) {
       this.camera.getWorldDirection(this.pickForward);
@@ -488,8 +497,45 @@ export class SceneHost {
     for (const item of this.renderables) bytes += item.getStats().memoryBytes ?? 0;
     const info = this.renderer.info.memory;
     bytes += info.textures * 1024 * 64;
+    if (this.index) bytes += 4 * this.index.count + 16 * this.index.cells;
     return bytes;
   }
+
+  private rebuildPickMeshes(): void {
+    this.pickMeshes.length = 0;
+    this.content.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh && !isSplatObject(object)) this.pickMeshes.push(object);
+    });
+  }
+
+  /** Wheel picks skip meshes above 500k triangles; the splat index covers their vertices. */
+  private wheelPickMeshes(): THREE.Object3D[] {
+    this.wheelMeshes.length = 0;
+    for (const mesh of this.pickMeshes) {
+      if (triangleCount(mesh) <= 500_000) this.wheelMeshes.push(mesh);
+    }
+    return this.wheelMeshes;
+  }
+
+  private indexKey(): string {
+    let key = `${this.flipVersion}:`;
+    for (const item of this.renderables) {
+      item.object.updateMatrixWorld();
+      key += `${item.object.id}:`;
+      const elements = item.object.matrixWorld.elements;
+      for (let i = 0; i < 16; i += 1) key += `${elements[i]},`;
+      key += ';';
+    }
+    return key;
+  }
+}
+
+function triangleCount(object: THREE.Object3D): number {
+  const geometry = (object as THREE.Mesh).geometry;
+  if (!geometry) return 0;
+  if (geometry.index) return geometry.index.count / 3;
+  const position = geometry.getAttribute('position');
+  return position ? position.count / 3 : 0;
 }
 
 function createPivotMarker(): THREE.Group {

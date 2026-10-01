@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { orbitCamera, panInViewPlane, smoothstep, upVector, wheelNotches, zoomToward } from './cameraMotion';
+import {
+  blendReleaseVelocity,
+  orbitCamera,
+  panInViewPlane,
+  smoothstep,
+  upVector,
+  wheelNotches,
+  zoomToward,
+} from './cameraMotion';
 
 export type NavMode = 'orbit' | 'fly';
 export type UpAxis = 'y' | 'z';
@@ -24,7 +32,7 @@ export class NavigationController {
   sensitivity = 1;
   up: UpAxis = 'y';
   readonly pivot = new THREE.Vector3();
-  pick: ((clientX: number, clientY: number) => PickResult | null) | null = null;
+  pick: ((clientX: number, clientY: number, kind?: 'wheel') => PickResult | null) | null = null;
   onPivot: ((point: THREE.Vector3 | null) => void) | null = null;
 
   private readonly keys = new Set<string>();
@@ -62,6 +70,10 @@ export class NavigationController {
   private armed: 'orbit' | 'pan' | 'none' = 'none';
   private armX = 0;
   private armY = 0;
+  private lastMoveTime = 0;
+  private flyTouchCount = 0;
+  private lastTap: { time: number; x: number; y: number } | null = null;
+  private wheelCache: { x: number; y: number; time: number; hit: PickResult } | null = null;
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -78,6 +90,7 @@ export class NavigationController {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
+    document.addEventListener('visibilitychange', this.onBlur);
   }
 
   setMode(mode: NavMode): void {
@@ -195,6 +208,7 @@ export class NavigationController {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
+    document.removeEventListener('visibilitychange', this.onBlur);
   }
 
   private minDistance(): number {
@@ -217,8 +231,8 @@ export class NavigationController {
     this.pitchVel = 0;
   }
 
-  private query(clientX: number, clientY: number): PickResult {
-    const hit = this.pick?.(clientX, clientY);
+  private query(clientX: number, clientY: number, kind?: 'wheel'): PickResult {
+    const hit = this.pick?.(clientX, clientY, kind);
     if (hit) return hit;
     return { point: this.pivot.clone(), surface: false };
   }
@@ -234,6 +248,7 @@ export class NavigationController {
   private endDrag(): void {
     this.drag = 'none';
     this.armed = 'none';
+    this.camera.quaternion.normalize();
     this.onPivot?.(null);
   }
 
@@ -346,22 +361,13 @@ export class NavigationController {
       const yaw = THREE.MathUtils.clamp(-dx * 0.0052 * this.sensitivity, -0.18, 0.18);
       const pitch = THREE.MathUtils.clamp(dy * 0.0042 * this.sensitivity, -0.16, 0.16);
       orbitCamera(this.camera, this.pivot, this.worldUp, yaw, pitch);
-      const dt = 1 / 60;
-      this.yawVel = yaw / dt;
-      this.pitchVel = pitch / dt;
+      const dtMs = event.timeStamp - this.lastMoveTime;
+      this.lastMoveTime = event.timeStamp;
+      this.yawVel = blendReleaseVelocity(this.yawVel, dtMs, yaw);
+      this.pitchVel = blendReleaseVelocity(this.pitchVel, dtMs, pitch);
       return;
     }
-    const depth = Math.max(this.camera.position.distanceTo(this.anchor), this.minDistance());
-    panInViewPlane(
-      this.camera.position,
-      this.pivot,
-      this.worldUp,
-      this.camera.fov,
-      this.dom.clientHeight,
-      dx,
-      dy,
-      depth,
-    );
+    panInViewPlane(this.camera, this.pivot, this.camera.fov, this.dom.clientHeight, dx, dy, this.anchor);
   };
 
   private movePinch(): void {
@@ -387,19 +393,30 @@ export class NavigationController {
       this.anchorSurface,
     );
     panInViewPlane(
-      this.camera.position,
+      this.camera,
       this.pivot,
-      this.worldUp,
       this.camera.fov,
       this.dom.clientHeight,
       cx - this.pinchX,
       cy - this.pinchY,
-      Math.max(this.camera.position.distanceTo(this.anchor), this.minDistance()),
+      this.anchor,
     );
   }
 
   private onPointerUp = (event: PointerEvent): void => {
     this.pointers.delete(event.pointerId);
+    if (event.pointerType === 'touch' && this.mode === 'orbit' && this.drag === 'arm') {
+      const now = event.timeStamp;
+      const prev = this.lastTap;
+      const repeat =
+        prev !== null && now - prev.time <= 300 && Math.hypot(event.clientX - prev.x, event.clientY - prev.y) <= 24;
+      if (repeat) {
+        this.lastTap = null;
+        this.focusOn(this.query(event.clientX, event.clientY).point);
+        return;
+      }
+      this.lastTap = { time: now, x: event.clientX, y: event.clientY };
+    }
     if (this.mode === 'orbit' && this.drag === 'pinch') {
       if ([...this.pointers.values()].filter((p) => p.type === 'touch').length >= 2) return;
       if (this.pointers.size === 1) this.beginTouch();
@@ -408,8 +425,9 @@ export class NavigationController {
     }
     if (this.drag !== 'none' && (event.pointerId === this.dragId || this.pointers.size === 0)) {
       const showInertia = this.drag === 'orbit';
+      const stopped = event.timeStamp - this.lastMoveTime > 80;
       this.endDrag();
-      if (!showInertia) {
+      if (!showInertia || stopped) {
         this.yawVel = 0;
         this.pitchVel = 0;
       }
@@ -426,7 +444,7 @@ export class NavigationController {
       this.camera.position.addScaledVector(this.forward, -direction * this.speed * 0.18 * this.sensitivity);
       return;
     }
-    const hit = this.query(event.clientX, event.clientY);
+    const hit = this.cachedWheelHit(event.clientX, event.clientY, event.timeStamp);
     const notches = -wheelNotches(event.deltaY, event.deltaMode);
     zoomToward(
       this.camera.position,
@@ -448,7 +466,27 @@ export class NavigationController {
     this.focusOn(hit.point);
   };
 
+  private cachedWheelHit(x: number, y: number, time: number): PickResult {
+    const cached = this.wheelCache;
+    if (cached && Math.hypot(x - cached.x, y - cached.y) <= 3 && time - cached.time < 200) return cached.hit;
+    const hit = this.query(x, y, 'wheel');
+    this.wheelCache = { x, y, time, hit };
+    return hit;
+  }
+
   private moveFlyPointer(event: PointerEvent): void {
+    if (event.pointerType === 'touch') {
+      const touches = [...this.pointers.values()].filter((p) => p.type === 'touch');
+      if (touches.length !== this.flyTouchCount) {
+        this.flyTouchCount = touches.length;
+        if (touches.length > 0) {
+          let sum = 0;
+          for (const touch of touches) sum += touch.y;
+          this.lastY = sum / touches.length;
+        }
+        return;
+      }
+    }
     if (this.pointers.size >= 2 && event.pointerType === 'touch') {
       const ys = [...this.pointers.values()].map((p) => p.y);
       const avg = ys.reduce((sum, y) => sum + y, 0) / ys.length;
@@ -499,6 +537,7 @@ export class NavigationController {
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (isTypingTarget(event.target)) return;
+    if (event.metaKey || event.ctrlKey) return;
     this.keys.add(event.code);
     if (this.mode === 'fly' && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
       event.preventDefault();
@@ -506,6 +545,10 @@ export class NavigationController {
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {
+    if (event.code === 'MetaLeft' || event.code === 'MetaRight') {
+      this.keys.clear();
+      return;
+    }
     this.keys.delete(event.code);
   };
 

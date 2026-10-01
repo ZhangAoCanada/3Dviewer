@@ -1,3 +1,4 @@
+import type { SplatMesh } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import { halfToFloat } from './coarseSurface';
 import { isSplatObject } from './scenePick';
@@ -44,6 +45,11 @@ export class SplatIndex {
   ) {
     this.count = indices.length;
     this.seen = new Uint32Array(Math.max(1, nx * ny * nz));
+  }
+
+  /** Occupied grid cells (`nx * ny * nz`), including empty ones. */
+  get cells(): number {
+    return this.nx * this.ny * this.nz;
   }
 
   static fromPositions(positions: Float32Array, box?: THREE.Box3): SplatIndex {
@@ -220,11 +226,11 @@ export class SplatIndexJob {
     box: THREE.Box3,
   ) {
     const size = box.getSize(new THREE.Vector3());
-    const longest = Math.max(size.x, size.y, size.z, 1e-3);
-    this.cell = longest / MAX_AXIS;
-    this.nx = axisCount(size.x, this.cell);
-    this.ny = axisCount(size.y, this.cell);
-    this.nz = axisCount(size.z, this.cell);
+    const grid = gridFor(size, sources.reduce((sum, source) => sum + source.count, 0));
+    this.cell = grid.cell;
+    this.nx = grid.nx;
+    this.ny = grid.ny;
+    this.nz = grid.nz;
     this.hist = new Uint32Array(this.nx * this.ny * this.nz);
     this.minX = box.min.x;
     this.minY = box.min.y;
@@ -356,6 +362,7 @@ export function collectIndexSources(root: THREE.Object3D): IndexSource[] {
 function sourceFrom(object: THREE.Object3D): IndexSource | null {
   const matrix = identityMatrix(object.matrixWorld) ? null : Float64Array.from(object.matrixWorld.elements);
   if (isSplatObject(object)) {
+    if ((object as SplatMesh).paged) return null;
     const ext = object.extSplats?.extArrays?.[0];
     const packed = object.packedSplats?.packedArray;
     const packedCount = packed ? packed.length / 4 : 0;
@@ -367,9 +374,10 @@ function sourceFrom(object: THREE.Object3D): IndexSource | null {
     if (packed) return { count, base: 0, matrix, packed };
     return null;
   }
+  const mesh = object as THREE.Mesh;
   const points = object as THREE.Points;
-  if (!points.isPoints) return null;
-  const positions = points.geometry.getAttribute('position');
+  if (!mesh.isMesh && !points.isPoints) return null;
+  const positions = (mesh.geometry ?? points.geometry)?.getAttribute('position');
   if (!positions) return null;
   return { count: positions.count, base: 0, matrix, positions };
 }
@@ -464,6 +472,26 @@ function identityMatrix(matrix: THREE.Matrix4): boolean {
 
 function axisCount(size: number, cell: number): number {
   return Math.max(1, Math.min(MAX_AXIS, Math.ceil(Math.max(size, 1e-4) / cell)));
+}
+
+/** `cells ≤ max(4096, count / 8)`, with each axis still clamped to `MAX_AXIS`. */
+function gridFor(size: THREE.Vector3, count: number): { cell: number; nx: number; ny: number; nz: number } {
+  const maxCells = Math.max(4096, count / 8);
+  const sx = Math.max(size.x, 1e-4);
+  const sy = Math.max(size.y, 1e-4);
+  const sz = Math.max(size.z, 1e-4);
+  let cell = Math.cbrt((sx * sy * sz) / maxCells);
+  if (!Number.isFinite(cell) || cell <= 0) cell = Math.max(sx, sy, sz) / MAX_AXIS;
+  let nx = axisCount(sx, cell);
+  let ny = axisCount(sy, cell);
+  let nz = axisCount(sz, cell);
+  for (let guard = 0; guard < 32 && nx * ny * nz > maxCells; guard += 1) {
+    cell *= Math.cbrt((nx * ny * nz) / maxCells) * 1.0000001;
+    nx = axisCount(sx, cell);
+    ny = axisCount(sy, cell);
+    nz = axisCount(sz, cell);
+  }
+  return { cell, nx, ny, nz };
 }
 
 function clampIndex(value: number, size: number): number {
