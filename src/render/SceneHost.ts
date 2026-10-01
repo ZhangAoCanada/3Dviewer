@@ -295,8 +295,9 @@ export class SceneHost {
     this.running = true;
     this.lastTime = performance.now();
     this.renderer.setAnimationLoop((time) => {
-      const dt = Math.min(0.05, (time - this.lastTime) / 1000);
+      const elapsed = Math.max(0, (time - this.lastTime) / 1000);
       this.lastTime = time;
+      const dt = Math.min(0.05, elapsed);
       this.navigation.update(dt);
       this.updatePivotMarker();
       for (const item of this.renderables) item.update(dt);
@@ -316,7 +317,7 @@ export class SceneHost {
         this.drewOnce = true;
       }
       this.fpsFrames += 1;
-      this.fpsElapsed += dt;
+      this.fpsElapsed += elapsed;
       if (this.fpsElapsed >= 0.4) {
         this.fps = this.fpsFrames / this.fpsElapsed;
         this.frameMs = (this.fpsElapsed / this.fpsFrames) * 1000;

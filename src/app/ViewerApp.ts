@@ -274,7 +274,8 @@ export class ViewerApp {
     const url = params.get('url');
     const sampleId = params.get('sample');
     if (params.get('demo') === 'slab') {
-      const requested = Number(params.get('n'));
+      const raw = params.get('n');
+      const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
       const count = Number.isFinite(requested) ? Math.min(Math.max(Math.round(requested), 1000), 1_500_000) : undefined;
       await this.loadDemoSlab(count);
       return;
