@@ -45,6 +45,9 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,svg,png,ply,splat,obj,glb,woff2}'],
         navigateFallback: undefined,
         clientsClaim: true,
+        // public/sw-update.js: take over immediately when the open page cannot
+        // show the Reload toast (the previous autoUpdate client).
+        importScripts: ['sw-update.js'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         runtimeCaching: [
           {
