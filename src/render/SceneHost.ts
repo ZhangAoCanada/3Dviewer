@@ -410,6 +410,11 @@ export class SceneHost {
     this.dprQuery?.removeEventListener('change', this.onDprChange);
     this.dprQuery = null;
     this.clear();
+    disposeMeshResources(this.pivotMarker);
+    this.grid.geometry.dispose();
+    const gridMaterials = Array.isArray(this.grid.material) ? this.grid.material : [this.grid.material];
+    for (const material of gridMaterials) material.dispose();
+    this.spark.dispose();
     this.navigation.dispose();
     this.renderer.dispose();
   }
@@ -528,6 +533,16 @@ export class SceneHost {
     }
     return key;
   }
+}
+
+function disposeMeshResources(object: THREE.Object3D): void {
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.geometry.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) material.dispose();
+  });
 }
 
 function triangleCount(object: THREE.Object3D): number {

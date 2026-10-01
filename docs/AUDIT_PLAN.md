@@ -1,5 +1,21 @@
 # Audit plan: bug fixes, performance, and memory
 
+## Status
+
+Batches 1–5 are ticked off except **2.2**, which was not landed. These still need a real device or the owner's data:
+
+- **2.2** — Measure `lodCount / count` on the torus sample, `?demo=slab&n=1500000`, and one real drone PLY, then replace the `* 2` LoD check. This repo has no drone PLY, so the SH-vs-LoD policy is unchanged.
+- **1.2** — Reload the 3.5 GB PLY in Chrome and confirm Task Manager peak stays near one scene.
+- **1.3** — Abort a large `.spz` and confirm `renderer.info.memory.textures` returns to the torus-only count.
+- **2.3** — Toggle Flip Y on a 14M scene and confirm no long task over 100 ms.
+- **2.4** — Load a 1 GB PLY with `?url=` from a range-capable host and confirm memory stays near the decoded size.
+- **2.6** — Confirm the stats panel drops by about 72 MB at 8M points.
+- **3.2** — On a paged `.rad`, confirm detail sharpens after the pointer is released and the HUD then goes idle.
+- **3.7** — On a mid-range Android or iPhone, record orbit and idle fps for `?demo=slab&n=1500000` and one real drone `.rad` or PLY. The mobile Spark settings were left as specified; revert them if orbit fps does not rise by at least 10%.
+- **4.2** — During a 2 s trackpad zoom on the 14M scene, `pick` self-time stays under 5% of the frame budget.
+- **4.4** — On macOS, hold W, press Cmd+Tab away and back; the camera must not move.
+- **4.6** — On a phone, a double-tap focuses. Desktop double-click is unchanged.
+
 Audited at `main` = `b09cbe1` (includes #5 accurate pick + idle frames and #6 stable pivot / near-nadir orbit).
 Spark resolved by the lockfile: `@sparkjsdev/spark` **2.2.0** (package.json says `^2.1.0`). Three r180.
 
@@ -340,14 +356,14 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 
 ## Batch 5 — PWA, build, and CI hygiene
 
-### 5.1 Offline launch breaks after 10 minutes — P1
+### [x] 5.1 Offline launch breaks after 10 minutes — P1
 
 - **Evidence**: `vite.config.ts:53-62`. The navigation route is `NetworkFirst` with `expiration: { maxAgeSeconds: 600 }`, and `navigateFallback: undefined`. Workbox's expiration plugin refuses to serve an expired entry, so an installed PWA opened offline more than 10 minutes after the last visit shows the browser offline page.
 - **Fix**: `maxAgeSeconds: 60 * 60 * 24 * 30`. NetworkFirst still prefers the network when online, so deploys stay visible.
 - **Verify**: `npm run build && npm run preview`. Load once, wait 11 minutes (or temporarily set the clock forward), switch DevTools to Offline, and reload: the app shell loads.
 - **Risk**: low.
 
-### 5.2 Precache size guard and update registration errors — P2
+### [x] 5.2 Precache size guard and update registration errors — P2
 
 - **Evidence**: `vite.config.ts:51` `maximumFileSizeToCacheInBytes: 6 MiB`, while the main chunk is already 3.18 MB. If a Spark upgrade crosses 6 MB, Workbox silently drops the main chunk from precache and offline breaks. `src/app/registerUpdate.ts:93-101` has no `.catch`; in `npm run dev` (no `sw.js`) and on registration failures this is an unhandled rejection.
 - **Fix**:
@@ -357,21 +373,21 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: CI green. Set the limit to 1 MB locally and confirm the check fails.
 - **Risk**: low. Type-aware lint slows lint by a few seconds.
 
-### 5.3 Deploy only what passed CI — P2
+### [x] 5.3 Deploy only what passed CI — P2
 
 - **Evidence**: `.github/workflows/pages.yml` builds and deploys on every push to `main` independently of `ci.yml`. A red lint, typecheck, or test still deploys.
 - **Fix**: in `pages.yml`, add the `npm run lint`, `npm run typecheck`, and `npm test` steps before `npm run build` (simplest), or trigger Pages via `workflow_run` on CI success.
 - **Verify**: push a branch with a failing test to a fork's `main`; no deploy.
 - **Risk**: low.
 
-### 5.4 Browser smoke test in CI — P2
+### [x] 5.4 Browser smoke test in CI — P2
 
 - **Evidence**: all tests run in node (`vite.config.ts:75-78`). Nothing exercises worker bundling (`new URL('../../workers/…', import.meta.url)`), Spark init, or the loaders end-to-end. `BENCHMARK.md` shows SwiftShader runs work in this environment.
 - **Fix**: add `@playwright/test` (chromium only) and `tests-e2e/smoke.spec.ts`. Start `vite preview`; for each of `?sample=torus-ply`, `torus-splat`, `cloud`, `crate`, `sphere`, and `?demo=slab`, wait for `#loading[hidden]`, assert no console errors, and assert `#hud-splats` / `#hud-points` / `#hud-tris` is non-zero for the matching kind. Launch args: `--use-angle=swiftshader --enable-unsafe-swiftshader`. Add a CI job `e2e` after `check`.
 - **Verify**: the job passes on `main`. Break the worker URL path locally and confirm it fails.
 - **Risk**: low. It adds about 1–2 min of CI time; keep it to these six loads.
 
-### 5.5 Small cleanups — P2 (one PR)
+### [x] 5.5 Small cleanups — P2 (one PR)
 
 - `src/core/memoryBudget.ts:28`: `(cores <= 4 && mobileUa)` is redundant with `mobileUa`; `:49` `gb <= 4 ? 1.5M` is dead because `lowRam` already routes those devices to mobile. Simplify and keep the tests passing.
 - `ViewerApp.ts:180,188,371`: wrap `localStorage.setItem` in `try` (quota and private-mode failures).

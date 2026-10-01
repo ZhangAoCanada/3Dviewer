@@ -23,5 +23,5 @@
       "three/addons/*": ["./node_modules/@types/three/examples/jsm/*"]
     }
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "tests-e2e", "vite.config.ts", "playwright.config.ts"]
 }

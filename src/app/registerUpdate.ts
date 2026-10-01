@@ -90,13 +90,17 @@ export function registerAppUpdate(): void {
     }
   };
 
-  void navigator.serviceWorker.getRegistration(scope).then((existing) => {
-    if (existing) listen(existing);
-    return navigator.serviceWorker.register(scriptUrl, { scope, updateViaCache: 'none' });
-  }).then((registration) => {
-    if (!registration) return;
-    listen(registration);
-    claimFirstInstall(registration);
-    showIfUpdateWaiting(registration);
-  });
+  void navigator.serviceWorker
+    .getRegistration(scope)
+    .then((existing) => {
+      if (existing) listen(existing);
+      return navigator.serviceWorker.register(scriptUrl, { scope, updateViaCache: 'none' });
+    })
+    .then((registration) => {
+      if (!registration) return;
+      listen(registration);
+      claimFirstInstall(registration);
+      showIfUpdateWaiting(registration);
+    })
+    .catch((error) => console.warn('Service worker registration failed', error));
 }

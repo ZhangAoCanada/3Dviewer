@@ -18,7 +18,7 @@ const scope = globalThis as unknown as {
 
 scope.onmessage = (event) => {
   const { file, maxPoints } = event.data;
-  parsePlyPoints(blobSource(file), maxPoints, (loaded, total) => {
+  void parsePlyPoints(blobSource(file), maxPoints, (loaded, total) => {
     scope.postMessage({ type: 'progress', loaded, total });
   })
     .then((data) => {

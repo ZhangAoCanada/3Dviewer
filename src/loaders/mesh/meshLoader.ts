@@ -1,6 +1,4 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import type { AssetSource, FormatLoader } from '../../core/types';
 import { sniffMesh } from '../../core/sniff';
 import { MeshRenderable } from '../../renderables/meshRenderable';
@@ -13,6 +11,15 @@ async function objectUrl(source: AssetSource): Promise<{ url: string; revoke: bo
   }
   if (source.url) return { url: source.url, revoke: false };
   throw new Error(`No data for ${source.name}`);
+}
+
+async function loadRoot(extension: string, url: string): Promise<THREE.Object3D> {
+  if (extension === 'obj') {
+    const { OBJLoader } = await import('three/addons/loaders/OBJLoader.js');
+    return new OBJLoader().loadAsync(url);
+  }
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  return (await new GLTFLoader().loadAsync(url)).scene;
 }
 
 function ensureMaterials(root: THREE.Object3D): void {
@@ -44,10 +51,7 @@ export const meshLoader: FormatLoader = {
     ctx.onProgress({ loaded: 0, stage: 'parse', message: `Loading ${source.name}` });
     const { url, revoke } = await objectUrl(source);
     try {
-      const root =
-        source.extension === 'obj'
-          ? await new OBJLoader().loadAsync(url)
-          : (await new GLTFLoader().loadAsync(url)).scene;
+      const root = await loadRoot(source.extension, url);
       if (ctx.signal.aborted) throw new DOMException('Load aborted', 'AbortError');
       ensureMaterials(root);
       ctx.onProgress({ loaded: 1, total: 1, stage: 'ready', message: source.name });

@@ -362,7 +362,7 @@ async function loadViaSpark(
   if (source.file) {
     if (source.file.size >= STREAM_BYTES) {
       const stream = new TransformStream<Uint8Array, Uint8Array>();
-      source.file.stream().pipeTo(stream.writable, { signal: ctx.signal }).catch(() => {});
+      void source.file.stream().pipeTo(stream.writable, { signal: ctx.signal }).catch(() => {});
       options.stream = stream.readable;
       options.streamLength = source.file.size;
     } else {
