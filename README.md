@@ -19,14 +19,14 @@ Open the site, or run it locally and visit `http://localhost:5173/3Dviewer/`.
 | `.ply` with positions (and optional color) | Point cloud. Very large files are subsampled in a worker. |
 | `.glb`, `.gltf`, `.obj` | Triangle mesh |
 
-Orbit is the default. **Fly** is a first-person mode. Double-click a point to focus it. **R** frames the scene, **F** focuses the view center, **1** / **2** switch orbit and fly, **H** toggles the side panel.
+Orbit is the default. Drag orbits the point under the cursor, the wheel zooms toward the cursor, and right-drag (or Shift/Ctrl-drag) pans so that point sticks to the mouse. A flat scan such as a drone scene is treated as Z-up; the Controls panel can force Y-up or Z-up and set look sensitivity. **Fly** is a first-person mode. Double-click a point to fly to it. **R** animates back to the framed view, **F** flies to the view center, **1** / **2** switch orbit and fly, **H** toggles the side panel. `?demo=slab` builds a wide synthetic Z-up cloud for trying the controls.
 
 | Action | Orbit | Fly |
 | --- | --- | --- |
-| Look | Left drag, one finger | Drag, one finger |
-| Pan | Right drag, two-finger drag | — |
-| Zoom | Wheel, pinch | Wheel |
-| Move | — | WASD, Q/E, Space, Shift to sprint. Two-finger drag moves forward. |
+| Look | Left drag or one finger, around the point under the cursor | Drag, one finger |
+| Pan | Right, middle, or Shift/Ctrl drag. Two fingers pan | — |
+| Zoom | Wheel or pinch toward the fingers | Wheel |
+| Move | Double-click flies in | WASD, Q/E, Space, Shift to sprint. Two-finger drag moves forward. |
 
 The side panel has scene info, splat size, spherical-harmonics degree, point size, LoD detail, shading, wireframe, 2D Gaussian axes, sort mode, and an FPS / memory readout. **Flip Y** turns OpenCV / COLMAP scenes right-side up. The butterfly sample enables it.
 

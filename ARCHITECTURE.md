@@ -114,12 +114,11 @@ What Phase 1 does **not** do: turn an arbitrary multi-GB `.ply` into a paged `.r
 
 ## Navigation
 
-- **Orbit** (default): left drag or one finger rotates, right drag / two-finger drag pans, wheel or pinch zooms. Arrow keys pan via OrbitControls.
-- **Fly**: drag looks, WASD moves, Q/E and Space move vertically, Shift sprints, wheel dollies. Two-finger vertical drag moves forward on touch.
-- **Focus**: double-click or `F` raycasts meshes, points, and splats (Spark's WASM raycast). Multi-million splat picks can hitch; they are not per-frame.
-- **Reset**: `R` or the Reset button frames the union of renderable bounds.
-
-Y-up is the default. "Flip Y" applies a 180° X rotation for OpenCV / COLMAP gaussian files. The remote butterfly sample turns it on.
+- **Orbit** (default): left drag or one finger rotates around the point under the cursor (a ring marks it while dragging). Right drag, middle drag, Shift/Ctrl-drag, or two fingers pan in the view plane so that point stays under the pointer. The wheel and pinch zoom along the cursor ray; speed scales with distance to the hit, and a surface hit stops short of the point. Orbit has inertia and a polar clamp so the camera does not flip.
+- **Fly**: drag looks around the world up axis, WASD moves, Q/E and Space move vertically, Shift sprints, wheel dollies. Two-finger vertical drag moves forward on touch.
+- **Focus**: double-click or `F` flies to the picked point. Reset (`R` or the button) animates back to the pose from the last frame.
+- **Picking**: meshes use a Three.js raycast. Splats and point clouds use a stride-sampled grid (about 24k points), not Spark's per-splat WASM raycast, so a drag on a multi-million splat scene does not walk every splat.
+- **Up axis**: auto, Y-up, or Z-up. A scene that is much thinner in Z than in X/Y (a typical drone scan) selects Z-up. "Flip Y" is separate: a 180° X rotation for OpenCV / COLMAP gaussian files. The remote butterfly sample turns it on.
 
 ## Workstreams
 

@@ -33,6 +33,7 @@ export class GaussianRenderable implements Renderable {
   ) {
     this.object = mesh;
     this.object.name = name;
+    (this.object as SplatMeshInstance & { raycastable?: boolean }).raycastable = false;
   }
 
   update(): void {}

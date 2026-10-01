@@ -56,6 +56,24 @@ button { cursor: pointer; }
   touch-action: none;
   outline: none;
 }
+.nav-hint {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  max-width: min(720px, calc(100vw - 32px));
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--elev);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+}
 
 .topbar {
   position: absolute;
@@ -316,4 +334,5 @@ body.is-dragging #viewport {
   .topbar { align-items: flex-start; }
   .hud { grid-template-columns: repeat(3, minmax(64px, auto)); }
   .panel { top: auto; max-height: min(62vh, 520px); bottom: 12px; }
+  .nav-hint { bottom: 108px; }
 }

@@ -26,6 +26,9 @@
     <div id="app">
       <div id="viewport">
         <canvas id="view" tabindex="0" aria-label="3D viewport"></canvas>
+        <p id="nav-hint" class="nav-hint">
+          Drag orbit · Right-drag pan · Scroll zooms to cursor · Double-click flies in
+        </p>
       </div>
 
       <header class="topbar">
@@ -143,11 +146,25 @@
         </section>
         <section>
           <h2>Controls</h2>
+          <label class="field">
+            <span>Up axis <output id="up-using">Auto</output></span>
+            <select id="up-axis">
+              <option value="auto" selected>Auto (flat scans use Z-up)</option>
+              <option value="y">Y-up</option>
+              <option value="z">Z-up</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Sensitivity <output id="out-sensitivity">1.0</output></span>
+            <input id="sensitivity" type="range" min="0.4" max="2" step="0.05" value="1" />
+          </label>
           <ul class="help">
-            <li><b>Orbit</b> drag, right-drag or two-finger pan, wheel or pinch zoom</li>
+            <li><b>Orbit</b> drag around the point under the cursor. A ring marks the pivot</li>
+            <li><b>Pan</b> right-drag, middle-drag, or Shift/Ctrl-drag. The point under the cursor sticks</li>
+            <li><b>Zoom</b> wheel toward the cursor. Closer views move more slowly</li>
+            <li><b>Touch</b> one finger orbits, two fingers pan and pinch-zoom</li>
             <li><b>Fly</b> drag to look, WASD move, Q/E or Space vertical, Shift sprint</li>
-            <li><b>Touch fly</b> one finger looks, two fingers move forward</li>
-            <li><b>Double-click</b> or F focuses on a point. R resets the view</li>
+            <li><b>Double-click</b> or F flies to a point. R resets the view</li>
           </ul>
         </section>
       </aside>
