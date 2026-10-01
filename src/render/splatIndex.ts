@@ -14,7 +14,7 @@ const placed = { x: 0, y: 0, z: 0 };
 interface IndexSource {
   count: number;
   base: number;
-  matrix: Float32Array | null;
+  matrix: Float64Array | null;
   packed?: Uint32Array;
   ext?: Float32Array;
   positions?: { getX(index: number): number; getY(index: number): number; getZ(index: number): number };
@@ -354,7 +354,7 @@ export function collectIndexSources(root: THREE.Object3D): IndexSource[] {
 }
 
 function sourceFrom(object: THREE.Object3D): IndexSource | null {
-  const matrix = identityMatrix(object.matrixWorld) ? null : Float32Array.from(object.matrixWorld.elements);
+  const matrix = identityMatrix(object.matrixWorld) ? null : Float64Array.from(object.matrixWorld.elements);
   if (isSplatObject(object)) {
     const ext = object.extSplats?.extArrays?.[0];
     const packed = object.packedSplats?.packedArray;

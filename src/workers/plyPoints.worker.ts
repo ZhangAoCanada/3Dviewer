@@ -1,3 +1,4 @@
+import { blobSource } from '../core/byteSource';
 import { parsePlyPoints, type PointCloudData } from '../loaders/points/parsePly';
 
 interface RequestMessage {
@@ -17,7 +18,7 @@ const scope = globalThis as unknown as {
 
 scope.onmessage = (event) => {
   const { file, maxPoints } = event.data;
-  parsePlyPoints(file, maxPoints, (loaded, total) => {
+  parsePlyPoints(blobSource(file), maxPoints, (loaded, total) => {
     scope.postMessage({ type: 'progress', loaded, total });
   })
     .then((data) => {

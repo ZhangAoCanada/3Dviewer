@@ -1,5 +1,8 @@
+import * as THREE from 'three';
+import { blobSource } from '../../core/byteSource';
 import type { AssetSource, FormatLoader, LoadContext } from '../../core/types';
 import { sniffPoints } from '../../core/sniff';
+import { detectUpAxis } from '../../render/cameraMotion';
 import { PointCloudRenderable } from '../../renderables/pointCloudRenderable';
 import { colorizeByHeight, parsePlyPoints, type PointCloudData } from './parsePly';
 
@@ -102,10 +105,10 @@ export const pointCloudLoader: FormatLoader = {
       data = await parseInWorker(blob, ctx.budget.maxPoints, ctx.signal, onProgress);
     } catch (error) {
       if (ctx.signal.aborted || blob.size > 64 * 1024 * 1024) throw error;
-      data = await parsePlyPoints(blob, ctx.budget.maxPoints, onProgress);
+      data = await parsePlyPoints(blobSource(blob), ctx.budget.maxPoints, onProgress);
     }
     if (ctx.signal.aborted) throw new DOMException('Load aborted', 'AbortError');
-    if (!data.colors) data = { ...data, colors: colorizeByHeight(data.positions) };
+    if (!data.colors) data = { ...data, colors: colorizeByHeight(data.positions, upAxisOf(data.positions)) };
     ctx.onProgress({
       loaded: data.count,
       total: data.sourceCount,
@@ -127,3 +130,21 @@ export const pointCloudLoader: FormatLoader = {
     );
   },
 };
+
+function upAxisOf(positions: Float32Array): 'y' | 'z' {
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i] ?? 0;
+    const y = positions[i + 1] ?? 0;
+    const z = positions[i + 2] ?? 0;
+    if (x < min.x) min.x = x;
+    if (y < min.y) min.y = y;
+    if (z < min.z) min.z = z;
+    if (x > max.x) max.x = x;
+    if (y > max.y) max.y = y;
+    if (z > max.z) max.z = z;
+  }
+  if (!Number.isFinite(min.x)) return 'y';
+  return detectUpAxis(max.sub(min));
+}

@@ -1,8 +1,11 @@
-import { decodeGaussianPly, type DecodedGaussian, type DecodeProgress } from '../loaders/gaussian/decodeGaussianPly';
+import { blobSource, rangeSource, type ByteSource } from '../core/byteSource';
 import type { MemoryBudget } from '../core/types';
+import { decodeGaussianPly, GaussianPlyError, type DecodedGaussian, type DecodeProgress } from '../loaders/gaussian/decodeGaussianPly';
 
 interface RequestMessage {
-  blob: Blob;
+  blob?: Blob;
+  url?: string;
+  size?: number;
   budget: MemoryBudget;
   preferExtended: boolean;
 }
@@ -21,8 +24,8 @@ export function handleDecodeRequest(
   data: RequestMessage,
   post: (message: ResponseMessage, transfer?: Transferable[]) => void,
 ): Promise<void> {
-  const { blob, budget, preferExtended } = data;
-  return decodeGaussianPly(blob, {
+  const { budget, preferExtended } = data;
+  return decodeGaussianPly(sourceFor(data), {
     budget,
     preferExtended,
     onProgress: (progress) => {
@@ -50,6 +53,14 @@ export function handleDecodeRequest(
       const name = error instanceof Error ? error.name : undefined;
       post(name ? { type: 'error', message, name } : { type: 'error', message });
     });
+}
+
+function sourceFor(data: RequestMessage): ByteSource {
+  if (data.blob) return blobSource(data.blob);
+  if (data.url !== undefined && data.size !== undefined) {
+    return rangeSource(data.url, data.size, new AbortController().signal);
+  }
+  throw new GaussianPlyError('Gaussian decode request has no source.');
 }
 
 scope.onmessage = (event) => {

@@ -58,10 +58,23 @@ Decode progress from the loading line, while the torus sample was still on scree
 
 A canvas snapshot taken after that allocation has 103,430 pixels that are not the clear color `#10141b`, in a band from about (133, 276) to (791, 557) on the 1100×720 capture. The HUD splat line still read **4,800** at that moment: Spark's `activeSplats` had not moved off the previous sort, so this software renderer did not report a finished sort of all 10,000,000 splats within the 150 s capture wait. FPS for the full set was not measured here. The GPU process stayed above 200% CPU through that wait.
 
-The owner's 14,161,020-splat file was not generated (this VM measured 10,000,000). The plan for that count, from `planGaussianDecode` with `deviceMemory: 8` (same 2.25 GiB CPU cap this Chrome hit at `deviceMemory: 16`), is computed rather than timed: padded allocation 16,777,216, extended SH degree 2 (1,073,741,824 bytes), stride 1, LoD off because a second copy does not fit. A phone profile (`deviceMemory: 4`) is also computed, not browser-tested: packed SH 0, stride 21, 674,335 splats, LoD on. iPad (desktop Macintosh UA with more than one touch point) uses that mobile profile and was not browser-tested.
+The owner's 14,161,020-splat file was not generated (this VM measured 10,000,000). The plan for that count, from `planGaussianDecode` with `deviceMemory: 8` (same 2.25 GiB CPU cap this Chrome hit at `deviceMemory: 16`), is computed rather than timed: padded allocation 16,777,216, extended SH degree 2 (1,073,741,824 bytes), stride 1, LoD off because a second copy does not fit. A phone profile (`deviceMemory: 4`) is also computed, not browser-tested. After batch 2 that phone plan is extended SH degree 1, stride 21, 674,335 splats, with LoD still decided by the old `estimatedBytes * 2` check. iPad (desktop Macintosh UA with more than one touch point) uses that mobile profile and was not browser-tested.
 
 ## Large reload peak (manual)
 
 Opening a second scene at least 64 MB, or any scene while the current one reports at least 256 MB, now drops the previous scene before decode. Unknown file size counts as large. Smaller files still stay on screen until the new one is ready.
 
 Check in Chrome Task Manager: load the 3.5 GB PLY, then load it again. The peak should stay near one scene's footprint. This environment has no 3.5 GB PLY and no Chrome Task Manager, so that peak was not measured here.
+
+## 500,000-splat SH3 decode
+
+`npx vitest bench tests/bench/decode.bench.ts --run`. That file is not part of `npm test`. Synthetic INRIA SH3, 500,000 splats, packed (`preferExtended: false`), desktop budget 2 GiB, one iteration, no warmup. Node v22.14.0.
+
+| Decoder | ms |
+| --- | --- |
+| Before batch 2 (main `b7f8dd9`, one cold run) | 355 |
+| After batch 2 (three cold runs: 478, 476, 519) | 478 median |
+
+The after decode also subtracts the first-chunk origin, derives SH limits, tracks bounds, and reservoir-samples up to 65,536 centers. It does not allocate a `Sample` object per splat. On this file the extra pass and the reservoir dominate that saving.
+
+Not measured here: Flip Y long tasks on a 14M scene, a 1 GB `?url=` load on a range-capable host, Chrome Task Manager for the LoD peak, and the stats-panel drop at 8M points. There is no drone PLY in the repo, so `lodCount / count` was not recorded and task 2.2 was skipped.
