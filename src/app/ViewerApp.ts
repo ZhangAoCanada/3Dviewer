@@ -15,7 +15,8 @@ import type { NavMode } from '../render/Navigation';
 import { isTypingTarget } from '../render/Navigation';
 import { explainLoadError } from '../loaders/gaussian/explainLoadError';
 import { createDemoSlab } from '../render/demoSlab';
-import { formatBytes, formatCount, formatFixed } from '../ui/format';
+import { bindRangeFills, syncRangeFill } from '../ui/controls';
+import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
 
@@ -59,9 +60,12 @@ export class ViewerApp {
     };
     this.host.setBackground(this.canvasColor());
     this.host.applySettings(this.settings);
+    bindRangeFills(document);
     this.syncControls();
     this.restoreNavPrefs();
-    this.bind(canvas);
+    this.bind();
+    this.syncThemeButton();
+    this.applyHudPref();
     this.renderSceneInfo();
     this.renderPerf(this.host.stats());
     this.host.start((stats) => this.renderPerf(stats));
@@ -72,7 +76,7 @@ export class ViewerApp {
     return document.documentElement.dataset.theme === 'light' ? '#e7ebf1' : '#10141b';
   }
 
-  private bind(canvas: HTMLCanvasElement): void {
+  private bind(): void {
     const fileInput = must<HTMLInputElement>('#file-input');
     const open = () => fileInput.click();
     must('#open-btn').addEventListener('click', open);
@@ -91,9 +95,34 @@ export class ViewerApp {
     this.buildSamples();
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
+    must('#focus-btn').addEventListener('click', () => this.focusCenter());
     must('#reset-btn').addEventListener('click', () => this.host.resetView());
     must('#theme-btn').addEventListener('click', () => this.toggleTheme());
     must('#panel-btn').addEventListener('click', () => this.togglePanel());
+    must('#panel-close').addEventListener('click', () => {
+      this.togglePanel();
+      must<HTMLButtonElement>('#panel-btn').focus();
+    });
+    must('#hud-toggle').addEventListener('click', () => {
+      const detail = must('#hud-detail');
+      detail.hidden = !detail.hidden;
+      must('#hud-toggle').setAttribute('aria-expanded', String(!detail.hidden));
+    });
+    const fullscreenBtn = must<HTMLButtonElement>('#fullscreen-btn');
+    fullscreenBtn.hidden = !document.fullscreenEnabled;
+    fullscreenBtn.addEventListener('click', () => {
+      const action = document.fullscreenElement
+        ? document.exitFullscreen()
+        : document.documentElement.requestFullscreen();
+      void action;
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const on = document.fullscreenElement != null;
+      document.body.classList.toggle('is-fullscreen', on);
+      const label = on ? 'Exit full screen' : 'Enter full screen';
+      fullscreenBtn.setAttribute('aria-label', label);
+      fullscreenBtn.title = label;
+    });
 
     this.bindSettings();
 
@@ -122,9 +151,7 @@ export class ViewerApp {
       if (event.code === 'KeyR') {
         this.host.resetView();
       } else if (event.code === 'KeyF') {
-        const rect = canvas.getBoundingClientRect();
-        const hit = this.host.focusPointer(rect.left + rect.width / 2, rect.top + rect.height / 2);
-        if (!hit) this.toast('Nothing under the center of the view to focus.');
+        this.focusCenter();
       } else if (event.code === 'Digit1') {
         this.setMode('orbit');
       } else if (event.code === 'Digit2') {
@@ -134,10 +161,7 @@ export class ViewerApp {
       }
     });
 
-    if (window.matchMedia('(max-width: 860px)').matches) {
-      must('#panel').classList.add('is-collapsed');
-      must<HTMLButtonElement>('#panel-btn').setAttribute('aria-expanded', 'false');
-    }
+    this.restorePanel();
   }
 
   private bindSettings(): void {
@@ -147,16 +171,19 @@ export class ViewerApp {
     scale.addEventListener('input', () => {
       this.settings.splatScale = Number(scale.value);
       must('#out-splat-scale').textContent = formatFixed(this.settings.splatScale);
+      syncRangeFill(scale);
       this.host.applySettings(this.settings);
     });
     points.addEventListener('input', () => {
       this.settings.pointSize = Number(points.value);
       must('#out-point-size').textContent = formatFixed(this.settings.pointSize);
+      syncRangeFill(points);
       this.host.applySettings(this.settings);
     });
     lod.addEventListener('input', () => {
       this.settings.lodSplatScale = Number(lod.value);
       must('#out-lod').textContent = formatFixed(this.settings.lodSplatScale);
+      syncRangeFill(lod);
       this.host.applySettings(this.settings);
     });
     must<HTMLSelectElement>('#sh-degree').addEventListener('change', (event) => {
@@ -194,6 +221,10 @@ export class ViewerApp {
       this.settings.showGrid = on;
       this.host.applySettings(this.settings);
     });
+    bindCheck('#hud-switch', (on) => {
+      must('#hud').hidden = !on;
+      writeStorage('3dviewer-hud', on ? 'on' : 'off');
+    });
     must<HTMLSelectElement>('#up-axis').addEventListener('change', (event) => {
       const value = (event.target as HTMLSelectElement).value;
       if (value !== 'auto' && value !== 'y' && value !== 'z') return;
@@ -206,6 +237,7 @@ export class ViewerApp {
       const value = Number(sensitivity.value);
       this.host.setSensitivity(value);
       must('#out-sensitivity').textContent = formatFixed(value);
+      syncRangeFill(sensitivity);
       writeStorage('3dviewer-sensitivity', String(value));
     });
   }
@@ -226,6 +258,7 @@ export class ViewerApp {
     } catch {
       /* private mode */
     }
+    syncRangeInputs();
   }
 
   private syncUpLabel(): void {
@@ -261,6 +294,7 @@ export class ViewerApp {
     must<HTMLInputElement>('#flip-y').checked = this.settings.flipY;
     must<HTMLInputElement>('#grid').checked = this.settings.showGrid;
     must<HTMLInputElement>('#wireframe').checked = this.settings.wireframe;
+    syncRangeInputs();
   }
 
   private buildSamples(): void {
@@ -401,6 +435,15 @@ export class ViewerApp {
     this.host.setMode(mode);
     must('#mode-orbit').classList.toggle('is-on', mode === 'orbit');
     must('#mode-fly').classList.toggle('is-on', mode === 'fly');
+    must('#mode-orbit').setAttribute('aria-pressed', mode === 'orbit' ? 'true' : 'false');
+    must('#mode-fly').setAttribute('aria-pressed', mode === 'fly' ? 'true' : 'false');
+  }
+
+  private focusCenter(): void {
+    const canvas = must<HTMLCanvasElement>('#view');
+    const rect = canvas.getBoundingClientRect();
+    const hit = this.host.focusPointer(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!hit) this.toast('Nothing under the center of the view to focus.', 'info');
   }
 
   private toggleTheme(): void {
@@ -410,13 +453,46 @@ export class ViewerApp {
     const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (meta) meta.content = next === 'light' ? '#f3f5f8' : '#0c0f14';
     this.host.setBackground(this.canvasColor());
+    this.syncThemeButton();
+  }
+
+  private syncThemeButton(): void {
+    const light = document.documentElement.dataset.theme === 'light';
+    must('#theme-btn').setAttribute('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
   }
 
   private togglePanel(): void {
     const panel = must('#panel');
     panel.classList.toggle('is-collapsed');
     const open = !panel.classList.contains('is-collapsed');
+    document.body.classList.toggle('panel-open', open);
     must('#panel-btn').setAttribute('aria-expanded', String(open));
+    writeStorage('3dviewer-panel', open ? 'open' : 'closed');
+  }
+
+  private restorePanel(): void {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem('3dviewer-panel');
+    } catch {
+      /* private mode */
+    }
+    const open = stored === 'open';
+    must('#panel').classList.toggle('is-collapsed', !open);
+    document.body.classList.toggle('panel-open', open);
+    must('#panel-btn').setAttribute('aria-expanded', String(open));
+  }
+
+  private applyHudPref(): void {
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem('3dviewer-hud');
+    } catch {
+      /* private mode */
+    }
+    const on = stored === 'on' ? true : stored === 'off' ? false : window.matchMedia('(min-width: 641px)').matches;
+    must('#hud').hidden = !on;
+    must<HTMLInputElement>('#hud-switch').checked = on;
   }
 
   private setEmpty(empty: boolean): void {
@@ -449,7 +525,7 @@ export class ViewerApp {
     }
   }
 
-  private toast(message: string, kind: 'error' | 'warn' = 'error'): void {
+  private toast(message: string, kind: 'error' | 'warn' | 'info' = 'error'): void {
     const toast = must('#toast');
     toast.hidden = false;
     toast.classList.toggle('is-warn', kind === 'warn');
@@ -466,33 +542,72 @@ export class ViewerApp {
     const item = this.host.items[0];
     if (!item) {
       root.innerHTML = '<dt>Status</dt><dd>Nothing loaded</dd>';
+    } else {
+      const stats = item.getStats();
+      const rows: [string, string][] = [
+        ['File', item.meta.fileName],
+        ['Kind', item.kind],
+        ['Loader', item.meta.loaderId],
+        ['Load', `${Math.round(item.meta.loadMs)} ms`],
+        ['Size', formatBytes(item.meta.bytes)],
+        ['Count', formatCount(stats.primitives)],
+      ];
+      if (stats.sourcePrimitives && stats.sourcePrimitives !== stats.primitives) {
+        rows.push(['Source', formatCount(stats.sourcePrimitives)]);
+      }
+      if (stats.triangles) rows.push(['Triangles', formatCount(stats.triangles)]);
+      if (stats.extra) {
+        for (const [key, value] of Object.entries(stats.extra)) rows.push([key, String(value)]);
+      }
+      root.replaceChildren(
+        ...rows.flatMap(([key, value]) => {
+          const dt = document.createElement('dt');
+          dt.textContent = key;
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          return [dt, dd];
+        }),
+      );
+    }
+    this.renderFileChip();
+    this.syncApplicable();
+  }
+
+  private renderFileChip(): void {
+    const chip = must('#file-chip');
+    const item = this.host.items[0];
+    if (!item) {
+      chip.hidden = true;
       return;
     }
-    const stats = item.getStats();
-    const rows: [string, string][] = [
-      ['File', item.meta.fileName],
-      ['Kind', item.kind],
-      ['Loader', item.meta.loaderId],
-      ['Load', `${Math.round(item.meta.loadMs)} ms`],
-      ['Size', formatBytes(item.meta.bytes)],
-      ['Count', formatCount(stats.primitives)],
-    ];
-    if (stats.sourcePrimitives && stats.sourcePrimitives !== stats.primitives) {
-      rows.push(['Source', formatCount(stats.sourcePrimitives)]);
+    const labels: Record<string, string> = {
+      splats: 'Splats',
+      mesh: 'Mesh',
+      points: 'Points',
+      voxels: 'Voxels',
+    };
+    chip.hidden = false;
+    must('#file-kind').textContent = labels[item.kind] ?? item.kind;
+    const name = must('#file-name');
+    name.textContent = item.meta.fileName;
+    name.title = item.meta.fileName;
+    must('#file-size').textContent = formatBytes(item.meta.bytes);
+  }
+
+  private syncApplicable(): void {
+    const kinds = new Set<string>(this.host.items.map((item) => item.kind));
+    for (const el of document.querySelectorAll<HTMLElement>('#panel [data-applies]')) {
+      const applies = el.dataset.applies?.split(' ') ?? [];
+      el.hidden = kinds.size > 0 && !applies.some((kind) => kinds.has(kind));
     }
-    if (stats.triangles) rows.push(['Triangles', formatCount(stats.triangles)]);
-    if (stats.extra) {
-      for (const [key, value] of Object.entries(stats.extra)) rows.push([key, String(value)]);
+    for (const sec of document.querySelectorAll<HTMLElement>('#panel details.sec')) {
+      const applied = [...sec.querySelectorAll<HTMLElement>('[data-applies]')];
+      if (applied.length === 0) continue;
+      const otherControls = [...sec.querySelectorAll<HTMLElement>('.field, .field-row, .switch-row')].filter(
+        (el) => !el.hasAttribute('data-applies'),
+      );
+      sec.hidden = applied.every((el) => el.hidden) && otherControls.every((el) => el.hidden);
     }
-    root.replaceChildren(
-      ...rows.flatMap(([key, value]) => {
-        const dt = document.createElement('dt');
-        dt.textContent = key;
-        const dd = document.createElement('dd');
-        dd.textContent = value;
-        return [dt, dd];
-      }),
-    );
   }
 
   private renderPerf(stats: FrameStats): void {
@@ -506,12 +621,28 @@ export class ViewerApp {
       if (item.kind === 'mesh') tris += itemStats.triangles ?? itemStats.primitives;
     }
     const shownSplats = stats.activeSplats > 0 ? stats.activeSplats : splats;
-    must('#hud-fps').textContent = stats.idle ? 'idle' : formatFixed(stats.fps, 0);
+    const hud = must('#hud');
+    hud.classList.toggle('is-idle', stats.idle);
+    must('#hud-fps').textContent = stats.idle ? 'Idle' : formatFixed(stats.fps, 0);
     must('#hud-ms').textContent = `${formatFixed(stats.renderMs)} ms`;
     must('#hud-splats').textContent = formatCount(shownSplats);
     must('#hud-points').textContent = formatCount(points);
     must('#hud-tris').textContent = formatCount(tris);
     must('#hud-gpu').textContent = formatBytes(stats.gpuMemoryBytes);
+    must('#hud-summary-count').textContent =
+      shownSplats > 0
+        ? `${formatCompact(shownSplats)} splats`
+        : points > 0
+          ? `${formatCompact(points)} points`
+          : tris > 0
+            ? `${formatCompact(tris)} tris`
+            : '—';
+    must('#hud-summary-gpu').textContent = formatBytes(stats.gpuMemoryBytes);
+    const rowValue: Record<string, number> = { splats: shownSplats, points, tris };
+    for (const row of hud.querySelectorAll<HTMLElement>('[data-hud-row]')) {
+      row.hidden = (rowValue[row.dataset.hudRow ?? ''] ?? 0) === 0;
+    }
+    if (must('#panel').classList.contains('is-collapsed')) return;
     const perf = must('#perf-info');
     const rows: [string, string][] = [
       ['Backend', stats.webgpuAvailable ? 'WebGL2 (WebGPU present)' : 'WebGL2'],
@@ -549,6 +680,12 @@ function must<T extends Element = HTMLElement>(selector: string): T {
   const node = document.querySelector<T>(selector);
   if (!node) throw new Error(`Missing ${selector}`);
   return node;
+}
+
+function syncRangeInputs(): void {
+  for (const selector of ['#splat-scale', '#point-size', '#lod-scale', '#sensitivity']) {
+    syncRangeFill(must<HTMLInputElement>(selector));
+  }
 }
 
 function bindCheck(selector: string, onChange: (checked: boolean) => void): void {
