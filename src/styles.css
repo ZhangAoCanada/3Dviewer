@@ -200,7 +200,7 @@ button { cursor: pointer; }
   color: var(--muted);
 }
 .panel section + section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
-.kv { margin: 0; display: grid; grid-template-columns: 92px 1fr; gap: 6px 8px; font-size: 13px; }
+.kv { margin: 0; display: grid; grid-template-columns: 108px 1fr; gap: 6px 8px; font-size: 13px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .field { display: grid; gap: 6px; margin: 0 0 12px; font-size: 13px; }
@@ -235,13 +235,42 @@ button { cursor: pointer; }
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: min(420px, calc(100vw - 48px));
   padding: 14px 16px;
   border-radius: 16px;
   background: var(--elev-solid);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
 }
+.loading-copy { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .loading-card p { margin: 0; }
+.loading-detail {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.loading-detail:empty { display: none; }
+.load-track {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--line);
+  overflow: hidden;
+}
+.load-track[hidden] { display: none; }
+.load-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.load-track.is-indet .load-bar {
+  width: 35%;
+  animation: load-indet 1.1s ease-in-out infinite;
+}
+@keyframes load-indet {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
 .spinner {
   width: 18px;
   height: 18px;
@@ -253,6 +282,7 @@ button { cursor: pointer; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; border-top-color: var(--accent); }
+  .load-track.is-indet .load-bar { animation: none; transform: none; width: 100%; opacity: 0.45; }
 }
 
 .toast {
@@ -261,13 +291,18 @@ button { cursor: pointer; }
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  max-width: min(520px, calc(100% - 32px));
+  max-width: min(640px, calc(100% - 32px));
   padding: 10px 14px;
   border-radius: 12px;
   background: var(--elev-solid);
   border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
   color: var(--danger);
   box-shadow: var(--shadow);
+  white-space: pre-wrap;
+}
+.toast.is-warn {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
 .toast[hidden] { display: none; }
 
