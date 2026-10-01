@@ -1,32 +1,22 @@
 # Benchmark
 
-Numbers below are from a local production preview (`npm run build && npm run preview`) in this environment. They are a smoke measurement, not a GPU leaderboard. Re-run on the machine you care about; software WebGL will not represent a discrete GPU.
+Measured on 1 Oct 2026 from the production build (`npm run build && npm run preview`) at `http://127.0.0.1:4173/3Dviewer/`.
 
-## How to reproduce
+Browser: headless Chrome, WebGL2 via SwiftShader (software), viewport 1400×900. These FPS numbers are not a discrete-GPU result. The performance panel reported the backend as **WebGL2 (WebGPU present)**.
 
-1. `npm run build && npm run preview`
-2. Open `http://localhost:4173/3Dviewer/`
-3. Wait until the loading overlay clears. Read **FPS**, **Frame**, and **Load** in the panel.
-4. Orbit for a few seconds so the worker sort is warm, then read FPS again.
-5. Optional larger file: Samples → Butterfly, or `?url=` a scene of your own. For a real >1 GB capture, bake a chunked `.rad` (see ARCHITECTURE.md) and load that URL. A raw multi-GB `.ply` is streamed into Spark and will build LoD only after decode, which is the wrong distribution format.
+HUD values are copied from the page after the loading overlay cleared and the counters had settled. Load time is the scene panel's **Load** row.
 
-## This environment
+| Sample | How it was opened | Load | FPS | Frame | HUD count | GPU est. |
+| --- | --- | --- | --- | --- | --- | --- |
+| `torus.ply` (4,800 splats) | startup sample | 47 ms | 34 | 29.1 ms | 4,800 splats | 534 KB |
+| `torus.splat` (4,800 splats) | Samples menu | 55 ms | 22 | 45.0 ms | 4,800 splats | 662 KB |
+| `cloud.ply` (24,000 points) | Samples menu | 26 ms | 22 | 45.0 ms | 24,000 points | 1011 KB |
+| `crate.glb` (12 triangles) | Samples menu | 36 ms | 28 | 36.1 ms | 12 tris | 449 KB |
+| `sphere.obj` (1,536 triangles) | Samples menu | 30 ms | 34 | 29.8 ms | 1,536 tris | 556 KB |
+| `cloud.ply` again | `?url=` to the same preview origin | 25 ms | 36 | 27.8 ms | 24,000 points | 691 KB |
 
-| Sample | Bytes | Primitives | Load | Notes |
-| --- | --- | --- | --- | --- |
-| `torus.ply` | filled after the browser run | 4,800 splats | | Generated INRIA PLY |
-| `torus.splat` | | 4,800 splats | | antimatter15 layout |
-| `cloud.ply` | | 24,000 points | | No subsampling at this size |
-| `crate.glb` | | 12 triangles | | Vertex colors |
-| `sphere.obj` | | lat/long sphere | | |
-| Butterfly `.spz` | remote | | | Only if `sparkjs.dev` allows CORS |
+The point cloud was not subsampled (`stride 1`). Gaussian loads reported packed encoding, LoD off, SH degree 3.
 
-The largest file exercised here is the bigger of the bundled samples and the remote butterfly, if that fetch succeeds. A 1 GB scene was not available in the sandbox. The loader path for that size is covered by code (stream above 16 MB, extended precision above 80 MB, LoD above 400k splats, `.rad` paging) and is not claimed as measured.
+HTTP response sizes for those files, from the preview server (not the HUD): `torus.ply` 326,814 bytes, `torus.splat` 153,600 bytes, `cloud.ply` 360,179 bytes, `crate.glb` 2,204 bytes, `sphere.obj` 89,606 bytes. The scene panel showed **352 KB** for `cloud.ply` and **—** for the gaussian and mesh URL loads in this run.
 
-## What "fast enough" means in Phase 1
-
-- UI stays responsive while a point cloud parses (worker).
-- Splat depth sort does not run on the main thread (Spark WASM worker).
-- Mobile budgets cap pixel ratio, SH degree, resident splats, and point count.
-
-Fill the table from the HUD after a real browser pass. Do not invent FPS.
+`cloud.ply` is the largest file exercised here (352 KB). A scene past 1 GB was not available, so streaming and LoD for that size are implemented but not timed. On this software GL, orbit drag, fly-mode `W`, and a one-finger touch drag each changed the rendered frame. No page errors were reported.
