@@ -211,6 +211,14 @@ export class NavigationController {
     return { point: this.pivot.clone(), surface: false };
   }
 
+  private capture(pointerId: number): void {
+    try {
+      this.dom.setPointerCapture(pointerId);
+    } catch {
+      /* The pointer is already gone, or the event was synthesized. */
+    }
+  }
+
   private endDrag(): void {
     this.drag = 'none';
     this.armed = 'none';
@@ -230,7 +238,7 @@ export class NavigationController {
       this.dragId = event.pointerId;
       this.lastX = event.clientX;
       this.lastY = event.clientY;
-      this.dom.setPointerCapture?.(event.pointerId);
+      this.capture(event.pointerId);
       return;
     }
     if (event.pointerType === 'touch') {
@@ -247,7 +255,7 @@ export class NavigationController {
     this.dragId = event.pointerId;
     this.lastX = event.clientX;
     this.lastY = event.clientY;
-    this.dom.setPointerCapture?.(event.pointerId);
+    this.capture(event.pointerId);
   };
 
   private beginTouch(): void {
@@ -267,12 +275,15 @@ export class NavigationController {
       this.onPivot?.(null);
       this.yawVel = 0;
       this.pitchVel = 0;
+      this.capture(a[0]);
+      this.capture(b[0]);
       return;
     }
     const only = touches[0];
     if (!only) return;
     this.armDrag('orbit', only[1].x, only[1].y);
     this.dragId = only[0];
+    this.capture(only[0]);
   };
 
   private armDrag(kind: 'orbit' | 'pan', x: number, y: number): void {
@@ -354,7 +365,7 @@ export class NavigationController {
     this.camera.position.copy(this.pinchCam);
     this.pivot.copy(this.pinchPivot);
     const scale = this.pinchDist / dist;
-    const notches = -Math.log(Math.max(1e-3, scale)) / 0.38;
+    const notches = Math.log(Math.max(1e-3, scale)) / 0.38;
     zoomToward(
       this.camera.position,
       this.pivot,

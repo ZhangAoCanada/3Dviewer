@@ -42,6 +42,7 @@ export class SceneHost {
   private coarse: CoarseSurface | null = null;
   private readonly bounds = new THREE.Box3();
   private hasBounds = false;
+  private readonly overlay = new THREE.Scene();
   private readonly pivotMarker = createPivotMarker();
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
@@ -91,7 +92,7 @@ export class SceneHost {
     this.grid = new THREE.GridHelper(10, 20, 0x3d4c63, 0x2a3546);
     this.grid.visible = false;
     this.scene.add(this.grid);
-    this.scene.add(this.pivotMarker);
+    this.overlay.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
     this.navigation.pick = (x, y) => this.pick(x, y);
     this.navigation.onPivot = (point) => {
@@ -256,6 +257,7 @@ export class SceneHost {
       this.updatePivotMarker();
       for (const item of this.renderables) item.update(dt);
       this.renderer.render(this.scene, this.camera);
+      this.renderPivotMarker();
       this.fpsFrames += 1;
       this.fpsElapsed += dt;
       if (this.fpsElapsed >= 0.4) {
@@ -300,6 +302,16 @@ export class SceneHost {
     this.pivotMarker.scale.setScalar(world);
   }
 
+  /** Drawn after splats so the ring stays visible on a dense cloud. */
+  private renderPivotMarker(): void {
+    if (!this.pivotMarker.visible) return;
+    const autoClear = this.renderer.autoClear;
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.renderer.render(this.overlay, this.camera);
+    this.renderer.autoClear = autoClear;
+  }
+
   private estimateGpuBytes(): number {
     let bytes = 0;
     for (const item of this.renderables) bytes += item.getStats().memoryBytes ?? 0;
@@ -311,33 +323,32 @@ export class SceneHost {
 
 function createPivotMarker(): THREE.Group {
   const group = new THREE.Group();
-  const positions: number[] = [];
-  const segments = 40;
-  for (let i = 0; i <= segments; i += 1) {
-    const angle = (i / segments) * Math.PI * 2;
-    positions.push(Math.cos(angle), Math.sin(angle), 0);
-  }
-  const ringGeom = new THREE.BufferGeometry();
-  ringGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  const ring = new THREE.LineLoop(
-    ringGeom,
-    new THREE.LineBasicMaterial({
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.72, 1, 48),
+    new THREE.MeshBasicMaterial({
       color: 0x7ee0c6,
       transparent: true,
       opacity: 0.95,
       depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     }),
   );
-  ring.renderOrder = 10;
-  const dotGeom = new THREE.BufferGeometry();
-  dotGeom.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-  const dot = new THREE.Points(
-    dotGeom,
-    new THREE.PointsMaterial({ color: 0xffffff, size: 3.5, sizeAttenuation: false, depthTest: false }),
+  const dot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.14, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
   );
-  dot.renderOrder = 11;
+  ring.frustumCulled = false;
+  dot.frustumCulled = false;
   group.add(ring, dot);
   group.visible = false;
-  group.renderOrder = 10;
+  group.frustumCulled = false;
   return group;
 }
