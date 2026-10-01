@@ -11,8 +11,10 @@ test.use({
 });
 
 const sizes = [
-  { name: 'desktop', width: 1280, height: 800, touch: false },
-  { name: 'phone', width: 390, height: 844, touch: true },
+  { name: 'desktop', width: 1280, height: 800, touch: false, full: true },
+  { name: 'phone', width: 390, height: 844, touch: true, full: true },
+  { name: 'landscape', width: 844, height: 390, touch: true, full: true },
+  { name: 'ipad', width: 1024, height: 1366, touch: true, full: false },
 ];
 
 async function settle(page: Page) {
@@ -24,6 +26,7 @@ for (const size of sizes) {
   for (const theme of ['dark', 'light'] as const) {
     test.describe(`${size.name} ${theme}`, () => {
       test.skip(!enabled, 'set UI_SHOTS=1');
+      test.skip(size.name === 'ipad' && theme !== 'dark', 'iPad shots are dark only');
       test.use({
         viewport: { width: size.width, height: size.height },
         hasTouch: size.touch,
@@ -37,8 +40,15 @@ for (const size of sizes) {
           localStorage.setItem('3dviewer-hint', 'seen');
         }, theme);
       });
-      const shot = (page: Page, state: string) =>
-        page.screenshot({ path: `${out}/${size.name}-${theme}-${state}.png` });
+      const shot = async (page: Page, state: string) => {
+        if (state === 'panel' || state.endsWith('menu')) {
+          await page.evaluate(() => {
+            for (const animation of document.getAnimations()) animation.finish();
+          });
+        }
+        await page.screenshot({ path: `${out}/${size.name}-${theme}-${state}.png` });
+      };
+      const phone = size.width <= 640;
 
       test('loaded', async ({ page }) => {
         await page.goto('?sample=torus-ply');
@@ -49,8 +59,10 @@ for (const size of sizes) {
         await page.goto('?sample=torus-ply');
         await settle(page);
         await page.click('#panel-btn');
+        await expect(page.locator('#panel')).toBeVisible();
         await shot(page, 'panel');
       });
+      if (!size.full) return;
       test('empty-error', async ({ page }) => {
         await page.goto('?url=missing.ply');
         await expect(page.locator('#toast')).toBeVisible({ timeout: 60_000 });
@@ -90,13 +102,12 @@ for (const size of sizes) {
         await shot(page, 'loading');
       });
       test('url-dialog', async ({ page }) => {
-        if (size.touch) {
-          await page.goto('./');
-          await settle(page);
-          await page.click('#empty-url');
+        await page.goto('?sample=torus-ply');
+        await settle(page);
+        if (phone) {
+          await page.click('#more-btn');
+          await page.click('#more-menu [data-action=url]');
         } else {
-          await page.goto('?sample=torus-ply');
-          await settle(page);
           await page.click('#url-btn');
         }
         await expect(page.locator('#url-dialog')).toBeVisible();
@@ -105,8 +116,12 @@ for (const size of sizes) {
       test('help', async ({ page }) => {
         await page.goto('?sample=torus-ply');
         await settle(page);
-        // Phone More → Controls is Batch 3. '?' opens the same dialog at both sizes.
-        await page.keyboard.press('Shift+Slash');
+        if (phone) {
+          await page.click('#more-btn');
+          await page.click('#more-menu [data-action=help]');
+        } else {
+          await page.keyboard.press('Shift+Slash');
+        }
         await expect(page.locator('#help-dialog')).toBeVisible();
         await shot(page, 'help');
       });
@@ -117,6 +132,15 @@ for (const size of sizes) {
           await page.click('#samples-btn');
           await expect(page.locator('#samples-menu')).toBeVisible();
           await shot(page, 'samples-menu');
+        });
+      }
+      if (size.name === 'phone' && theme === 'dark') {
+        test('more-menu', async ({ page }) => {
+          await page.goto('?sample=torus-ply');
+          await settle(page);
+          await page.click('#more-btn');
+          await expect(page.locator('#more-menu')).toBeVisible();
+          await shot(page, 'more-menu');
         });
       }
     });
