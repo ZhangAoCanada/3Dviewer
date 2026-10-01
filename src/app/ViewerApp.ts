@@ -5,6 +5,7 @@ import { readProbe, sourceFromFile, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
   type AssetSource,
+  type LoadProgress,
   type RenderSettings,
   type ShadingMode,
 } from '../core/types';
@@ -17,6 +18,7 @@ import { explainLoadError } from '../loaders/gaussian/explainLoadError';
 import { createDemoSlab } from '../render/demoSlab';
 import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
+import { bindMenu } from '../ui/menu';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
 
@@ -28,6 +30,13 @@ export class ViewerApp {
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
   private lastSource: AssetSource | null = null;
+  private loadingSource: AssetSource | null = null;
+  private loadingStage: LoadProgress['stage'] | null = null;
+  private loadingStarted = 0;
+  private elapsedTimer = 0;
+  private stageStarted = 0;
+  private geoCopy = '';
+  private hintHeld = false;
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -84,13 +93,35 @@ export class ViewerApp {
     fileInput.addEventListener('change', () => {
       const file = fileInput.files?.[0];
       fileInput.value = '';
-      if (file) void this.load(sourceFromFile(file));
+      if (file) {
+        this.setQuery(null);
+        void this.load(sourceFromFile(file));
+      }
     });
 
     must('#empty-sample').addEventListener('click', () => {
       const sample = SAMPLES[0];
-      if (sample) void this.loadSample(sample);
+      if (!sample) return;
+      this.setQuery({ sample: sample.id });
+      void this.loadSample(sample);
     });
+    must('#url-btn').addEventListener('click', () => this.openUrlDialog());
+    must('#empty-url').addEventListener('click', () => this.openUrlDialog());
+    must('#help-btn').addEventListener('click', () => this.openHelp());
+    must('#loading-cancel').addEventListener('click', () => this.cancelLoad());
+    must('#geo-badge').addEventListener('click', () => this.showGeoref());
+    must('#geo-copy').addEventListener('click', () => {
+      const text = this.geoCopy;
+      if (!text) return;
+      void navigator.clipboard.writeText(text).then(
+        () => this.toast('Copied georeference.', 'info'),
+        () => {
+          /* clipboard unavailable */
+        },
+      );
+    });
+    this.bindUrlForm();
+    this.bindToast();
 
     this.buildSamples();
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
@@ -143,11 +174,28 @@ export class ViewerApp {
       event.preventDefault();
       document.body.classList.remove('is-dragging');
       const file = event.dataTransfer?.files?.[0];
-      if (file) void this.load(sourceFromFile(file));
+      if (file) {
+        this.setQuery(null);
+        void this.load(sourceFromFile(file));
+      }
     });
 
     window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !document.querySelector('dialog[open]') && !must('#loading').hidden) {
+        event.preventDefault();
+        this.cancelLoad();
+        return;
+      }
       if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('dialog[open]')) return;
+      if (event.key === '?') {
+        this.openHelp();
+        return;
+      }
+      if (event.code === 'KeyU') {
+        this.openUrlDialog();
+        return;
+      }
       if (event.code === 'KeyR') {
         this.host.resetView();
       } else if (event.code === 'KeyF') {
@@ -189,6 +237,7 @@ export class ViewerApp {
     must<HTMLSelectElement>('#sh-degree').addEventListener('change', (event) => {
       this.settings.shDegree = Number((event.target as HTMLSelectElement).value) as RenderSettings['shDegree'];
       this.host.applySettings(this.settings);
+      this.syncShDegree();
     });
     must<HTMLSelectElement>('#shading').addEventListener('change', (event) => {
       this.settings.shading = (event.target as HTMLSelectElement).value as ShadingMode;
@@ -266,8 +315,11 @@ export class ViewerApp {
   }
 
   private async loadDemoSlab(count?: number): Promise<void> {
+    this.loadingSource = null;
     this.setEmpty(false);
-    this.setLoading(true, 'Building a synthetic drone slab');
+    this.beginLoadingClock();
+    this.setLoading(true, 'Building a synthetic drone slab', undefined, undefined, 'detect');
+    must('#loading-file').textContent = 'Synthetic drone slab';
     try {
       const renderable = await createDemoSlab(count);
       this.host.clear();
@@ -300,28 +352,38 @@ export class ViewerApp {
   private buildSamples(): void {
     const menu = must('#samples-menu');
     const button = must<HTMLButtonElement>('#samples-btn');
+    const samplesRoot = must('#empty-samples');
     for (const sample of SAMPLES) {
       const item = document.createElement('button');
       item.type = 'button';
-      item.innerHTML = `${sample.label}${sample.note ? `<small>${sample.note}</small>` : ''}`;
+      item.className = 'menu-item';
+      item.setAttribute('role', 'menuitem');
+      const label = document.createElement('span');
+      label.textContent = sample.label;
+      item.append(label);
+      if (sample.note) {
+        const note = document.createElement('small');
+        note.textContent = sample.note;
+        item.append(note);
+      }
       item.addEventListener('click', () => {
-        menu.hidden = true;
-        button.setAttribute('aria-expanded', 'false');
+        this.setQuery({ sample: sample.id });
         void this.loadSample(sample);
       });
       menu.append(item);
     }
-    button.addEventListener('click', () => {
-      menu.hidden = !menu.hidden;
-      button.setAttribute('aria-expanded', String(!menu.hidden));
-    });
-    document.addEventListener('pointerdown', (event) => {
-      if (!(event.target instanceof Node)) return;
-      if (!button.contains(event.target) && !menu.contains(event.target)) {
-        menu.hidden = true;
-        button.setAttribute('aria-expanded', 'false');
-      }
-    });
+    for (const sample of SAMPLES.slice(1)) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = sample.label;
+      chip.addEventListener('click', () => {
+        this.setQuery({ sample: sample.id });
+        void this.loadSample(sample);
+      });
+      samplesRoot.append(chip);
+    }
+    bindMenu(button, menu);
   }
 
   private async boot(): Promise<void> {
@@ -346,8 +408,8 @@ export class ViewerApp {
         return;
       }
     }
-    const torus = SAMPLES.find((item) => item.id === 'torus-ply');
-    if (torus) await this.loadSample(torus);
+    this.setLoading(false);
+    this.setEmpty(true);
   }
 
   private async loadSample(sample: SampleAsset): Promise<void> {
@@ -378,8 +440,10 @@ export class ViewerApp {
       }
       watchdog.kick();
     };
+    this.loadingSource = source;
     this.setEmpty(false);
-    this.setLoading(true, `Opening ${source.name}`);
+    this.beginLoadingClock();
+    this.setLoading(true, `Opening ${source.name}`, undefined, undefined, 'detect');
     try {
       const header = PROBE_EXTENSIONS.has(source.extension)
         ? await readProbe(source, 65536, abort.signal)
@@ -405,7 +469,7 @@ export class ViewerApp {
         onProgress: (progress) => {
           arm(progress.stage);
           if (generation !== this.generation) return;
-          this.setLoading(true, progress.message ?? 'Loading', progress.loaded, progress.total);
+          this.setLoading(true, progress.message ?? 'Loading', progress.loaded, progress.total, progress.stage);
         },
       });
       if (generation !== this.generation) {
@@ -427,6 +491,7 @@ export class ViewerApp {
       this.setEmpty(this.host.items.length === 0);
     } finally {
       watchdog.clear();
+      if (this.loadAbort === abort) this.loadAbort = null;
       if (generation === this.generation) this.setLoading(false);
     }
   }
@@ -499,78 +564,353 @@ export class ViewerApp {
     must('#empty').hidden = !empty;
   }
 
-  private setLoading(active: boolean, message = '', loaded?: number, total?: number): void {
+  private beginLoadingClock(): void {
+    this.loadingStarted = performance.now();
+    this.stageStarted = this.loadingStarted;
+    this.loadingStage = null;
+    must('#loading-elapsed').textContent = '';
+    window.clearInterval(this.elapsedTimer);
+    this.elapsedTimer = window.setInterval(() => this.renderElapsed(), 1000);
+  }
+
+  private renderElapsed(): void {
+    const elapsed = performance.now() - this.loadingStarted;
+    const node = must('#loading-elapsed');
+    if (elapsed < 3000) {
+      node.textContent = '';
+    } else {
+      const totalSec = Math.floor(elapsed / 1000);
+      const minutes = Math.floor(totalSec / 60);
+      const seconds = totalSec % 60;
+      node.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+    if (this.loadingStage === 'gpu' && performance.now() - this.stageStarted > 20_000) {
+      const detail = must('#loading-detail');
+      if (detail.childElementCount === 0 && detail.textContent === '') {
+        detail.textContent = 'Large scenes can take a few minutes on the GPU.';
+      }
+    }
+  }
+
+  private setLoading(
+    active: boolean,
+    message = '',
+    loaded?: number,
+    total?: number,
+    stage?: LoadProgress['stage'],
+  ): void {
     const overlay = must('#loading');
+    const hint = must('#nav-hint');
     overlay.hidden = !active;
-    if (message) must('#loading-text').textContent = message;
-    const track = must('#loading-track');
-    const bar = must<HTMLElement>('#loading-bar');
-    const detail = must('#loading-detail');
-    const known = total !== undefined && total > 0 && loaded !== undefined && Number.isFinite(loaded);
+    must('#loading-cancel').hidden = this.loadAbort === null;
+    if (active) {
+      if (!hint.hidden) this.hintHeld = true;
+      hint.hidden = true;
+    } else if (this.hintHeld && must('#toast').hidden) {
+      hint.hidden = false;
+      this.hintHeld = false;
+    } else {
+      this.hintHeld = false;
+    }
     if (!active) {
-      track.hidden = true;
-      detail.textContent = '';
+      window.clearInterval(this.elapsedTimer);
+      this.elapsedTimer = 0;
+      must('#loading-track').hidden = true;
+      must('#loading-detail').textContent = '';
+      must('#loading-elapsed').textContent = '';
+      must('#loading-sr').textContent = '';
       return;
     }
+    if (message) must('#loading-text').textContent = message;
+    const source = this.loadingSource;
+    if (source) {
+      const size = source.sizeBytes != null ? ` · ${formatBytes(source.sizeBytes)}` : '';
+      must('#loading-file').textContent = `${source.name}${size}`;
+      must('#step-download-label').textContent = source.origin === 'file' ? 'Read' : 'Download';
+    }
+    this.renderLoadingSteps(stage);
+    const track = must('#loading-track');
+    const bar = must<HTMLElement>('#loading-bar');
+    const known = total !== undefined && total > 0 && loaded !== undefined && Number.isFinite(loaded);
+    const determinate = known && stage !== 'gpu';
     track.hidden = false;
-    if (known) {
+    if (determinate && loaded !== undefined && total !== undefined) {
       const ratio = Math.max(0, Math.min(1, loaded / total));
+      const pct = Math.round(ratio * 100);
       track.classList.remove('is-indet');
       bar.style.width = `${(ratio * 100).toFixed(1)}%`;
-      detail.textContent = `${formatCount(loaded)} / ${formatCount(total)}  ·  ${Math.round(ratio * 100)}%`;
+      track.setAttribute('aria-valuenow', String(pct));
+      const byteLine =
+        stage === 'download' || total === source?.sizeBytes
+          ? `${formatBytes(loaded)} of ${formatBytes(total)}`
+          : '';
+      this.setLoadingDetail(byteLine, `${pct}%`);
     } else {
       track.classList.add('is-indet');
       bar.style.width = '';
-      detail.textContent = '';
+      track.removeAttribute('aria-valuenow');
+      const gpuNote =
+        stage === 'gpu' && performance.now() - this.stageStarted > 20_000
+          ? 'Large scenes can take a few minutes on the GPU.'
+          : '';
+      this.setLoadingDetail(gpuNote, '');
     }
+  }
+
+  private setLoadingDetail(left: string, right: string): void {
+    const detail = must('#loading-detail');
+    detail.replaceChildren();
+    if (left) {
+      const span = document.createElement('span');
+      span.textContent = left;
+      detail.append(span);
+    }
+    if (right) {
+      const span = document.createElement('span');
+      span.textContent = right;
+      if (!left) span.style.marginLeft = 'auto';
+      detail.append(span);
+    }
+  }
+
+  private renderLoadingSteps(stage?: LoadProgress['stage']): void {
+    const order = ['download', 'parse', 'gpu'] as const;
+    const index = stage == null || stage === 'detect' ? -1 : stage === 'ready' ? order.length : order.indexOf(stage);
+    const source = this.loadingSource;
+    const labels = [
+      source?.origin === 'file' ? 'Read' : 'Download',
+      'Decode',
+      'GPU upload',
+    ];
+    const items = must('#loading-steps').querySelectorAll('li');
+    items.forEach((item, i) => {
+      item.classList.toggle('is-done', i < index);
+      item.classList.toggle('is-active', i === index);
+    });
+    if (stage && stage !== this.loadingStage) {
+      this.loadingStage = stage;
+      this.stageStarted = performance.now();
+      if (index >= 0 && index < order.length) {
+        must('#loading-sr').textContent = `${labels[index]}, step ${index + 1} of 3`;
+      }
+    }
+  }
+
+  private cancelLoad(): void {
+    const abort = this.loadAbort;
+    if (!abort) return;
+    this.loadAbort = null;
+    this.generation += 1;
+    abort.abort(new DOMException('Loading cancelled', 'AbortError'));
+    this.setLoading(false);
+    this.setEmpty(this.host.items.length === 0);
+    this.toast('Loading cancelled.', 'info');
+  }
+
+  private bindToast(): void {
+    const toast = must('#toast');
+    toast.addEventListener('pointerenter', () => window.clearTimeout(this.toastTimer));
+    toast.addEventListener('focusin', () => window.clearTimeout(this.toastTimer));
+    toast.addEventListener('pointerleave', (event) => {
+      if (toast.contains(event.relatedTarget as Node | null)) return;
+      this.armToast(4000);
+    });
+    toast.addEventListener('focusout', (event) => {
+      if (toast.contains(event.relatedTarget as Node | null)) return;
+      this.armToast(4000);
+    });
+    must('#toast-close').addEventListener('click', () => {
+      toast.hidden = true;
+      window.clearTimeout(this.toastTimer);
+    });
+  }
+
+  private armToast(ms: number): void {
+    window.clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => {
+      must('#toast').hidden = true;
+    }, ms);
   }
 
   private toast(message: string, kind: 'error' | 'warn' | 'info' = 'error'): void {
     const toast = must('#toast');
+    const icons = {
+      error: '#i-circle-alert',
+      warn: '#i-triangle-alert',
+      info: '#i-info',
+    } as const;
+    toast.dataset.kind = kind;
+    toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    must('#toast-icon').setAttribute('href', icons[kind]);
+    must('#toast-msg').textContent = message;
     toast.hidden = false;
-    toast.classList.toggle('is-warn', kind === 'warn');
-    toast.textContent = message;
-    window.clearTimeout(this.toastTimer);
-    const hold = Math.min(14_000, 5000 + message.length * 20);
-    this.toastTimer = window.setTimeout(() => {
-      toast.hidden = true;
-    }, hold);
+    must('#nav-hint').hidden = true;
+    this.armToast(Math.min(14_000, 5000 + message.length * 20));
+  }
+
+  private openUrlDialog(): void {
+    const dialog = must<HTMLDialogElement>('#url-dialog');
+    const input = must<HTMLInputElement>('#url-input');
+    input.value = '';
+    must('#url-error').hidden = true;
+    if (!dialog.open) dialog.showModal();
+    input.focus();
+  }
+
+  private bindUrlForm(): void {
+    const form = must<HTMLFormElement>('#url-form');
+    const input = must<HTMLInputElement>('#url-input');
+    const error = must('#url-error');
+    form.addEventListener('submit', (event) => {
+      const submitter = (event as SubmitEvent).submitter;
+      if (!(submitter instanceof HTMLButtonElement) || submitter.value !== 'open') return;
+      const value = input.value.trim();
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        event.preventDefault();
+        error.hidden = false;
+        error.textContent = 'Enter an http or https link.';
+        return;
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        event.preventDefault();
+        error.hidden = false;
+        error.textContent = 'Enter an http or https link.';
+        return;
+      }
+      error.hidden = true;
+      this.setQuery({ url: value });
+      void this.load(sourceFromUrl(value));
+    });
+  }
+
+  private openHelp(): void {
+    const dialog = must<HTMLDialogElement>('#help-dialog');
+    if (!dialog.open) dialog.showModal();
+  }
+
+  private setQuery(params: Record<string, string> | null): void {
+    const search = params ? `?${new URLSearchParams(params).toString()}` : '';
+    history.replaceState(null, '', location.pathname + search + location.hash);
+  }
+
+  private showGeoref(): void {
+    const panel = must('#panel');
+    if (panel.classList.contains('is-collapsed')) this.togglePanel();
+    const section = must<HTMLDetailsElement>('#sec-geo');
+    section.open = true;
+    section.scrollIntoView({ block: 'nearest' });
+    section.querySelector('summary')?.focus();
   }
 
   private renderSceneInfo(): void {
     const root = must('#scene-info');
     const item = this.host.items[0];
     if (!item) {
-      root.innerHTML = '<dt>Status</dt><dd>Nothing loaded</dd>';
+      fillKv(root, [['Status', 'Nothing loaded']]);
+      this.renderGeoref(undefined);
     } else {
       const stats = item.getStats();
+      const typeLabels: Record<string, string> = {
+        splats: 'Gaussian splats',
+        mesh: 'Mesh',
+        points: 'Point cloud',
+        voxels: 'Voxels',
+      };
+      const countLabels: Record<string, string> = {
+        splats: 'Splats',
+        points: 'Points',
+        mesh: 'Vertices',
+        voxels: 'Voxels',
+      };
+      const countValue = item.kind === 'mesh' ? (stats.vertices ?? stats.primitives) : stats.primitives;
       const rows: [string, string][] = [
         ['File', item.meta.fileName],
-        ['Kind', item.kind],
-        ['Loader', item.meta.loaderId],
-        ['Load', `${Math.round(item.meta.loadMs)} ms`],
+        ['Type', typeLabels[item.kind] ?? item.kind],
+        ['Format', item.meta.loaderId],
         ['Size', formatBytes(item.meta.bytes)],
-        ['Count', formatCount(stats.primitives)],
+        [countLabels[item.kind] ?? 'Count', formatCount(countValue)],
       ];
-      if (stats.sourcePrimitives && stats.sourcePrimitives !== stats.primitives) {
-        rows.push(['Source', formatCount(stats.sourcePrimitives)]);
+      if (stats.sourcePrimitives != null && stats.sourcePrimitives !== stats.primitives) {
+        rows.push(['Source', `${formatCount(stats.sourcePrimitives)} (subsampled to fit memory)`]);
       }
       if (stats.triangles) rows.push(['Triangles', formatCount(stats.triangles)]);
+      const ms = item.meta.loadMs;
+      rows.push(['Load time', ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`]);
+      const skip = new Set(['epsg', 'offset', 'bounds', 'note']);
+      const extraLabels: Record<string, string> = {
+        stride: 'Sample stride',
+        header: 'Header count',
+        body: 'Body count',
+      };
       if (stats.extra) {
-        for (const [key, value] of Object.entries(stats.extra)) rows.push([key, String(value)]);
+        for (const [key, value] of Object.entries(stats.extra)) {
+          if (skip.has(key)) continue;
+          rows.push([extraLabels[key] ?? key, String(value)]);
+        }
       }
-      root.replaceChildren(
-        ...rows.flatMap(([key, value]) => {
-          const dt = document.createElement('dt');
-          dt.textContent = key;
-          const dd = document.createElement('dd');
-          dd.textContent = value;
-          return [dt, dd];
-        }),
-      );
+      fillKv(root, rows);
+      this.renderGeoref(stats.extra);
     }
     this.renderFileChip();
+    this.syncShDegree();
     this.syncApplicable();
+  }
+
+  private renderGeoref(extra: Record<string, string | number> | undefined): void {
+    const section = must('#sec-geo');
+    const badge = must('#geo-badge');
+    const link = must<HTMLAnchorElement>('#geo-epsg-link');
+    const epsgRaw = extra?.epsg != null ? String(extra.epsg) : '';
+    const code = epsgRaw.replace(/^EPSG:/i, '');
+    const offset = extra?.offset != null ? String(extra.offset) : '';
+    const bounds = extra?.bounds != null ? String(extra.bounds) : '';
+    const parts = bounds.split('→').map((part) => part.trim());
+    const min = parts.length === 2 ? parts[0] ?? '' : '';
+    const max = parts.length === 2 ? parts[1] ?? '' : '';
+    const rows: [string, string][] = [];
+    if (code) rows.push(['CRS', `EPSG:${code}`]);
+    if (offset) rows.push(['Offset', offset]);
+    if (min) rows.push(['Min', min]);
+    if (max) rows.push(['Max', max]);
+    section.hidden = rows.length === 0;
+    badge.hidden = code.length === 0;
+    if (code) must('#geo-badge-text').textContent = `EPSG:${code}`;
+    if (/^\d+$/.test(code)) {
+      link.hidden = false;
+      link.href = `https://epsg.io/${code}`;
+    } else {
+      link.hidden = true;
+    }
+    fillKv(must('#geo-info'), rows, true);
+    const lines = [
+      code ? `CRS: EPSG:${code}` : '',
+      offset ? `Offset: ${offset}` : '',
+      min ? `Bounds min: ${min}` : '',
+      max ? `Bounds max: ${max}` : '',
+    ].filter((line) => line.length > 0);
+    this.geoCopy = lines.join('\n');
+  }
+
+  private syncShDegree(): void {
+    const select = must<HTMLSelectElement>('#sh-degree');
+    let available: number | null = null;
+    for (const item of this.host.items) {
+      if (item.kind !== 'splats') continue;
+      const sh = item.getStats().extra?.sh;
+      if (sh == null) continue;
+      const match = /^(\d+)/.exec(String(sh));
+      if (!match?.[1]) continue;
+      const degree = Number(match[1]);
+      available = available == null ? degree : Math.min(available, degree);
+    }
+    for (const option of select.options) {
+      option.disabled = available != null && Number(option.value) > available;
+    }
+    const shown = available == null ? this.settings.shDegree : Math.min(this.settings.shDegree, available);
+    select.value = String(shown);
   }
 
   private renderFileChip(): void {
@@ -661,6 +1001,19 @@ export class ViewerApp {
       }),
     );
   }
+}
+
+function fillKv(root: HTMLElement, rows: [string, string][], mono = false): void {
+  root.replaceChildren(
+    ...rows.flatMap(([key, value]) => {
+      const dt = document.createElement('dt');
+      dt.textContent = key;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      if (mono) dd.classList.add('kv-mono');
+      return [dt, dd];
+    }),
+  );
 }
 
 function stallMessage(ms: number): string {

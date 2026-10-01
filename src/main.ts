@@ -28,8 +28,10 @@ void waitForServiceWorker().then(() => {
   } catch (error) {
     if (loading) loading.hidden = true;
     if (empty) empty.removeAttribute('hidden');
-    const card = document.querySelector('.empty-card p');
+    const title = document.querySelector('#empty-title');
+    const desc = document.querySelector('#empty-desc');
     const message = error instanceof Error ? error.message : String(error);
-    if (card) card.textContent = message;
+    if (title) title.textContent = 'The viewer could not start';
+    if (desc) desc.textContent = message;
   }
 });
