@@ -10,3 +10,4 @@ tmp/
 test-results/
 playwright-report/
 blob-report/
+artifacts/

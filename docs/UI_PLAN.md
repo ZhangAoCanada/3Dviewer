@@ -1,6 +1,6 @@
 # UI redesign plan
 
-Status: plan only. Nothing here is implemented yet.
+Status: Batch 1 implemented. Batches 2 and 3 are not.
 Base: `main` at `293e8f8` (after audit batch 5).
 Scope: `index.html`, `src/styles.css`, `src/main.ts`, `src/app/ViewerApp.ts`, `src/app/registerUpdate.ts`,
 new files under `src/ui/`, and one new Playwright spec. Nothing under `src/render`, `src/loaders`, `src/core`,
@@ -1004,7 +1004,9 @@ already ignores the meta and ctrl modifiers.
    New keys (`3dviewer-panel`, `3dviewer-hud`, `3dviewer-hint`) go through `writeStorage()`, and reads are
    wrapped in try/catch.
 4. **URL params:** `url`, `sample` (id or href suffix), `demo=slab`, `n`. Keep the `boot()` order and the
-   default torus autoload. `setQuery()` only writes these same params.
+   default torus autoload. `setQuery()` only writes these same params. Owner decision for Batch 2 (not
+   done in Batch 1): a bare URL with no `?url=` shows the empty state with sample buttons and does not
+   auto-load the torus.
 5. **Load pipeline:** the generation counter, `loadAbort`, watchdog and `stallFor` timings, the `large`
    pre-clear, `explainLoadError`, and `stallMessage`. The only additions are the `loadAbort = null` line in
    `finally` and `cancelLoad()`.
@@ -1035,15 +1037,15 @@ screenshot harness (Appendix A) and attach the listed screenshots to the PR desc
 
 | # | Task | Files and selectors | Done when |
 | --- | --- | --- | --- |
-| 1.1 | Replace the tokens (section 2). Rewrite every rule to the new variable names. Add base `body`, `:focus-visible`, `.sr-only`, `.island` and `.divider`. | `src/styles.css` (`:root`, `:root[data-theme='light']`, all rules) | `rg -n "var\(--(bg|elev|line|muted|accent-ink|accent-2|danger|shadow|radius|font|mono|top)\)" src/styles.css` returns nothing. No hex or rgba values outside the two token blocks, except the `#fff` gradients in `.mark`. |
-| 1.2 | Add the icon sprite (section 4.1) and `.icon` CSS. | `index.html` (first child of `<body>`), `src/styles.css` | All 30 `<symbol id="i-…">` are present, and `rg -c "<symbol" index.html` prints 30. |
-| 1.3 | Buttons, segment, select, range, switch, field rows (sections 4.2 and 4.6). Add `src/ui/controls.ts` with `syncRangeFill` and `bindRangeFills`, and call them from `ViewerApp`. | `index.html` (every `.btn`, `.seg`, `select`, checkbox and range), `src/styles.css`, `src/ui/controls.ts` (new), `src/app/ViewerApp.ts` (`constructor`, `syncControls`, `restoreNavPrefs`) | Sliders show the accent fill up to the thumb after load and after restoring a stored sensitivity. All six checkboxes render as switches with `role="switch"`. |
-| 1.4 | Top bar: two islands with the markup from section 4.3, without `#url-btn`, `#help-btn`, `#geo-badge` (those come in Batch 2). Move `#mode-*` and `#reset-btn` out. File chip filled at the end of `renderSceneInfo()`: hidden when there are no items, otherwise `#file-kind` (`splats` → "Splats", `mesh` → "Mesh", `points` → "Points", `voxels` → "Voxels"), `#file-name` (and `title`), and `#file-size` = `formatBytes(meta.bytes)`. Theme button aria-label sync. | `index.html` (`header.topbar`), `src/styles.css` (`.topbar`, `.brand`, `.file-chip`, `.badge`, `.top-actions`, `.only-dark`, `.only-light`, `.hide-phone`, `.show-phone`), `src/app/ViewerApp.ts` (`renderSceneInfo`, `toggleTheme`, constructor) | At 1280x800 the top bar is two islands, both 40 px tall, with the scene visible between them. At 390x844 it is a single row. The theme icon shows a sun in dark and a moon in light. |
-| 1.5 | Bottom toolbar (section 4.4) with `focus-btn`, `fullscreen-btn` and `aria-pressed`. Factor out `focusCenter()`. | `index.html` (`nav#toolbar`), `src/styles.css` (`.toolbar`, `.segment`, `.seg`), `src/app/ViewerApp.ts` (`setMode`, the `KeyF` branch, new `focusCenter`, fullscreen wiring) | Clicking Focus with nothing at the center shows the existing message; its colour is not checked until Batch 2. Full screen toggles and its icon swaps. On iPhone emulation the button is hidden. |
-| 1.6 | Settings panel (section 4.7): header, close, `details` sections, re-grouped fields, `data-applies` plus `syncApplicable()`, starts closed, `3dviewer-panel` persistence, `body.panel-open`. Keep the old help list as a temporary last section, `<details id="sec-controls" class="sec">` titled "Controls". | `index.html` (`aside#panel`), `src/styles.css` (`.panel*`, `.sec*`, `.kv`, `.hint`), `src/app/ViewerApp.ts` (`bind` panel block, `togglePanel`, `renderSceneInfo`, new `syncApplicable`) | With the torus PLY loaded, Point size, Shading and Wireframe are hidden. With `?sample=crate`, the splat-only fields are hidden. A reload keeps the panel open or closed. `H` still toggles it. |
-| 1.7 | HUD (section 4.5): compact pill, expandable detail, no `aria-live`, zero rows hidden, `formatCompact`, `#hud-switch`, `3dviewer-hud`. | `index.html` (`#hud`), `src/styles.css` (`.hud*`), `src/ui/format.ts`, `tests/format.test.ts` (new), `src/app/ViewerApp.ts` (`renderPerf`, `bindSettings`, constructor) | `npm test` passes the new format tests. `npm run test:e2e` is green without changes. The pill reads like "60 fps · 4.8K splats · 480 KB". |
-| 1.8 | Drop IBM Plex Mono (section 7). | `src/main.ts`, `package.json`, `package-lock.json` | `rg -n "plex" src package.json` returns nothing. |
-| 1.9 | Add the screenshot harness (Appendix A) and ignore its output. | `tests-e2e/ui-shots.spec.ts` (new), `.gitignore` (add `artifacts/`) | `npm run test:e2e` reports the shot tests as skipped. `UI_SHOTS=1 npx playwright test ui-shots` writes the PNGs. |
+| [x] 1.1 | Replace the tokens (section 2). Rewrite every rule to the new variable names. Add base `body`, `:focus-visible`, `.sr-only`, `.island` and `.divider`. | `src/styles.css` (`:root`, `:root[data-theme='light']`, all rules) | `rg -n "var\(--(bg|elev|line|muted|accent-ink|accent-2|danger|shadow|radius|font|mono|top)\)" src/styles.css` returns nothing. No hex or rgba values outside the two token blocks, except the `#fff` gradients in `.mark`. |
+| [x] 1.2 | Add the icon sprite (section 4.1) and `.icon` CSS. | `index.html` (first child of `<body>`), `src/styles.css` | All 30 `<symbol id="i-…">` are present, and `rg -c "<symbol" index.html` prints 30. |
+| [x] 1.3 | Buttons, segment, select, range, switch, field rows (sections 4.2 and 4.6). Add `src/ui/controls.ts` with `syncRangeFill` and `bindRangeFills`, and call them from `ViewerApp`. | `index.html` (every `.btn`, `.seg`, `select`, checkbox and range), `src/styles.css`, `src/ui/controls.ts` (new), `src/app/ViewerApp.ts` (`constructor`, `syncControls`, `restoreNavPrefs`) | Sliders show the accent fill up to the thumb after load and after restoring a stored sensitivity. All six checkboxes render as switches with `role="switch"`. |
+| [x] 1.4 | Top bar: two islands with the markup from section 4.3, without `#url-btn`, `#help-btn`, `#geo-badge` (those come in Batch 2). Move `#mode-*` and `#reset-btn` out. File chip filled at the end of `renderSceneInfo()`: hidden when there are no items, otherwise `#file-kind` (`splats` → "Splats", `mesh` → "Mesh", `points` → "Points", `voxels` → "Voxels"), `#file-name` (and `title`), and `#file-size` = `formatBytes(meta.bytes)`. Theme button aria-label sync. | `index.html` (`header.topbar`), `src/styles.css` (`.topbar`, `.brand`, `.file-chip`, `.badge`, `.top-actions`, `.only-dark`, `.only-light`, `.hide-phone`, `.show-phone`), `src/app/ViewerApp.ts` (`renderSceneInfo`, `toggleTheme`, constructor) | At 1280x800 the top bar is two islands, both 40 px tall, with the scene visible between them. At 390x844 it is a single row. The theme icon shows a sun in dark and a moon in light. |
+| [x] 1.5 | Bottom toolbar (section 4.4) with `focus-btn`, `fullscreen-btn` and `aria-pressed`. Factor out `focusCenter()`. | `index.html` (`nav#toolbar`), `src/styles.css` (`.toolbar`, `.segment`, `.seg`), `src/app/ViewerApp.ts` (`setMode`, the `KeyF` branch, new `focusCenter`, fullscreen wiring) | Clicking Focus with nothing at the center shows the existing message; its colour is not checked until Batch 2. Full screen toggles and its icon swaps. On iPhone emulation the button is hidden. |
+| [x] 1.6 | Settings panel (section 4.7): header, close, `details` sections, re-grouped fields, `data-applies` plus `syncApplicable()`, starts closed, `3dviewer-panel` persistence, `body.panel-open`. Keep the old help list as a temporary last section, `<details id="sec-controls" class="sec">` titled "Controls". | `index.html` (`aside#panel`), `src/styles.css` (`.panel*`, `.sec*`, `.kv`, `.hint`), `src/app/ViewerApp.ts` (`bind` panel block, `togglePanel`, `renderSceneInfo`, new `syncApplicable`) | With the torus PLY loaded, Point size, Shading and Wireframe are hidden. With `?sample=crate`, the splat-only fields are hidden. A reload keeps the panel open or closed. `H` still toggles it. |
+| [x] 1.7 | HUD (section 4.5): compact pill, expandable detail, no `aria-live`, zero rows hidden, `formatCompact`, `#hud-switch`, `3dviewer-hud`. | `index.html` (`#hud`), `src/styles.css` (`.hud*`), `src/ui/format.ts`, `tests/format.test.ts` (new), `src/app/ViewerApp.ts` (`renderPerf`, `bindSettings`, constructor) | `npm test` passes the new format tests. `npm run test:e2e` is green without changes. The pill reads like "60 fps · 4.8K splats · 480 KB". |
+| [x] 1.8 | Drop IBM Plex Mono (section 7). | `src/main.ts`, `package.json`, `package-lock.json` | `rg -n "plex" src package.json` returns nothing. |
+| [x] 1.9 | Add the screenshot harness (Appendix A) and ignore its output. | `tests-e2e/ui-shots.spec.ts` (new), `.gitignore` (add `artifacts/`) | `npm run test:e2e` reports the shot tests as skipped. `UI_SHOTS=1 npx playwright test ui-shots` writes the PNGs. |
 
 **Batch 1 screenshots** (1280x800 and 390x844, dark and light): `loaded`, `panel`.
 Check that the panel at 1280 does not cover the toolbar, that there is no wrapped top bar at 390, and that
@@ -1176,12 +1178,10 @@ for (const size of sizes) {
 Add the iPad case in Batch 3 as a third `sizes` entry: `{ name: 'ipad', width: 1024, height: 1366, touch: true }`,
 limited to `loaded` and `panel` in dark.
 
-## Appendix B: Open questions for the owner (do not block on these)
+## Appendix B: Open questions — owner answers
 
-1. A bare URL keeps auto-loading the torus. The redesigned empty state is shown only after errors or
-   cancel. Do you want `?sample=none`, or a first-visit empty state? That would change `boot()`, so it is
-   out of scope here.
-2. Accent color: the plan keeps the teal brand. A swap is a two-line token change (`--color-accent*` in
-   both themes).
-3. Settings start closed at every size. If you prefer it open on wide desktop screens, default
-   `3dviewer-panel` to `'open'` when `matchMedia('(min-width: 1440px)')` matches.
+1. **Bare URL.** A bare URL with no `?url=` shows the new empty state with sample buttons and no longer
+   auto-loads the torus. That changes `boot()`, so it is Batch 2 work. Batch 1 still auto-loads the torus.
+2. **Accent.** Keep the teal accent (`--color-accent` and the related tokens in both themes).
+3. **Settings.** The settings panel starts closed on all screen sizes. Do not default `3dviewer-panel` to
+   `'open'` when `matchMedia('(min-width: 1440px)')` matches.
