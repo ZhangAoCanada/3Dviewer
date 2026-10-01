@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c0f14" />
+    <meta
+      name="description"
+      content="Real-time viewer for 3D Gaussian splats, meshes, and point clouds."
+    />
+    <title>3Dviewer</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <script>
+      try {
+        const stored = localStorage.getItem('3dviewer-theme');
+        if (stored === 'light' || stored === 'dark') {
+          document.documentElement.dataset.theme = stored;
+        }
+      } catch (e) {
+        /* ignore private mode */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport">
+        <canvas id="view" tabindex="0" aria-label="3D viewport"></canvas>
+      </div>
+
+      <header class="topbar">
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div>
+            <strong>3Dviewer</strong>
+            <span class="brand-sub">splats, meshes, points</span>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button id="open-btn" class="btn primary" type="button">Open</button>
+          <input id="file-input" type="file" hidden accept=".ply,.splat,.spz,.ksplat,.sog,.rad,.glb,.gltf,.obj,.zip" />
+          <div class="menu">
+            <button id="samples-btn" class="btn" type="button" aria-expanded="false" aria-controls="samples-menu">
+              Samples
+            </button>
+            <div id="samples-menu" class="menu-pop" hidden></div>
+          </div>
+          <div class="segment" role="group" aria-label="Navigation mode">
+            <button id="mode-orbit" class="seg is-on" type="button">Orbit</button>
+            <button id="mode-fly" class="seg" type="button">Fly</button>
+          </div>
+          <button id="reset-btn" class="btn" type="button" title="Reset view (R)">Reset</button>
+          <button id="theme-btn" class="btn icon" type="button" aria-label="Toggle theme">Theme</button>
+          <button id="panel-btn" class="btn icon" type="button" aria-expanded="true" aria-controls="panel">
+            Panel
+          </button>
+        </div>
+      </header>
+
+      <section id="empty" class="empty">
+        <div class="empty-card">
+          <span class="mark lg" aria-hidden="true"></span>
+          <h1>Drop a 3D file</h1>
+          <p>PLY Gaussian splats, .splat, meshes (.glb, .obj), and point clouds. Drag anywhere, or open a sample.</p>
+          <div class="empty-actions">
+            <button id="empty-open" class="btn primary" type="button">Choose file</button>
+            <button id="empty-sample" class="btn" type="button">Load torus splats</button>
+          </div>
+        </div>
+      </section>
+
+      <div id="hud" class="hud" aria-live="polite">
+        <div><span>FPS</span><strong id="hud-fps">—</strong></div>
+        <div><span>Frame</span><strong id="hud-ms">—</strong></div>
+        <div><span>Splats</span><strong id="hud-splats">—</strong></div>
+        <div><span>Points</span><strong id="hud-points">—</strong></div>
+        <div><span>Tris</span><strong id="hud-tris">—</strong></div>
+        <div><span>GPU est.</span><strong id="hud-gpu">—</strong></div>
+      </div>
+
+      <aside id="panel" class="panel">
+        <section>
+          <h2>Scene</h2>
+          <dl id="scene-info" class="kv"></dl>
+        </section>
+        <section>
+          <h2>Render</h2>
+          <label class="field">
+            <span>Splat size <output id="out-splat-scale">1.0</output></span>
+            <input id="splat-scale" type="range" min="0.4" max="2.2" step="0.05" value="1" />
+          </label>
+          <label class="field">
+            <span>SH degree</span>
+            <select id="sh-degree">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Point size <output id="out-point-size">1.0</output></span>
+            <input id="point-size" type="range" min="0.25" max="4" step="0.05" value="1" />
+          </label>
+          <label class="field">
+            <span>LOD detail <output id="out-lod">1.0</output></span>
+            <input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" />
+          </label>
+          <label class="field">
+            <span>Shading</span>
+            <select id="shading">
+              <option value="lit" selected>Lit</option>
+              <option value="flat">Unlit</option>
+              <option value="normals">Normals</option>
+            </select>
+          </label>
+          <label class="check"><input id="wireframe" type="checkbox" /> Wireframe</label>
+          <label class="check"><input id="gs-2d" type="checkbox" checked /> 2D Gaussian axes</label>
+          <label class="check"><input id="sort-radial" type="checkbox" checked /> Radial depth sort</label>
+          <label class="check"><input id="extended" type="checkbox" /> Extended precision on next load</label>
+          <label class="check"><input id="flip-y" type="checkbox" /> Flip Y (OpenCV / COLMAP)</label>
+          <label class="check"><input id="grid" type="checkbox" /> Ground grid</label>
+          <label class="field">
+            <span>Pixel ratio</span>
+            <select id="pixel-ratio">
+              <option value="auto" selected>Auto</option>
+              <option value="1">1</option>
+              <option value="1.5">1.5</option>
+              <option value="2">2</option>
+            </select>
+          </label>
+        </section>
+        <section>
+          <h2>Performance</h2>
+          <dl id="perf-info" class="kv"></dl>
+          <p class="hint">
+            Depth keys are computed on the GPU. Sorting runs in a WASM worker so the UI thread keeps drawing.
+            Files past a few hundred thousand splats build a level-of-detail tree in that worker.
+          </p>
+        </section>
+        <section>
+          <h2>Controls</h2>
+          <ul class="help">
+            <li><b>Orbit</b> drag, right-drag or two-finger pan, wheel or pinch zoom</li>
+            <li><b>Fly</b> drag to look, WASD move, Q/E or Space vertical, Shift sprint</li>
+            <li><b>Touch fly</b> one finger looks, two fingers move forward</li>
+            <li><b>Double-click</b> or F focuses on a point. R resets the view</li>
+          </ul>
+        </section>
+      </aside>
+
+      <div id="loading" class="loading" hidden>
+        <div class="loading-card">
+          <div class="spinner" aria-hidden="true"></div>
+          <p id="loading-text">Loading</p>
+        </div>
+      </div>
+      <div id="toast" class="toast" hidden role="status"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
