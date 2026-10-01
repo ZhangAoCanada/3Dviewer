@@ -52,6 +52,7 @@ export function pickScene(
   raycaster: THREE.Raycaster,
   bounds: THREE.Box3 | null,
   pivot: THREE.Vector3,
+  indexPoint: THREE.Vector3 | null = null,
 ): SceneHit | null {
   let best: SceneHit | null = null;
   let bestDist = Infinity;
@@ -68,7 +69,8 @@ export function pickScene(
     const hit = hits[0];
     if (hit) consider(hit.point, true);
   }
-  if (coarse) {
+  if (indexPoint) consider(indexPoint, true);
+  else if (coarse) {
     const point = coarse.pick(origin, direction);
     if (point) consider(point, true);
   }

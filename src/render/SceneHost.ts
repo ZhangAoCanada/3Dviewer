@@ -5,6 +5,7 @@ import { detectUpAxis } from './cameraMotion';
 import { NavigationController, type NavMode, type UpMode } from './Navigation';
 import { buildCoarse, collectCoarsePoints, disableSplatRaycast, isSplatObject, pickScene, type SceneHit } from './scenePick';
 import type { CoarseSurface } from './coarseSurface';
+import { collectIndexSources, SplatIndex, SplatIndexJob } from './splatIndex';
 
 const DEFAULT_STD_DEV = Math.sqrt(8);
 
@@ -40,9 +41,16 @@ export class SceneHost {
   private fps = 0;
   upMode: UpMode = 'auto';
   private coarse: CoarseSurface | null = null;
+  private index: SplatIndex | null = null;
+  private indexJob: SplatIndexJob | null = null;
   private readonly bounds = new THREE.Box3();
   private hasBounds = false;
-  private readonly overlay = new THREE.Scene();
+  private viewDirty = true;
+  private drewOnce = false;
+  private readonly stillPos = new THREE.Vector3();
+  private readonly stillQuat = new THREE.Quaternion();
+  private readonly pickForward = new THREE.Vector3();
+  private readonly pickPoint = new THREE.Vector3();
   private readonly pivotMarker = createPivotMarker();
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
@@ -92,11 +100,13 @@ export class SceneHost {
     this.grid = new THREE.GridHelper(10, 20, 0x3d4c63, 0x2a3546);
     this.grid.visible = false;
     this.scene.add(this.grid);
-    this.overlay.add(this.pivotMarker);
+    this.scene.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
     this.navigation.pick = (x, y) => this.pick(x, y);
     this.navigation.onPivot = (point) => {
-      this.pivotMarker.visible = point !== null;
+      const visible = point !== null;
+      if (this.pivotMarker.visible !== visible) this.viewDirty = true;
+      this.pivotMarker.visible = visible;
       if (point) this.pivotMarker.position.copy(point);
     };
     this.resize();
@@ -108,6 +118,7 @@ export class SceneHost {
 
   setBackground(color: string): void {
     this.renderer.setClearColor(color, 1);
+    this.viewDirty = true;
   }
 
   setMode(mode: NavMode): void {
@@ -118,6 +129,11 @@ export class SceneHost {
     for (const item of this.renderables) item.dispose();
     this.renderables.length = 0;
     this.content.clear();
+    this.index = null;
+    this.indexJob = null;
+    this.coarse = null;
+    this.hasBounds = false;
+    this.viewDirty = true;
   }
 
   add(renderable: Renderable, settings: RenderSettings): void {
@@ -126,6 +142,7 @@ export class SceneHost {
     this.content.add(renderable.object);
     renderable.applySettings(settings);
     this.applyEnvironment(settings);
+    this.viewDirty = true;
   }
 
   applySettings(settings: RenderSettings): void {
@@ -178,6 +195,8 @@ export class SceneHost {
     this.rebuildCoarse();
     this.navigation.frame(box);
     this.placeGrid(box, size);
+    this.viewDirty = true;
+    this.startIndex(box);
   }
 
   resetView(): void {
@@ -208,6 +227,12 @@ export class SceneHost {
     this.coarse = buildCoarse(collectCoarsePoints(this.content));
   }
 
+  private startIndex(box: THREE.Box3): void {
+    this.index = null;
+    const sources = collectIndexSources(this.content);
+    this.indexJob = sources.length > 0 ? new SplatIndexJob(sources, box) : null;
+  }
+
   private pick(clientX: number, clientY: number): SceneHit | null {
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -219,14 +244,32 @@ export class SceneHost {
     this.content.traverse((object) => {
       if ((object as THREE.Mesh).isMesh && !isSplatObject(object)) meshes.push(object);
     });
+    let indexPoint: THREE.Vector3 | null = null;
+    if (this.index) {
+      this.camera.getWorldDirection(this.pickForward);
+      const height = Math.max(this.canvas.clientHeight, 1);
+      if (
+        this.index.pick(
+          this.raycaster.ray.origin,
+          this.raycaster.ray.direction,
+          this.pickForward,
+          THREE.MathUtils.degToRad(this.camera.fov),
+          height,
+          this.pickPoint,
+        )
+      ) {
+        indexPoint = this.pickPoint;
+      }
+    }
     return pickScene(
       this.raycaster.ray.origin,
       this.raycaster.ray.direction,
-      this.coarse,
+      this.index ? null : this.coarse,
       meshes,
       this.raycaster,
       this.hasBounds ? this.bounds : null,
       this.navigation.pivot,
+      indexPoint,
     );
   }
 
@@ -237,6 +280,7 @@ export class SceneHost {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    this.viewDirty = true;
   }
 
   applyPixelRatio(settings: RenderSettings): void {
@@ -251,15 +295,29 @@ export class SceneHost {
     this.running = true;
     this.lastTime = performance.now();
     this.renderer.setAnimationLoop((time) => {
-      const dt = Math.min(0.05, (time - this.lastTime) / 1000);
+      const elapsed = Math.max(0, (time - this.lastTime) / 1000);
       this.lastTime = time;
+      const dt = Math.min(0.05, elapsed);
       this.navigation.update(dt);
       this.updatePivotMarker();
       for (const item of this.renderables) item.update(dt);
-      this.renderer.render(this.scene, this.camera);
-      this.renderPivotMarker();
+      const draw = this.needsDraw();
+      if (this.indexJob) {
+        const done = this.indexJob.pump(draw ? 0.35 : 1.4);
+        if (done) {
+          this.index = this.indexJob.finish();
+          this.indexJob = null;
+        }
+      }
+      if (draw) {
+        this.renderer.render(this.scene, this.camera);
+        this.stillPos.copy(this.camera.position);
+        this.stillQuat.copy(this.camera.quaternion);
+        this.viewDirty = false;
+        this.drewOnce = true;
+      }
       this.fpsFrames += 1;
-      this.fpsElapsed += dt;
+      this.fpsElapsed += elapsed;
       if (this.fpsElapsed >= 0.4) {
         this.fps = this.fpsFrames / this.fpsElapsed;
         this.frameMs = (this.fpsElapsed / this.fpsFrames) * 1000;
@@ -302,14 +360,11 @@ export class SceneHost {
     this.pivotMarker.scale.setScalar(world);
   }
 
-  /** Drawn after splats so the ring stays visible on a dense cloud. */
-  private renderPivotMarker(): void {
-    if (!this.pivotMarker.visible) return;
-    const autoClear = this.renderer.autoClear;
-    this.renderer.autoClear = false;
-    this.renderer.clearDepth();
-    this.renderer.render(this.overlay, this.camera);
-    this.renderer.autoClear = autoClear;
+  private needsDraw(): boolean {
+    if (!this.drewOnce || this.viewDirty || this.spark.dirty || this.spark.sortDirty) return true;
+    if (this.navigation.isMoving() || this.pivotMarker.visible) return true;
+    if (this.stillPos.distanceToSquared(this.camera.position) > 1e-10) return true;
+    return Math.abs(this.stillQuat.dot(this.camera.quaternion)) < 1 - 1e-8;
   }
 
   private estimateGpuBytes(): number {
@@ -347,6 +402,8 @@ function createPivotMarker(): THREE.Group {
   );
   ring.frustumCulled = false;
   dot.frustumCulled = false;
+  ring.renderOrder = 20;
+  dot.renderOrder = 21;
   group.add(ring, dot);
   group.visible = false;
   group.frustumCulled = false;

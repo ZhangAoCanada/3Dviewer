@@ -211,11 +211,11 @@ export class ViewerApp {
     must('#up-using').textContent = this.host.upAxis === 'z' ? 'Z-up' : 'Y-up';
   }
 
-  private async loadDemoSlab(): Promise<void> {
+  private async loadDemoSlab(count?: number): Promise<void> {
     this.setEmpty(false);
     this.setLoading(true, 'Building a synthetic drone slab');
     try {
-      const renderable = await createDemoSlab();
+      const renderable = await createDemoSlab(count);
       this.host.clear();
       this.host.add(renderable, this.settings);
       this.host.setFlip(false);
@@ -274,7 +274,10 @@ export class ViewerApp {
     const url = params.get('url');
     const sampleId = params.get('sample');
     if (params.get('demo') === 'slab') {
-      await this.loadDemoSlab();
+      const raw = params.get('n');
+      const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
+      const count = Number.isFinite(requested) ? Math.min(Math.max(Math.round(requested), 1000), 1_500_000) : undefined;
+      await this.loadDemoSlab(count);
       return;
     }
     if (url) {
