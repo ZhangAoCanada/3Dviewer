@@ -100,15 +100,17 @@ Large-scene agents implement `ChunkStreamer` in `src/streaming/` (`rad-paged`, `
 
 Phase 1 behavior, in order:
 
-1. **Do not read everything up front.** Gaussian files at or above 16 MB are passed to Spark as a `ReadableStream` (`File.stream()`), not a single byte array. `.rad` sets `paged: true` so Spark's `SplatPager` fetches chunks into a fixed GPU pool.
-2. **LoD in a worker.** Every gaussian load sets `lod: true` and `lodAbove: 400_000`. Smaller files render directly. Larger files build a tiny-LoD tree off the main thread. The render panel's LoD detail slider maps to `lodSplatScale`, and the resident budget comes from `MemoryBudget` (about 0.9 M splats on phones, 2.5 M on desktop).
+1. **Do not read everything up front.** A standard INRIA Gaussian `.ply` (binary, `f_dc_*` / `scale_*` / `rot_*`) is sliced with `Blob.slice` in `gaussianPly.worker.ts` and packed there. The raw file is never one `ArrayBuffer` and never enters the WASM heap. Spark's own decoder still owns `.splat`, `.spz`, `.ksplat`, `.sog`, `.rad`, and compressed PLY (`element chunk`); those streams start at 16 MB. `.rad` sets `paged: true` so Spark's `SplatPager` fetches chunks into a fixed GPU pool.
+2. **LoD in a worker.** When the decoded buffers and a second LoD copy both fit, the loader calls Spark's `createLodSplats` (tiny LoD, above 400,000 splats). The render panel's LoD detail slider maps to `lodSplatScale`, and the resident budget comes from `MemoryBudget` (about 0.7–0.9 M splats on phones, 2.5 M on desktop). If the copy does not fit, the full decoded set is sorted instead of crashing.
 3. **Sort off the main thread.** Spark writes view-space depth with the GPU, then `sort32_splats` runs in a WASM worker. Full GPU radix sort is a later optimization, not a blocker.
-4. **Compressed in-memory splats.** The default path is Spark's packed encoding (quantized). Files at or above 80 MB, or the "extended precision" checkbox, use float32 centers so drone-scale coordinates do not stripe.
-5. **Point clouds.** The worker reads the PLY in chunks and keeps at most `budget.maxPoints` vertices (1.5 M mobile / 8 M desktop). This is a stand-in until an octree streamer exists. The scene panel shows the stride when a cloud was subsampled.
-6. **Pixel ratio.** Capped at 1.5 on mobile and 2 on desktop so fill rate stays interactive.
-7. **Main thread.** Parsing of point clouds is in `plyPoints.worker.ts`. Mesh loaders still use Three.js on the main thread; a mesh worker is only worth it if OBJ/STL profiling shows stalls.
+4. **Compressed in-memory splats.** The worker writes Spark's packed encoding (16 bytes, half-float centers) or extended encoding (32 bytes, float32 centers). Files at or above 80 MB, or the "extended precision" checkbox, prefer float32 centers when the budget allows, so a few-hundred-unit local frame does not stripe. SH degree drops first (3 → 0), then the loader subsamples. Phones also cap the decoded set at `maxSplatsResident`.
+5. **Wrong vertex counts.** Some exports copy `element vertex` from a sibling cloud. If the bytes after `end_header` divide evenly by the vertex stride, that quotient is the splat count and the scene panel says the header and the body disagreed.
+6. **Point clouds.** The worker reads the PLY in chunks and keeps at most `budget.maxPoints` vertices (1.5 M mobile / 8 M desktop). This is a stand-in until an octree streamer exists. The scene panel shows the stride when a cloud was subsampled.
+7. **Pixel ratio.** Capped at 1.5 on mobile and 2 on desktop so fill rate stays interactive.
+8. **Main thread.** Gaussian PLY parsing is in `gaussianPly.worker.ts`. Point clouds use `plyPoints.worker.ts`. Mesh loaders still use Three.js on the main thread; a mesh worker is only worth it if OBJ/STL profiling shows stalls.
+9. **Errors.** A WASM `RuntimeError: unreachable` is rewritten into a sentence that names the fault and what to try. The overlay shows a progress bar and the splat count while a PLY is decoding.
 
-What Phase 1 does **not** do: turn an arbitrary 1 GB `.ply` into a paged world by itself. Spark can decode a stream and build LoD up to a few tens of millions of splats, but the durable format for drone reconstructions is a prebuilt chunked `.rad` (or streamed SOG) served with HTTP range requests. That bake step is workstream 1.
+What Phase 1 does **not** do: turn an arbitrary multi-GB `.ply` into a paged `.rad` inside the browser. Spark's Rust `build-lod` (`cargo run --manifest-path rust/build-lod/Cargo.toml --release` in the Spark repo) writes a chunked `.rad` this viewer already opens with `paged: true`. Doing that bake in the page would read the PLY a second time and then download hundreds of megabytes, so it is left as a preprocess. Streamed SOG is the other future path and is still `UnimplementedStreamer`.
 
 ## Navigation
 
@@ -127,8 +129,8 @@ These are independent enough to land as separate PRs. Stay inside the owned path
 
 Owns `src/loaders/gaussian/**` and new files under `src/streaming/` (RAD / SOG).
 
-- Prebuilt chunked `.rad` (`paged: true`) and a documented bake command (`spark`'s `build-lod`, or PlayCanvas streamed SOG if a converter is easier to ship).
-- Progressive UI: coarse root first, chunk priority from the camera, eviction against `MemoryBudget`.
+- The in-browser chunked Gaussian PLY decode lives in `src/loaders/gaussian/`. Still open: a prebuilt chunked `.rad` bake (`spark`'s `build-lod`, or PlayCanvas streamed SOG) so the next open does not rescan the PLY.
+- Progressive UI for that paged file: coarse root first, chunk priority from the camera, eviction against `MemoryBudget`. `.rad` already sets `paged: true`.
 - `.spz`, `.ksplat`, `.sog` are already accepted by the same loader; tighten progress, errors, and SH bands.
 - 2DGS is enabled with `enable2DGS` (zero scale axes). Add a real 2DGS sample and screenshots.
 - Keep `GaussianRenderable` as the only scene-facing type.

@@ -134,8 +134,11 @@
           <h2>Performance</h2>
           <dl id="perf-info" class="kv"></dl>
           <p class="hint">
-            Depth keys are computed on the GPU. Sorting runs in a WASM worker so the UI thread keeps drawing.
-            Files past a few hundred thousand splats build a level-of-detail tree in that worker.
+            Large Gaussian PLY files are read in chunks and packed outside the WASM heap, so a multi-gigabyte
+            file is never one ArrayBuffer. Spherical harmonics drop first, then splats are subsampled, if the
+            device budget cannot hold the whole cloud. Sorting still runs in a WASM worker.
+            A paged <code>.rad</code> is the format that loads instantly next time; baking one is a Spark
+            <code>build-lod</code> step, not a download from this page.
           </p>
         </section>
         <section>
@@ -152,7 +155,13 @@
       <div id="loading" class="loading" hidden>
         <div class="loading-card">
           <div class="spinner" aria-hidden="true"></div>
-          <p id="loading-text">Loading</p>
+          <div class="loading-copy">
+            <p id="loading-text">Loading</p>
+            <div id="loading-track" class="load-track" hidden>
+              <div id="loading-bar" class="load-bar"></div>
+            </div>
+            <p id="loading-detail" class="loading-detail"></p>
+          </div>
         </div>
       </div>
       <div id="toast" class="toast" hidden role="status"></div>

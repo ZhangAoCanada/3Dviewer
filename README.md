@@ -2,7 +2,7 @@
 
 A real-time viewer for 3D Gaussian splats, meshes, and point clouds. It runs in the browser on desktop, phones, and iPads, and is set up for [GitHub Pages](https://zhangaocanada.github.io/3Dviewer/).
 
-Phase 1 loads a file and draws it. Streaming and LoD for reconstructions past 1 GB are designed in [ARCHITECTURE.md](ARCHITECTURE.md) and partially wired through [Spark](https://sparkjs.dev/): worker depth sorting, worker LoD above 400k splats, streamed reads for large files, and paged `.rad` loading.
+Phase 1 loads a file and draws it. A standard Gaussian `.ply` is decoded in a worker, in chunks, straight into Spark's packed splats, so a multi-gigabyte file is not one `ArrayBuffer` and does not have to fit in the WASM heap. A header `element vertex` count that does not match the body is replaced by the body size when the stride divides it. SH degree drops, then splats are subsampled, when the device budget is too small. Paged `.rad` (Spark `build-lod`) is what to open the next time; that bake is not done in the browser. Details are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Use it
 

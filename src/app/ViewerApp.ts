@@ -12,6 +12,7 @@ import type { FrameStats } from '../render/SceneHost';
 import { SceneHost } from '../render/SceneHost';
 import type { NavMode } from '../render/Navigation';
 import { isTypingTarget } from '../render/Navigation';
+import { explainLoadError } from '../loaders/gaussian/explainLoadError';
 import { formatBytes, formatCount, formatFixed } from '../ui/format';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
@@ -21,6 +22,7 @@ export class ViewerApp {
   private readonly registry = createDefaultRegistry();
   private readonly settings: RenderSettings;
   private generation = 0;
+  private loadAbort: AbortController | null = null;
   private toastTimer = 0;
   private lastPointer = { x: 0, y: 0, t: 0 };
 
@@ -251,11 +253,22 @@ export class ViewerApp {
 
   private async load(source: AssetSource): Promise<void> {
     const generation = ++this.generation;
+    this.loadAbort?.abort();
+    const abort = new AbortController();
+    this.loadAbort = abort;
+    const timeoutMs = loadTimeoutMs(source.sizeBytes);
+    const timer = window.setTimeout(() => {
+      abort.abort(
+        new Error(
+          'This file is taking too long to decode. It is still on disk; try again, or convert it to a paged .rad so the next open does not read the whole PLY.',
+        ),
+      );
+    }, timeoutMs);
     this.setEmpty(false);
     this.setLoading(true, `Opening ${source.name}`);
     try {
       const header = PROBE_EXTENSIONS.has(source.extension)
-        ? await readProbe(source, 65536, AbortSignal.timeout(20000))
+        ? await readProbe(source, 65536, abort.signal)
         : new Uint8Array();
       if (generation !== this.generation) return;
       const loader = this.registry.resolve(source, header);
@@ -265,12 +278,12 @@ export class ViewerApp {
         );
       }
       const renderable = await loader.load(source, {
-        signal: AbortSignal.timeout(180000),
+        signal: abort.signal,
         budget: detectMemoryBudget(),
         extendedPrecision: this.settings.extendedPrecision,
         onProgress: (progress) => {
           if (generation !== this.generation) return;
-          this.setLoading(true, progress.message ?? 'Loading');
+          this.setLoading(true, progress.message ?? 'Loading', progress.loaded, progress.total);
         },
       });
       if (generation !== this.generation) {
@@ -282,11 +295,14 @@ export class ViewerApp {
       this.host.setFlip(this.settings.flipY);
       this.renderSceneInfo();
       this.setEmpty(false);
+      const note = renderable.getStats().extra?.note;
+      if (typeof note === 'string' && note.length > 0) this.toast(note, 'warn');
     } catch (error) {
       if (generation !== this.generation) return;
-      this.toast(error instanceof Error ? error.message : String(error));
+      this.toast(explainLoadError(error), 'error');
       this.setEmpty(this.host.items.length === 0);
     } finally {
+      window.clearTimeout(timer);
       if (generation === this.generation) this.setLoading(false);
     }
   }
@@ -317,20 +333,42 @@ export class ViewerApp {
     must('#empty').hidden = !empty;
   }
 
-  private setLoading(active: boolean, message = ''): void {
+  private setLoading(active: boolean, message = '', loaded?: number, total?: number): void {
     const overlay = must('#loading');
     overlay.hidden = !active;
     if (message) must('#loading-text').textContent = message;
+    const track = must('#loading-track');
+    const bar = must<HTMLElement>('#loading-bar');
+    const detail = must('#loading-detail');
+    const known = total !== undefined && total > 0 && loaded !== undefined && Number.isFinite(loaded);
+    if (!active) {
+      track.hidden = true;
+      detail.textContent = '';
+      return;
+    }
+    track.hidden = false;
+    if (known) {
+      const ratio = Math.max(0, Math.min(1, loaded / total));
+      track.classList.remove('is-indet');
+      bar.style.width = `${(ratio * 100).toFixed(1)}%`;
+      detail.textContent = `${formatCount(loaded)} / ${formatCount(total)}  ·  ${Math.round(ratio * 100)}%`;
+    } else {
+      track.classList.add('is-indet');
+      bar.style.width = '';
+      detail.textContent = '';
+    }
   }
 
-  private toast(message: string): void {
+  private toast(message: string, kind: 'error' | 'warn' = 'error'): void {
     const toast = must('#toast');
     toast.hidden = false;
+    toast.classList.toggle('is-warn', kind === 'warn');
     toast.textContent = message;
     window.clearTimeout(this.toastTimer);
+    const hold = Math.min(14_000, 5000 + message.length * 20);
     this.toastTimer = window.setTimeout(() => {
       toast.hidden = true;
-    }, 4600);
+    }, hold);
   }
 
   private renderSceneInfo(): void {
@@ -402,6 +440,13 @@ export class ViewerApp {
       }),
     );
   }
+}
+
+function loadTimeoutMs(sizeBytes: number | undefined): number {
+  const mb = (sizeBytes ?? 0) / (1024 * 1024);
+  if (mb >= 512) return 45 * 60_000;
+  if (mb >= 64) return 10 * 60_000;
+  return 3 * 60_000;
 }
 
 function must<T extends Element = HTMLElement>(selector: string): T {

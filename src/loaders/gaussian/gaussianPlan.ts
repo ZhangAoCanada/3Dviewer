@@ -1,0 +1,163 @@
+import type { MemoryBudget } from '../../core/types';
+
+/** Spark's splat texture width. Packed buffers must cover a whole texture. */
+export const SPLAT_TEX_WIDTH = 2048;
+
+/**
+ * Bytes of one decoded splat, not counting texture padding.
+ * Packed is 4×uint32 plus SH bands (8 / 16 / 16). Extended is float32 centers
+ * (2×4 uint32) plus wider SH (16 / 16 / 32).
+ */
+export const PACKED_SPLAT_BYTES = [16, 24, 40, 56] as const;
+export const EXTENDED_SPLAT_BYTES = [32, 48, 64, 96] as const;
+
+/** Share of MemoryBudget.cpuBytes used for the decoded buffers themselves. */
+export const DECODE_FRACTION = 0.62;
+
+/** Worker LoD builds a second copy. Only start it when that copy fits. */
+export const LOD_ABOVE = 400_000;
+const LOD_HEADROOM = 0.85;
+
+export type ShDegree = 0 | 1 | 2 | 3;
+
+export interface GaussianDecodePlan {
+  shDegree: ShDegree;
+  /** Keep 1 of every `stride` source splats. */
+  stride: number;
+  decodedCount: number;
+  extended: boolean;
+  /** Padded allocation, the number of bytes we will actually ask for. */
+  estimatedBytes: number;
+  lod: boolean;
+  notes: string[];
+}
+
+export function paddedSplatCount(count: number): number {
+  const n = Math.max(0, Math.floor(count));
+  if (n === 0) return 0;
+  const width = SPLAT_TEX_WIDTH;
+  const height = Math.max(1, Math.min(width, Math.ceil(n / width)));
+  const depth = Math.ceil(n / (width * height));
+  return width * height * depth;
+}
+
+export function bytesPerSplat(sh: ShDegree, extended: boolean): number {
+  return extended ? EXTENDED_SPLAT_BYTES[sh] : PACKED_SPLAT_BYTES[sh];
+}
+
+export function estimateDecodedBytes(count: number, sh: ShDegree, extended: boolean): number {
+  return paddedSplatCount(count) * bytesPerSplat(sh, extended);
+}
+
+/**
+ * Fit a gaussian PLY into the device budget.
+ * Drop SH degree first, then switch off float32 centers, then subsample.
+ * Mobile also caps the decoded set at the resident splat budget.
+ */
+export function planGaussianDecode(args: {
+  sourceCount: number;
+  sourceSh: ShDegree;
+  budget: MemoryBudget;
+  preferExtended: boolean;
+}): GaussianDecodePlan {
+  const sourceCount = Math.max(0, Math.floor(args.sourceCount));
+  const sourceSh = args.sourceSh;
+  const shCap = Math.min(sourceSh, args.budget.maxSh) as ShDegree;
+  const usable = Math.floor(args.budget.cpuBytes * DECODE_FRACTION);
+  const encodings = args.preferExtended ? [true, false] : [false];
+
+  let shDegree: ShDegree = 0;
+  let extended = false;
+  let fullFit = false;
+
+  for (const wantExtended of encodings) {
+    for (let sh = shCap; sh >= 0; sh -= 1) {
+      const degree = sh as ShDegree;
+      if (sourceCount <= 1 || estimateDecodedBytes(sourceCount, degree, wantExtended) <= usable) {
+        shDegree = degree;
+        extended = wantExtended;
+        fullFit = true;
+        break;
+      }
+    }
+    if (fullFit) break;
+  }
+
+  let stride = 1;
+  let decodedCount = sourceCount;
+  if (!fullFit) {
+    shDegree = 0;
+    extended = false;
+    const fitted = fitCount(sourceCount, 0, false, usable);
+    stride = fitted.stride;
+    decodedCount = fitted.count;
+  }
+
+  if (args.budget.profile === 'mobile' && decodedCount > args.budget.maxSplatsResident) {
+    const cap = Math.max(1, args.budget.maxSplatsResident);
+    stride = Math.max(stride, Math.ceil(sourceCount / cap));
+    decodedCount = sourceCount === 0 ? 0 : Math.ceil(sourceCount / stride);
+    while (
+      decodedCount > 1 &&
+      estimateDecodedBytes(decodedCount, shDegree, extended) > usable
+    ) {
+      stride += 1;
+      decodedCount = Math.ceil(sourceCount / stride);
+    }
+  }
+
+  const estimatedBytes = estimateDecodedBytes(decodedCount, shDegree, extended);
+  const lod =
+    decodedCount >= LOD_ABOVE && estimatedBytes * 2 <= args.budget.cpuBytes * LOD_HEADROOM;
+
+  const notes: string[] = [];
+  if (shDegree < sourceSh) {
+    notes.push(
+      `Spherical harmonics reduced from degree ${sourceSh} to ${shDegree} to fit the ${args.budget.profile} memory budget.`,
+    );
+  }
+  if (args.preferExtended && !extended) {
+    notes.push('Using half-float centers because float32 centers did not fit in memory.');
+  }
+  if (stride > 1) {
+    notes.push(
+      `Showing ${decodedCount.toLocaleString()} of ${sourceCount.toLocaleString()} splats (1 of every ${stride}).`,
+    );
+  }
+  if (decodedCount >= LOD_ABOVE && !lod) {
+    notes.push('Sorting the full decoded set. A level-of-detail copy did not fit beside it.');
+  }
+
+  return {
+    shDegree,
+    stride,
+    decodedCount,
+    extended,
+    estimatedBytes,
+    lod,
+    notes,
+  };
+}
+
+function fitCount(
+  sourceCount: number,
+  sh: ShDegree,
+  extended: boolean,
+  usable: number,
+): { count: number; stride: number } {
+  if (sourceCount <= 0) return { count: 0, stride: 1 };
+  let lo = 1;
+  let hi = sourceCount;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (estimateDecodedBytes(mid, sh, extended) <= usable) lo = mid;
+    else hi = mid - 1;
+  }
+  let stride = Math.max(1, Math.ceil(sourceCount / lo));
+  let count = Math.ceil(sourceCount / stride);
+  while (stride < sourceCount && estimateDecodedBytes(count, sh, extended) > usable) {
+    stride += 1;
+    count = Math.ceil(sourceCount / stride);
+  }
+  return { count, stride };
+}
