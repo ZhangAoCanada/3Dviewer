@@ -282,7 +282,7 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 
 ## Batch 4 — Interaction and picking
 
-### 4.1 Pan and pinch-pan use the pivot direction instead of the camera axes — P1
+### [x] 4.1 Pan and pinch-pan use the pivot direction instead of the camera axes — P1
 
 - **Evidence**: since #6 the camera is no longer re-aimed at a new pivot (`Navigation.ts:326-331` comment, `orbitCamera`), so the pivot is often off the optical axis. `panInViewPlane` (`src/render/cameraMotion.ts:129-153`) still builds its basis from `_view = pivot - camera` (`:139`) and `right = view × up` (`:146`). It also scales by Euclidean `depth` (`Navigation.ts:355-363` passes `distanceTo(anchor)`), not view-space depth. With a pivot near the screen edge (up to about 35° off-axis at 55° vfov / 16:9), the pan direction is rotated and the grabbed point drifts off the cursor.
 - **Fix**:
@@ -293,7 +293,7 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: new test in `tests/navigation.test.ts`. Camera at origin with a quaternion rotated 30° yaw away from the pivot direction, and an anchor projected to pixel (u, v). After `panInViewPlane(..., dx=37, dy=-21, anchor)`, project the anchor again and assert it moved by (37, -21) ± 0.5 px. Run the existing pan test too.
 - **Risk**: low. The behavior is identical when the pivot is centered.
 
-### 4.2 Wheel zoom picks on every event — P2
+### [x] 4.2 Wheel zoom picks on every event — P2
 
 - **Evidence**: `Navigation.ts:429` `query()` on every `wheel` event. `SceneHost.pick` (`:236-275`) allocates a `Vector2`, traverses `content` to collect meshes, and runs `raycaster.intersectObjects` (no BVH: O(triangles) for large glb) plus up to 100k `SplatIndex` tests. Trackpads emit 60–120 wheel events per second, and the anchor can also jitter between events.
 - **Fix**:
@@ -303,21 +303,21 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: Performance panel during a 2 s trackpad zoom on the 14M scene: total `pick` self-time is under 5% of the frame budget.
 - **Risk**: low.
 
-### 4.3 Inertia velocity assumes 60 Hz pointer events — P2
+### [x] 4.3 Inertia velocity assumes 60 Hz pointer events — P2
 
 - **Evidence**: `Navigation.ts:349-351` `yawVel = yaw / (1/60)`. On 120/144 Hz displays, pointer events arrive about every 8 ms, so release velocity (and the coast) is about 2× too strong. On a slow frame it is too weak.
 - **Fix**: track `lastMoveTime = event.timeStamp`; `dt = clamp((t - lastMoveTime) / 1000, 1/240, 1/20)`; `yawVel = lerp(yawVel, yaw / dt, 0.5)`. In `onPointerUp`, zero the velocity if more than 80 ms have passed since the last move (the user stopped before releasing).
 - **Verify**: unit-test a small pure helper `releaseVelocity(samples)` with synthetic 8 ms and 16 ms streams producing equal velocity for equal angular speed.
 - **Risk**: low.
 
-### 4.4 Stuck keys and fly-mode touch jumps — P2
+### [x] 4.4 Stuck keys and fly-mode touch jumps — P2
 
 - **Evidence**: `Navigation.ts:500-505` adds any `keydown` code. On macOS, keyups are not delivered while Cmd is held (Cmd+W, Cmd+Tab), so a key stays in `keys`: fly mode drifts forever and `isMoving()` keeps the idle loop busy. `moveFlyPointer` (`:452-458`) uses `this.lastY` from the first finger when a second finger lands, so the camera jumps.
 - **Fix**: ignore `keydown` when `metaKey || ctrlKey`, and clear `keys` on `keyup` of `MetaLeft/MetaRight`. Add `document.addEventListener('visibilitychange', onBlur)`. When the touch pointer count changes in fly mode, reset `lastY` to the new average before computing a delta.
 - **Verify**: manual on macOS: hold W, press Cmd+Tab away and back; the camera does not move.
 - **Risk**: low.
 
-### 4.5 `SplatIndex` correctness and memory — P2
+### [x] 4.5 `SplatIndex` correctness and memory — P2
 
 - **Evidence**: `src/render/splatIndex.ts:5` `MAX_AXIS = 160` → up to 4.1M cells for cubic scenes (`hist`, `offsets`, `cursor`, `seen`, each 16 MB) on top of `indices` (4 B/splat, 56 MB at 14M), none counted in the decode budget. `:357` stores the world matrix as `Float32Array` (loses a large origin; see 2.6/2.7). `:363` uses `numSplats` with `packedArray` even for paged Spark meshes, whose `packedArray` is a page buffer, not the scene. `SceneHost.frameAll` rebuilds the index on every up-axis change even though matrices are unchanged.
 - **Fix**:
@@ -329,7 +329,7 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: extend `tests/splatIndex.test.ts`: 1M random points in a cube produce at most 125k cells, and the pick result still matches brute force within 1 px tolerance. A translated source (position 4.5e6) still picks within 1e-3.
 - **Risk**: low.
 
-### 4.6 Double-tap to focus on touch — P2
+### [x] 4.6 Double-tap to focus on touch — P2
 
 - **Evidence**: focus is `dblclick` only (`Navigation.ts:444-449`). With `touch-action: none` (`styles.css:56`), mobile browsers do not reliably synthesise `dblclick`, so touch users cannot focus.
 - **Fix**: in `onPointerUp` for `pointerType === 'touch'` with no drag (drag still `'arm'`), record `{ time, x, y }`. A second tap within 300 ms and 24 px calls `focusOn(query(x, y).point)`.

@@ -123,34 +123,47 @@ export function zoomToward(
 }
 
 /**
- * Translate in the view plane so a point at `depth` tracks the pointer.
+ * Translate in the camera's view plane so `anchor` tracks the pointer.
+ * The basis is the camera quaternion, so an off-axis pivot does not rotate the pan.
  * `dx`/`dy` are pixels, Y positive down.
  */
 export function panInViewPlane(
-  camera: THREE.Vector3,
+  camera: THREE.Camera,
   pivot: THREE.Vector3,
-  worldUp: THREE.Vector3,
   fovDeg: number,
   viewHeightPx: number,
   dxPx: number,
   dyPx: number,
-  depth: number,
+  anchor: THREE.Vector3,
 ): void {
-  _view.subVectors(pivot, camera);
-  const len = _view.length();
-  if (len < 1e-8) return;
-  _view.multiplyScalar(1 / len);
+  const quaternion = camera.quaternion;
+  _right.set(1, 0, 0).applyQuaternion(quaternion);
+  _screenUp.set(0, 1, 0).applyQuaternion(quaternion);
+  _view.set(0, 0, -1).applyQuaternion(quaternion);
+  _toAnchor.subVectors(anchor, camera.position);
+  const depth = Math.max(_toAnchor.dot(_view), 1e-4);
   const worldPerPixel =
-    (2 * Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * Math.max(depth, 1e-4)) / Math.max(1, viewHeightPx);
-  _up.copy(worldUp).normalize();
-  _right.crossVectors(_view, _up);
-  if (_right.lengthSq() < 1e-10) _right.set(1, 0, 0);
-  else _right.normalize();
-  _screenUp.crossVectors(_right, _view).normalize();
+    (2 * Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * depth) / Math.max(1, viewHeightPx);
   _right.multiplyScalar(-dxPx * worldPerPixel);
   _right.addScaledVector(_screenUp, dyPx * worldPerPixel);
-  camera.add(_right);
+  camera.position.add(_right);
   pivot.add(_right);
+}
+
+const RELEASE_DT_MIN = 1 / 240;
+const RELEASE_DT_MAX = 1 / 20;
+
+/** One pointer sample of orbit release velocity. `dtMs` is clamped to 240–20 Hz. */
+export function blendReleaseVelocity(velocity: number, dtMs: number, angle: number): number {
+  const dt = THREE.MathUtils.clamp(dtMs / 1000, RELEASE_DT_MIN, RELEASE_DT_MAX);
+  return THREE.MathUtils.lerp(velocity, angle / dt, 0.5);
+}
+
+/** Release velocity after a stream of `{ dtMs, angle }` pointer samples. */
+export function releaseVelocity(samples: readonly { dtMs: number; angle: number }[]): number {
+  let velocity = 0;
+  for (const sample of samples) velocity = blendReleaseVelocity(velocity, sample.dtMs, sample.angle);
+  return velocity;
 }
 
 function polarOf(offset: THREE.Vector3, up: THREE.Vector3): number {

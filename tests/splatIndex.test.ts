@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CoarseSurface, sampleStride } from '../src/render/coarseSurface';
-import { SplatIndex } from '../src/render/splatIndex';
+import { collectIndexSources, SplatIndex, SplatIndexJob } from '../src/render/splatIndex';
 
 function planeWithSpike(count: number, spikeIndex: number): Float32Array {
   const positions = new Float32Array(count * 3);
@@ -92,4 +92,89 @@ describe('splat index', () => {
     expect(hit!.z).toBeLessThan(6);
     expect(elapsed).toBeLessThan(80);
   });
+
+  it('caps a 1M cube at 125k cells and matches brute force within 1 px', () => {
+    const count = 1_000_000;
+    const positions = new Float32Array(count * 3);
+    let seed = 1;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+    for (let i = 0; i < count; i += 1) {
+      positions[i * 3] = rand();
+      positions[i * 3 + 1] = rand();
+      positions[i * 3 + 2] = rand();
+    }
+    const index = SplatIndex.fromPositions(positions);
+    expect(index.cells).toBeLessThanOrEqual(125_000);
+
+    const origin = new THREE.Vector3(0.5, 0.5, 3);
+    const direction = new THREE.Vector3(0, 0, -1);
+    const fov = THREE.MathUtils.degToRad(55);
+    const height = 900;
+    const target = new THREE.Vector3();
+    expect(index.pick(origin, direction, direction, fov, height, target)).toBe(true);
+    const brute = bruteRayPoint(positions, origin, direction, fov, height);
+    expect(brute).not.toBeNull();
+    const depth = Math.max(target.distanceTo(origin), 1e-3);
+    const worldPerPixel = (2 * Math.tan(fov / 2) * depth) / height;
+    expect(target.distanceTo(brute!) / worldPerPixel).toBeLessThanOrEqual(1);
+  }, 30_000);
+
+  it('picks a source translated to 4.5e6 within 1e-3', () => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+    const points = new THREE.Points(geometry);
+    points.position.set(4.5e6, 0, 0);
+    const group = new THREE.Group();
+    group.add(points);
+    const sources = collectIndexSources(group);
+    const box = new THREE.Box3().setFromObject(points);
+    const job = new SplatIndexJob(sources, box);
+    expect(job.pump(1e9)).toBe(true);
+    const index = job.finish();
+    expect(index).not.toBeNull();
+    const origin = new THREE.Vector3(4.5e6, 0, 10);
+    const direction = new THREE.Vector3(0, 0, -1);
+    const target = new THREE.Vector3();
+    expect(index!.pick(origin, direction, direction, THREE.MathUtils.degToRad(55), 900, target)).toBe(true);
+    expect(Math.abs(target.x - 4.5e6)).toBeLessThanOrEqual(1e-3);
+    expect(Math.abs(target.y)).toBeLessThanOrEqual(1e-3);
+    expect(Math.abs(target.z)).toBeLessThanOrEqual(1e-3);
+  });
 });
+
+function bruteRayPoint(
+  positions: Float32Array,
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  fov: number,
+  viewHeight: number,
+): THREE.Vector3 | null {
+  const len = direction.length();
+  const dirX = direction.x / len;
+  const dirY = direction.y / len;
+  const dirZ = direction.z / len;
+  const pixelScale = (2 * Math.tan(fov / 2)) / Math.max(1, viewHeight);
+  let bestNear = Infinity;
+  let bestFar = Infinity;
+  const count = positions.length / 3;
+  for (let i = 0; i < count; i += 1) {
+    const vx = (positions[i * 3] ?? 0) - origin.x;
+    const vy = (positions[i * 3 + 1] ?? 0) - origin.y;
+    const vz = (positions[i * 3 + 2] ?? 0) - origin.z;
+    const t = vx * dirX + vy * dirY + vz * dirZ;
+    if (t < 1e-3) continue;
+    const perpX = vx - dirX * t;
+    const perpY = vy - dirY * t;
+    const perpZ = vz - dirZ * t;
+    const perp2 = perpX * perpX + perpY * perpY + perpZ * perpZ;
+    const worldPerPixel = pixelScale * Math.max(1e-3, t);
+    if (perp2 <= (worldPerPixel * 3.5) ** 2 && t < bestNear) bestNear = t;
+    if (perp2 <= (worldPerPixel * 14) ** 2 && t < bestFar) bestFar = t;
+  }
+  const t = Number.isFinite(bestNear) ? bestNear : bestFar;
+  if (!Number.isFinite(t)) return null;
+  return new THREE.Vector3(origin.x + dirX * t, origin.y + dirY * t, origin.z + dirZ * t);
+}
