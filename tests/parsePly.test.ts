@@ -59,4 +59,18 @@ describe('parsePlyPoints', () => {
     expect(data.positions[3]).toBeCloseTo(3);
     expect(data.colors).toBeNull();
   });
+
+  it('reports progress through the vertex count', async () => {
+    const seen: number[] = [];
+    const data = await parsePlyPoints(binaryPly(), 100, (loaded, total) => {
+      expect(total).toBe(5);
+      seen.push(loaded);
+    });
+    expect(data.count).toBe(5);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[seen.length - 1]).toBe(5);
+    for (let i = 1; i < seen.length; i += 1) {
+      expect(seen[i]).toBeGreaterThan(seen[i - 1] ?? -1);
+    }
+  });
 });

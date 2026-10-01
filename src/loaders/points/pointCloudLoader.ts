@@ -13,29 +13,61 @@ async function blobOf(source: AssetSource, ctx: LoadContext): Promise<Blob> {
   return res.blob();
 }
 
-function parseInWorker(file: Blob, maxPoints: number): Promise<PointCloudData> {
+function parseInWorker(
+  file: Blob,
+  maxPoints: number,
+  signal: AbortSignal,
+  onProgress: (loaded: number, total: number) => void,
+): Promise<PointCloudData> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../../workers/plyPoints.worker.ts', import.meta.url), {
       type: 'module',
     });
-    const timer = window.setTimeout(() => {
+    let settled = false;
+    const finish = (error?: Error, data?: PointCloudData) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
       worker.terminate();
-      reject(new Error('Point cloud parse timed out'));
-    }, 120_000);
-    worker.onmessage = (event: MessageEvent<({ ok: true } & PointCloudData) | { ok: false; error: string }>) => {
-      window.clearTimeout(timer);
-      worker.terminate();
-      const data = event.data;
-      if (!data.ok) {
-        reject(new Error(data.error));
+      if (error) reject(error);
+      else if (data) resolve(data);
+    };
+    const onAbort = () => {
+      const reason = signal.reason;
+      const error =
+        reason instanceof Error && reason.name !== 'AbortError'
+          ? reason
+          : new DOMException('Load aborted', 'AbortError');
+      finish(error);
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    worker.onmessage = (
+      event: MessageEvent<
+        | { type: 'progress'; loaded: number; total: number }
+        | { type: 'result'; data: PointCloudData }
+        | { type: 'error'; message: string }
+      >,
+    ) => {
+      const payload = event.data;
+      if (payload.type === 'progress') {
+        onProgress(payload.loaded, payload.total);
         return;
       }
-      resolve(data);
+      if (payload.type === 'result') {
+        finish(undefined, payload.data);
+        return;
+      }
+      if (payload.type === 'error') finish(new Error(payload.message || 'Point cloud parse failed'));
     };
-    worker.onerror = () => {
-      window.clearTimeout(timer);
-      worker.terminate();
-      reject(new Error('Point cloud worker failed'));
+    worker.onmessageerror = () => {
+      finish(new Error('Point cloud parse result could not be transferred'));
+    };
+    worker.onerror = (event) => {
+      finish(new Error(event.message || 'Point cloud worker failed'));
     };
     worker.postMessage({ file, maxPoints });
   });
@@ -57,12 +89,20 @@ export const pointCloudLoader: FormatLoader = {
       stage: 'parse',
       message: 'Parsing point cloud',
     });
+    const onProgress = (loaded: number, total: number) => {
+      ctx.onProgress({
+        loaded,
+        total,
+        stage: 'parse',
+        message: 'Parsing point cloud',
+      });
+    };
     let data: PointCloudData;
     try {
-      data = await parseInWorker(blob, ctx.budget.maxPoints);
+      data = await parseInWorker(blob, ctx.budget.maxPoints, ctx.signal, onProgress);
     } catch (error) {
-      if (ctx.signal.aborted) throw error;
-      data = await parsePlyPoints(blob, ctx.budget.maxPoints);
+      if (ctx.signal.aborted || blob.size > 64 * 1024 * 1024) throw error;
+      data = await parsePlyPoints(blob, ctx.budget.maxPoints, onProgress);
     }
     if (ctx.signal.aborted) throw new DOMException('Load aborted', 'AbortError');
     if (!data.colors) data = { ...data, colors: colorizeByHeight(data.positions) };

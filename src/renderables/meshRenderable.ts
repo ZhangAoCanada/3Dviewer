@@ -8,6 +8,10 @@ interface MeshSlot {
   generated: THREE.Material[];
 }
 
+function isTexture(value: unknown): value is THREE.Texture {
+  return Boolean(value) && (value as THREE.Texture).isTexture === true;
+}
+
 function asMaterials(material: THREE.Material | THREE.Material[]): THREE.Material[] {
   return Array.isArray(material) ? material : [material];
 }
@@ -38,6 +42,8 @@ export class MeshRenderable implements Renderable {
   private readonly slots: MeshSlot[] = [];
   private triangleCount = 0;
   private vertexCount = 0;
+  private lastShading: RenderSettings['shading'] | null = null;
+  private lastWireframe: boolean | null = null;
 
   constructor(
     readonly name: string,
@@ -49,7 +55,7 @@ export class MeshRenderable implements Renderable {
     root.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (!mesh.isMesh) return;
-      mesh.geometry.computeVertexNormals();
+      if (!mesh.geometry.getAttribute('normal')) mesh.geometry.computeVertexNormals();
       const position = mesh.geometry.getAttribute('position');
       if (position) this.vertexCount += position.count;
       const index = mesh.geometry.getIndex();
@@ -65,6 +71,9 @@ export class MeshRenderable implements Renderable {
   update(): void {}
 
   applySettings(settings: RenderSettings): void {
+    if (this.lastShading === settings.shading && this.lastWireframe === settings.wireframe) return;
+    this.lastShading = settings.shading;
+    this.lastWireframe = settings.wireframe;
     for (const slot of this.slots) {
       this.disposeGenerated(slot);
       const source = slot.original[0];
@@ -129,11 +138,18 @@ export class MeshRenderable implements Renderable {
   }
 
   dispose(): void {
+    const textures = new Set<THREE.Texture>();
     for (const slot of this.slots) {
       this.disposeGenerated(slot);
-      for (const material of slot.original) material.dispose();
+      for (const material of slot.original) {
+        for (const value of Object.values(material)) {
+          if (isTexture(value)) textures.add(value);
+        }
+        material.dispose();
+      }
       slot.mesh.geometry.dispose();
     }
+    for (const texture of textures) texture.dispose();
     this.object.removeFromParent();
   }
 

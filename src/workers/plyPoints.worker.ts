@@ -6,8 +6,9 @@ interface RequestMessage {
 }
 
 type ResponseMessage =
-  | ({ ok: true } & PointCloudData)
-  | { ok: false; error: string };
+  | { type: 'progress'; loaded: number; total: number }
+  | { type: 'result'; data: PointCloudData }
+  | { type: 'error'; message: string };
 
 const scope = globalThis as unknown as {
   onmessage: ((event: MessageEvent<RequestMessage>) => void) | null;
@@ -16,14 +17,16 @@ const scope = globalThis as unknown as {
 
 scope.onmessage = (event) => {
   const { file, maxPoints } = event.data;
-  parsePlyPoints(file, maxPoints)
+  parsePlyPoints(file, maxPoints, (loaded, total) => {
+    scope.postMessage({ type: 'progress', loaded, total });
+  })
     .then((data) => {
       const transfer: Transferable[] = [data.positions.buffer];
       if (data.colors) transfer.push(data.colors.buffer);
-      scope.postMessage({ ok: true, ...data }, transfer);
+      scope.postMessage({ type: 'result', data }, transfer);
     })
     .catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      scope.postMessage({ ok: false, error: message });
+      scope.postMessage({ type: 'error', message });
     });
 };

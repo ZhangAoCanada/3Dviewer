@@ -10,40 +10,51 @@ interface RequestMessage {
 type ResponseMessage =
   | { type: 'progress'; progress: DecodeProgress }
   | { type: 'result'; data: DecodedGaussian }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string; name?: string };
 
 const scope = globalThis as unknown as {
   onmessage: ((event: MessageEvent<RequestMessage>) => void) | null;
   postMessage: (message: ResponseMessage, transfer?: Transferable[]) => void;
 };
 
-scope.onmessage = (event) => {
-  const { blob, budget, preferExtended } = event.data;
-  decodeGaussianPly(blob, {
+export function handleDecodeRequest(
+  data: RequestMessage,
+  post: (message: ResponseMessage, transfer?: Transferable[]) => void,
+): Promise<void> {
+  const { blob, budget, preferExtended } = data;
+  return decodeGaussianPly(blob, {
     budget,
     preferExtended,
     onProgress: (progress) => {
-      scope.postMessage({ type: 'progress', progress });
+      post({ type: 'progress', progress });
     },
   })
-    .then((data) => {
+    .then((decoded) => {
       const transfer: Transferable[] = [];
       const push = (array: Uint32Array | undefined) => {
         if (array) transfer.push(array.buffer);
       };
-      push(data.packedArray);
-      if (data.extArrays) {
-        push(data.extArrays[0]);
-        push(data.extArrays[1]);
+      push(decoded.packedArray);
+      if (decoded.extArrays) {
+        push(decoded.extArrays[0]);
+        push(decoded.extArrays[1]);
       }
-      push(data.sh1);
-      push(data.sh2);
-      push(data.sh3);
-      push(data.sh3b);
-      scope.postMessage({ type: 'result', data }, transfer);
+      push(decoded.sh1);
+      push(decoded.sh2);
+      push(decoded.sh3);
+      push(decoded.sh3b);
+      post({ type: 'result', data: decoded }, transfer);
     })
     .catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      scope.postMessage({ type: 'error', message });
+      const name = error instanceof Error ? error.name : undefined;
+      post(name ? { type: 'error', message, name } : { type: 'error', message });
     });
+}
+
+scope.onmessage = (event) => {
+  void handleDecodeRequest(event.data, (message, transfer) => {
+    if (transfer && transfer.length > 0) scope.postMessage(message, transfer);
+    else scope.postMessage(message);
+  });
 };

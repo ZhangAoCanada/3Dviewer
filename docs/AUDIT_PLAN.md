@@ -18,7 +18,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 
 ## Batch 1 — Guardrails, memory lifecycle, and leaks
 
-### 1.1 Pin Spark and lock the packed-splat bit layout with a parity test — P1
+### [x] 1.1 Pin Spark and lock the packed-splat bit layout with a parity test — P1
 
 - **Evidence**: `package.json:23` `"@sparkjsdev/spark": "^2.1.0"`; lockfile resolves 2.2.0. `src/loaders/gaussian/packSplat.ts:1-5` re-implements Spark's `setPackedSplat` / `encodeSh*` / `encodeExtSplat` bit layout by hand. `SceneHost.needsDraw` reads `spark.dirty` / `spark.sortDirty` (`SceneHost.ts:364`), which are undocumented fields.
 - **Root cause**: a caret range lets a fresh `npm install` pick up a Spark minor release that changes the encoding or those fields. The worker decoder would then write corrupt splats with no error.
@@ -29,7 +29,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: the new test passes. Temporarily flip one bit shift in `writePackedSplat` and confirm the test fails.
 - **Risk**: low. Future Spark upgrades become deliberate. Re-run the parity test on every upgrade.
 
-### 1.2 Free the previous scene before decoding a large one — P0
+### [x] 1.2 Free the previous scene before decoding a large one — P0
 
 - **Evidence**: `src/app/ViewerApp.ts:331` awaits `loader.load(...)` while the old scene is still resident; `this.host.clear()` runs only afterwards (`ViewerApp.ts:344`). `detectMemoryBudget()` (`ViewerApp.ts:333`) does not subtract what is already loaded.
 - **Root cause**: opening a second multi-GB scene keeps the old CPU arrays (packedArray, SH, LoD copy, SplatIndex) and GPU textures alive while the new decode allocates its full budget. Peak memory is roughly 2× the budget, so the tab gets OOM-killed ("Aw, Snap" / iOS reload).
@@ -41,7 +41,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: manual. In Chrome, load the 3.5 GB PLY, then load it again. Watch Task Manager memory: the peak must stay near one scene's footprint instead of two. Add a unit test only if `ViewerApp` gets a seam; otherwise this is a manual check recorded in `BENCHMARK.md`.
 - **Risk**: low. The old scene disappears during a large load, which is the desired trade-off.
 
-### 1.3 Abort and dispose correctly in the Spark fallback path — P1
+### [x] 1.3 Abort and dispose correctly in the Spark fallback path — P1
 
 - **Evidence**: `src/loaders/gaussian/gaussianLoader.ts:315-322`. `new SplatMesh(options)` is awaited, then `throwIfAborted` throws **without** `mesh.dispose()`. `ctx.signal` is never passed to Spark, and `options.stream = source.file.stream()` (`:301`) keeps reading after abort.
 - **Root cause**: when a newer load supersedes a `.spz/.sog/.rad/.splat/.ksplat` (or compressed PLY) load, the old Spark decode runs to completion and its textures leak.
@@ -53,7 +53,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: manual. Open a large `.spz` and immediately open the torus sample. `renderer.info.memory.textures` (log it from the console via `window.__host` if you expose it in dev only) returns to the torus-only value. Unit test: mock a `SplatMesh`-like object whose `initialized` resolves after abort and assert `dispose` was called (extract the abort/dispose logic into a small helper `disposeIfAborted(mesh, signal)` to make it testable).
 - **Risk**: low. Do not dispose a mesh that was returned successfully.
 
-### 1.4 Point-cloud worker: wire abort, remove the fixed 120 s kill, and stop the main-thread fallback for big files — P1
+### [x] 1.4 Point-cloud worker: wire abort, remove the fixed 120 s kill, and stop the main-thread fallback for big files — P1
 
 - **Evidence**: `src/loaders/points/pointCloudLoader.ts:21-24` hard timeout of 120 s regardless of size; `:16-42` no `ctx.signal` listener; `:62-66` any worker failure (including that timeout) falls back to `parsePlyPoints` on the **main thread**.
 - **Root cause**: a multi-GB point cloud on a slow disk is killed at 120 s, then re-parsed on the UI thread, which freezes the tab. An aborted load keeps a worker reading the whole file.
@@ -65,7 +65,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: extend `tests/parsePly.test.ts` to assert `onProgress` is called with a monotonically increasing count ending at `vertex.count`. Manual: abort a large point-cloud load and confirm in DevTools > Sources > Threads that the worker disappears.
 - **Risk**: low.
 
-### 1.5 Replace the fixed load timeout with a stall watchdog — P1
+### [x] 1.5 Replace the fixed load timeout with a stall watchdog — P1
 
 - **Evidence**: `ViewerApp.ts:310` `loadTimeoutMs(source.sizeBytes)` and `ViewerApp.ts:497-502`. For URL loads `sizeBytes` is undefined, so a 1 GB+ `?url=` load is aborted after **3 minutes**, including download time. A large local file that decodes slowly but steadily is still cut at 45 min.
 - **Root cause**: the timeout is a wall-clock budget picked from a size that is often unknown, rather than a measure of whether the load is still making progress.
@@ -77,7 +77,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: add a unit-testable helper `createStallWatchdog(ms, onStall)` in `src/core/watchdog.ts` with fake timers in vitest: `kick()` postpones; no kick → fires once.
 - **Risk**: low. Error text should still mention converting to `.rad`.
 
-### 1.6 Mesh loader: dispose textures, and keep authored normals — P1
+### [x] 1.6 Mesh loader: dispose textures, and keep authored normals — P1
 
 - **Evidence**: `src/renderables/meshRenderable.ts:131-138` disposes materials and geometry but never textures (`material.dispose()` does not free `map`, `normalMap`, …). `meshRenderable.ts:52` calls `computeVertexNormals()` on **every** mesh.
 - **Root cause**: reloading a textured glb leaks every GPU texture. Recomputing normals overwrites glTF-authored normals: hard edges and UV seams become smoothed or wrong, and it costs O(vertices) per mesh at load.
@@ -88,7 +88,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: load `crate.glb`, then the torus sample, 10 times; `renderer.info.memory.textures` must not grow. Unit test for (1) with a `BufferGeometry` that has a custom `normal` attribute: assert it is unchanged after constructing `MeshRenderable`.
 - **Risk**: low. OBJ files without normals still get computed normals.
 
-### 1.7 Handle WebGL context loss — P1
+### [x] 1.7 Handle WebGL context loss — P1
 
 - **Evidence**: `src/render/SceneHost.ts:56-61` creates the context; there is no `webglcontextlost` / `webglcontextrestored` handling anywhere in `src/`.
 - **Root cause**: on mobile (backgrounding, GPU memory pressure from a big scene) and on desktop driver resets, the canvas goes black permanently with no message. Spark does not rebuild its textures.
@@ -99,7 +99,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: in the console, `const ext = renderer.getContext().getExtension('WEBGL_lose_context'); ext.loseContext(); setTimeout(() => ext.restoreContext(), 1000);`. The toast appears and the scene reloads.
 - **Risk**: medium. Re-decoding a 3.5 GB file after a context loss takes minutes; the toast must say so. Do not auto-reload when `lastSource.origin === 'url'` and size is unknown; ask via toast instead.
 
-### 1.8 Worker plumbing hardening — P2
+### [x] 1.8 Worker plumbing hardening — P2
 
 - **Evidence**: `gaussianLoader.ts:81-100` has no `onmessageerror`. `gaussianLoader.ts:158,171` construct `SplatMesh` with `raycastable: count <= 1_000_000`, then `GaussianRenderable` forces `raycastable = false` (`gaussianRenderable.ts:36`). `gaussianLoader.ts:205-216` re-runs the full decode on the main thread after any worker error for files up to 64 MB, even when the worker error was a deterministic `GaussianPlyError`.
 - **Fix**:
