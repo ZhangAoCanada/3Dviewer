@@ -47,7 +47,7 @@ npm run build
 npm run preview   # http://localhost:4173/3Dviewer/
 ```
 
-`npm run generate:assets` rebuilds the small files in `public/samples/` and the PWA icons. The app is an installable PWA (`manifest.webmanifest`, service worker).
+`npm run generate:assets` rebuilds the small files in `public/samples/` and the PWA icons. The app is an installable PWA. A new deploy shows a Reload toast; the build id in the About section is the commit (or `VITE_BUILD_LABEL`) baked into that build.
 
 Production `base` is `/3Dviewer/` so asset URLs match GitHub Pages.
 

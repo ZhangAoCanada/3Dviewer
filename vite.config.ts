@@ -1,12 +1,30 @@
 /// <reference types="vitest/config" />
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+function appBuild(): string {
+  const override = process.env.VITE_BUILD_LABEL?.trim();
+  if (override) return override;
+  const sha = process.env.GITHUB_SHA?.slice(0, 7);
+  if (sha) return sha;
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    return 'dev';
+  }
+}
+
 export default defineConfig({
   base: '/3Dviewer/',
+  define: {
+    __APP_BUILD__: JSON.stringify(appBuild()),
+  },
   plugins: [
     VitePWA({
-      registerType: 'autoUpdate',
+      // A waiting worker stays installed until the Reload toast calls skipWaiting.
+      registerType: 'prompt',
+      injectRegister: false,
       includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: '3Dviewer',
@@ -23,8 +41,26 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ply,splat,obj,glb,woff2}'],
+        // index.html is network-first below, not precached, so a deploy is visible on reload.
+        globPatterns: ['**/*.{js,css,svg,png,ply,splat,obj,glb,woff2}'],
+        navigateFallback: undefined,
+        clientsClaim: true,
+        // public/sw-update.js: take over immediately when the open page cannot
+        // show the Reload toast (the previous autoUpdate client).
+        importScripts: ['sw-update.js'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'pages',
+              networkTimeoutSeconds: 3,
+              expiration: { maxEntries: 4, maxAgeSeconds: 60 * 10 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+        ],
       },
     }),
   ],

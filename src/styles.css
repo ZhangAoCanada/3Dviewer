@@ -306,6 +306,23 @@ button { cursor: pointer; }
 }
 .toast[hidden] { display: none; }
 
+.update-toast {
+  position: absolute;
+  z-index: 8;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 14px;
+  border-radius: 12px;
+  background: var(--elev-solid);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--line));
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.update-toast[hidden] { display: none; }
+
 body.is-dragging #viewport {
   outline: 2px dashed var(--accent);
   outline-offset: -8px;
