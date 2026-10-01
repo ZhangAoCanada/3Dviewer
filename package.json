@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/check-precache.mjs",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -24,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.20.4",
     "@types/three": "^0.180.0",
     "eslint": "^9.35.0",

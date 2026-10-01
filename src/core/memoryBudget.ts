@@ -18,14 +18,13 @@ export function detectMemoryBudget(hints: BudgetHints = {}): MemoryBudget {
     (typeof navigator !== 'undefined'
       ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory
       : undefined);
-  const cores = hints.hardwareConcurrency ?? (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 8);
   const touch =
     hints.maxTouchPoints ?? (typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0);
   // iPadOS reports a desktop Macintosh UA. More than one touch point marks it as a tablet.
   const iPadDesktop = /Macintosh/i.test(ua) && touch > 1;
   const mobileUa = /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(ua) || iPadDesktop;
   const lowRam = deviceMemory !== undefined && deviceMemory <= 4;
-  const mobile = mobileUa || lowRam || (cores !== undefined && cores <= 4 && mobileUa);
+  const mobile = mobileUa || lowRam;
 
   if (mobile) {
     const gb = deviceMemory ?? 4;
@@ -46,7 +45,7 @@ export function detectMemoryBudget(hints: BudgetHints = {}): MemoryBudget {
     profile: 'desktop',
     cpuBytes,
     maxPoints: 8_000_000,
-    maxSplatsResident: gb <= 4 ? 1_500_000 : 2_500_000,
+    maxSplatsResident: 2_500_000,
     maxSh: 3,
     pixelRatioCap: 2,
   };

@@ -198,7 +198,7 @@ export class ViewerApp {
       const value = (event.target as HTMLSelectElement).value;
       if (value !== 'auto' && value !== 'y' && value !== 'z') return;
       this.host.setUpMode(value);
-      localStorage.setItem('3dviewer-up', value);
+      writeStorage('3dviewer-up', value);
       this.syncUpLabel();
     });
     const sensitivity = must<HTMLInputElement>('#sensitivity');
@@ -206,7 +206,7 @@ export class ViewerApp {
       const value = Number(sensitivity.value);
       this.host.setSensitivity(value);
       must('#out-sensitivity').textContent = formatFixed(value);
-      localStorage.setItem('3dviewer-sensitivity', String(value));
+      writeStorage('3dviewer-sensitivity', String(value));
     });
   }
 
@@ -406,7 +406,7 @@ export class ViewerApp {
   private toggleTheme(): void {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
-    localStorage.setItem('3dviewer-theme', next);
+    writeStorage('3dviewer-theme', next);
     const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (meta) meta.content = next === 'light' ? '#f3f5f8' : '#0c0f14';
     this.host.setBackground(this.canvasColor());
@@ -535,6 +535,14 @@ export class ViewerApp {
 function stallMessage(ms: number): string {
   const label = ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`;
   return `Loading stalled: no progress for ${label}. The file is still on disk; try again, or convert it to a paged .rad so the next open does not read the whole PLY.`;
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* quota or private mode */
+  }
 }
 
 function must<T extends Element = HTMLElement>(selector: string): T {
