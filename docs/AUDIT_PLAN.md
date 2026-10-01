@@ -113,7 +113,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 
 ## Batch 2 — Huge-PLY decode: planner, peaks, and load time
 
-### 2.1 Planner picks encoding and SH before applying the resident-count cap — P1
+### [x] 2.1 Planner picks encoding and SH before applying the resident-count cap — P1
 
 - **Evidence**: `src/loaders/gaussian/gaussianPlan.ts:73-94` chooses `shDegree` / `extended` for the **full** `sourceCount`. If that does not fit, it forces `shDegree = 0, extended = false`. The mobile cap (`:96-107`) is applied afterwards and never revisits the choice.
 - **Root cause**: on a phone (budget 192 MB → 119 MB usable), a 14M SH3 PLY is subsampled to 700k splats, but stays at SH0 with half-float centers. At 700k, extended + SH1 needs only about 34 MB. Desktop has the same flaw whenever `fullFit` fails: it drops straight to SH0 packed.
@@ -128,6 +128,8 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 
 ### 2.2 Budget the real LoD cost, and prefer LoD over SH for very large scenes — P1
 
+Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?demo=slab&n=1500000`, and one real drone PLY before the `* 2` factor or the SH-vs-LoD policy can change. This repo has no drone PLY (`tmp/` is gitignored; `BENCHMARK.md` records that the 14,161,020-splat file was not generated). A torus or synthetic slab ratio is not that tree, so steps 2–4 were not landed. The existing `estimatedBytes * 2` check is unchanged.
+
 - **Evidence**: `gaussianPlan.ts:17-19,110-111` assume "LoD builds a second copy" (`estimatedBytes * 2 <= cpuBytes * 0.85`). Spark 2.2.0 `PackedSplats.createLodSplats` (`spark.module.js:9564-9596`) does `this.packedArray.slice()` and slices every SH array on the main thread, sends them to a worker, and keeps the original (`nonLod = true`) **plus** the new `lodSplats`, which hold the interior tree nodes too. The real peak is roughly base + full copy + LoD output, and the LoD output is larger than the base.
   At the same time, for the flagship 14M SH3 desktop case the plan picks extended SH2 (about 940 MB), so `lod === false` and Spark sorts and draws all 14M every frame (`gaussianPlan.ts:127-129` note).
 - **Root cause**: the LoD factor is a guess, and the policy spends memory on SH bands instead of on LoD, which is what makes 14M splats real-time.
@@ -139,7 +141,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: planner unit tests for 14M SH3 on desktop 8 GB: `lod === true`. Manual: on the 3.5 GB scene, record fps while orbiting (HUD) and peak memory in Chrome Task Manager, before and after, in `BENCHMARK.md`.
 - **Risk**: medium. This trades view-dependent colour for frame rate. Keep the `#extended` / SH UI so users can force quality. Do not land step 3 without the step 1 measurement.
 
-### 2.3 Compute bounds during decode instead of walking every splat on the main thread — P1
+### [x] 2.3 Compute bounds during decode instead of walking every splat on the main thread — P1
 
 - **Evidence**: `src/renderables/gaussianRenderable.ts:92-101` calls `SplatMesh.getBoundingBox(true)`, which in Spark 2.2.0 (`spark.module.js:12386-12425`) runs `forEachSplat` and fully decodes every splat in JS. `SceneHost.frameAll` (`SceneHost.ts:181-200`) calls `getBounds` on every load, every Flip-Y toggle, and every up-axis change. For 14M splats that is a multi-second main-thread hitch each time. Drone 3DGS also has far floaters, which make the full box huge: framing zooms out too far, `detectUpAxis` misreads the shape, and the `SplatIndex` cell (`longest / 160`, `splatIndex.ts:5,223-224`) gets coarse.
 - **Fix**:
@@ -151,7 +153,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: unit test in `tests/gaussianPly.test.ts`: a synthetic PLY with 10,000 splats in [0, 1]³ plus 10 floaters at 1e4. `robustBounds.max.x < 2`, and `bounds.max.x ≈ 1e4`. Manual: toggle Flip Y on a 14M scene; Performance panel shows no long task over 100 ms.
 - **Risk**: low. Framing changes slightly for scenes with legitimate sparse extremities; 99.5% is conservative.
 
-### 2.4 Stream URL-hosted PLYs with Range requests instead of `res.blob()` — P1
+### [x] 2.4 Stream URL-hosted PLYs with Range requests instead of `res.blob()` — P1
 
 - **Evidence**: `gaussianLoader.ts:41-49` `blobOf` → `res.blob()` downloads the whole file before decoding, with no download progress (the overlay sits on "Downloading …"). Safari keeps large blobs in memory, so a 1 GB+ `?url=` load is an OOM on iOS. `pointCloudLoader.ts:6-14` has the same pattern.
 - **Root cause**: the decoder only needs sequential slices (`blob.slice(a, b).arrayBuffer()` in `decodeGaussianPly.ts:194-195,312`), but URL sources are materialised in full first.
@@ -165,7 +167,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: unit test with a fake `ByteSource` that records calls: reads are sequential, non-overlapping, and cover `[header.byteLength, end)`. Manual: `?url=` pointing at a 1 GB PLY on a range-capable host; memory stays near the decoded size and the progress bar moves during the download.
 - **Risk**: medium. CORS: `Range` is a CORS-safelisted header for single ranges, but servers must expose `Content-Range`/`Accept-Ranges`. Keep the blob fallback.
 
-### 2.5 Decoder hot loop: no per-splat allocation, overlapped reads, non-finite guard — P2
+### [x] 2.5 Decoder hot loop: no per-splat allocation, overlapped reads, non-finite guard — P2
 
 - **Evidence**: `decodeGaussianPly.ts:504-535` `readFloats` allocates a `Sample` object per splat (14M short-lived objects) and `writeSample` takes it by reference. `:451` allocates a `read` closure per vertex in `consumeView`. `:312` awaits each 8 MB slice serially, with no read-ahead. NaN/Inf centers (they do occur in trained scenes) are written as-is and poison Spark's bounds and the camera framing.
 - **Fix**:
@@ -176,7 +178,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: add a micro-benchmark under `tests/bench/decode.bench.ts` (vitest `bench`, not run in CI) over a synthetic 500k-splat SH3 PLY. Record before/after decode ms in `BENCHMARK.md`. Unit test: a PLY with one NaN splat decodes `count === n - 1`.
 - **Risk**: low.
 
-### 2.6 Point clouds: double-precision recentering, compact colors, up-aware colorize — P1 (precision) / P2 (memory)
+### [x] 2.6 Point clouds: double-precision recentering, compact colors, up-aware colorize — P1 (precision) / P2 (memory)
 
 - **Evidence**: `src/loaders/points/parsePly.ts:72-73,252-254` writes `double` x/y/z straight into `Float32Array`. UTM-scale coordinates (for example 4,500,000 m) quantize to 0.25–0.5 m, so drone point clouds jitter and look blocky. Colors are `Float32Array(samples * 3)` (`:73`): 96 MB at the 8M desktop cap where `Uint8` would be 24 MB. `colorizeByHeight` (`:326-343`) always uses Y, which stripes Z-up drone clouds. The ASCII tail (`:317-323`) drops colors for the last line.
 - **Fix**:
@@ -189,7 +191,7 @@ Build emits one 3.18 MB JS chunk (1.06 MB gzip). PWA precache: 26 entries, 4.15 
 - **Verify**: `tests/parsePly.test.ts`: a binary PLY with `double` x = 4,500,000.123 and 4,500,000.623 must decode to positions whose difference is 0.5 ± 1e-3. Colors are a `Uint8Array`. Stats panel memory drops by about 72 MB at 8M points.
 - **Risk**: low. `getBounds` uses `setFromObject`, which includes `position`, so framing is unaffected.
 
-### 2.7 Gaussian recentering and SH quantization range — P2
+### [x] 2.7 Gaussian recentering and SH quantization range — P2
 
 - **Evidence**: half-float centers (`packSplat.ts:183-184` `toHalf(x)`) overflow to ±Infinity above 65504 and have 0.25–1 m spacing between 512 and 2048. A packed-mode PLY in projected coordinates therefore vanishes, and a large local survey looks blocky. `DEFAULT_LIMITS.sh1Max/sh2Max/sh3Max = 4` (`packSplat.ts:22-30`) gives a 7-bit SH1 step of 4/63 ≈ 0.063, while Spark's own default is 1 (`spark.module.js:33-40`). Typical SH1 coefficients are smaller than that step, so view-dependent colour is mostly zeroed in packed mode.
 - **Fix**:

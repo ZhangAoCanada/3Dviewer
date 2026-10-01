@@ -1,3 +1,4 @@
+import type { ByteSource } from '../../core/byteSource';
 import type { MemoryBudget } from '../../core/types';
 import {
   paddedSplatCount,
@@ -21,6 +22,7 @@ import {
 const SH_C0 = 0.28209479177387814;
 const HEADER_PROBE = 1024 * 1024;
 const DEFAULT_CHUNK = 8 * 1024 * 1024;
+const RESERVOIR = 65_536;
 
 const TYPE_SIZE: Record<string, number> = {
   char: 1,
@@ -148,6 +150,11 @@ export interface DecodeProgress {
   message: string;
 }
 
+export interface GaussianBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
 export interface DecodeGaussianOptions {
   budget: MemoryBudget;
   /** Float32 centers when the budget can hold them. */
@@ -179,20 +186,24 @@ export interface DecodedGaussian {
   decodedBytes: number;
   lod: boolean;
   mismatch: boolean;
+  /** Local-space centers, after subtracting `origin`. */
+  bounds: GaussianBounds;
+  robustBounds: GaussianBounds;
+  origin: [number, number, number];
 }
 
-export async function inspectGaussianPly(blob: Blob): Promise<GaussianPlyHeader | null> {
+export async function inspectGaussianPly(source: ByteSource): Promise<GaussianPlyHeader | null> {
   try {
-    return await readGaussianPlyHeader(blob);
+    return await readGaussianPlyHeader(source);
   } catch (error) {
     if (error instanceof GaussianPlyUnsupported) return null;
     throw error;
   }
 }
 
-export async function readGaussianPlyHeader(blob: Blob): Promise<GaussianPlyHeader> {
-  const cap = Math.min(blob.size, HEADER_PROBE);
-  const bytes = new Uint8Array(await blob.slice(0, cap).arrayBuffer());
+export async function readGaussianPlyHeader(source: ByteSource): Promise<GaussianPlyHeader> {
+  const cap = Math.min(source.size, HEADER_PROBE);
+  const bytes = new Uint8Array(await source.read(0, cap));
   const text = new TextDecoder('latin1').decode(bytes);
   if (!text.trimStart().toLowerCase().startsWith('ply')) {
     throw new GaussianPlyUnsupported('Not a PLY file.');
@@ -238,10 +249,10 @@ export async function readGaussianPlyHeader(blob: Blob): Promise<GaussianPlyHead
   };
 }
 
-export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptions): Promise<DecodedGaussian> {
-  const header = await readGaussianPlyHeader(blob);
+export async function decodeGaussianPly(source: ByteSource, options: DecodeGaussianOptions): Promise<DecodedGaussian> {
+  const header = await readGaussianPlyHeader(source);
   throwIfAborted(options.signal);
-  const resolved = resolveVertexCount(header.headerCount, header.byteLength, blob.size, header.stride);
+  const resolved = resolveVertexCount(header.headerCount, header.byteLength, source.size, header.stride);
   const plan = planGaussianDecode({
     sourceCount: resolved.count,
     sourceSh: header.sourceSh,
@@ -252,7 +263,6 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
     throw new GaussianPlyError('Gaussian PLY contains no splats.');
   }
 
-  const limits = options.limits ?? DEFAULT_LIMITS;
   const padded = paddedSplatCount(plan.decodedCount);
   let packedArray: Uint32Array | undefined;
   let extArrays: [Uint32Array, Uint32Array] | undefined;
@@ -291,6 +301,32 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
   const aligned = chunkBytes - (chunkBytes % header.stride);
   let filePos = header.byteLength;
   const end = header.byteLength + resolved.count * header.stride;
+  const firstTake = Math.min(aligned, end - filePos);
+  const firstBuf = await source.read(filePos, filePos + firstTake);
+  throwIfAborted(options.signal);
+  const stats = scanChunk(firstBuf, header);
+  const finite = stats.finite;
+  const meanX = finite > 0 ? stats.sumX / finite : 0;
+  const meanY = finite > 0 ? stats.sumY / finite : 0;
+  const meanZ = finite > 0 ? stats.sumZ / finite : 0;
+  const originX = midpoint(header.georef.minX, header.georef.maxX) ?? meanX;
+  const originY = midpoint(header.georef.minY, header.georef.maxY) ?? meanY;
+  const originZ = midpoint(header.georef.minZ, header.georef.maxZ) ?? meanZ;
+  const limits = options.limits ?? limitsFrom(stats);
+  const accum: DecodeAccum = {
+    originX,
+    originY,
+    originZ,
+    minX: Infinity,
+    minY: Infinity,
+    minZ: Infinity,
+    maxX: -Infinity,
+    maxY: -Infinity,
+    maxZ: -Infinity,
+    reservoir: new Float32Array(RESERVOIR * 3),
+    seen: 0,
+    skippedNonFinite: 0,
+  };
   let kept = 0;
   let lastReport = 0;
   const report = (scanned: number, force = false) => {
@@ -305,14 +341,20 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
   };
   report(0, true);
 
-  while (filePos < end) {
+  let pending: Promise<ArrayBuffer> | null = Promise.resolve(firstBuf);
+  while (pending && filePos < end) {
     throwIfAborted(options.signal);
-    const remaining = end - filePos;
-    const take = Math.min(aligned, remaining);
-    const buf = await blob.slice(filePos, filePos + take).arrayBuffer();
+    const buf = await pending;
     const base = (filePos - header.byteLength) / header.stride;
     const verts = Math.floor(buf.byteLength / header.stride);
     if (verts <= 0) break;
+    const nextPos = filePos + verts * header.stride;
+    if (nextPos < end) {
+      const take = Math.min(aligned, end - nextPos);
+      pending = source.read(nextPos, nextPos + take);
+    } else {
+      pending = null;
+    }
     if (header.fast) {
       kept = consumeFloats(
         new Float32Array(buf),
@@ -322,6 +364,7 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
         plan,
         limits,
         kept,
+        accum,
         packedArray,
         extArrays,
         sh1,
@@ -341,6 +384,7 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
         plan,
         limits,
         kept,
+        accum,
         packedArray,
         extArrays,
         sh1,
@@ -352,12 +396,18 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
         sh3Scratch,
       );
     }
-    filePos += verts * header.stride;
+    filePos = nextPos;
     report(Math.min(resolved.count, base + verts));
   }
   report(resolved.count, true);
 
   const notes = [...plan.notes];
+  if (accum.skippedNonFinite > 0) {
+    const skipped = accum.skippedNonFinite;
+    notes.push(
+      `Skipped ${skipped.toLocaleString()} ${skipped === 1 ? 'splat' : 'splats'} with non-finite centers.`,
+    );
+  }
   let warning: string | undefined;
   if (resolved.mismatch) {
     warning = `PLY header says ${header.headerCount.toLocaleString()} splats, but the file body holds ${resolved.count.toLocaleString()}. Loaded the body.`;
@@ -388,6 +438,9 @@ export async function decodeGaussianPly(blob: Blob, options: DecodeGaussianOptio
     decodedBytes: plan.estimatedBytes,
     lod: plan.lod,
     mismatch: resolved.mismatch,
+    bounds: axisBounds(accum),
+    robustBounds: robustBounds(accum),
+    origin: [originX, originY, originZ],
   };
 }
 
@@ -399,6 +452,7 @@ function consumeFloats(
   plan: GaussianDecodePlan,
   limits: SplatEncodingLimits,
   kept: number,
+  accum: DecodeAccum,
   packed: Uint32Array | undefined,
   ext: [Uint32Array, Uint32Array] | undefined,
   sh1: Uint32Array | undefined,
@@ -415,8 +469,8 @@ function consumeFloats(
   for (let i = 0; i < verts; i += 1) {
     const index = base + i;
     if (step > 1 && index % step !== 0) continue;
-    const at = i * stride;
-    const sample = readFloats(floats, at, layout, header.nRest, plan.shDegree, sh1Scratch, sh2Scratch, sh3Scratch);
+    readFloats(floats, i * stride, layout, header.nRest, plan.shDegree, sh1Scratch, sh2Scratch, sh3Scratch);
+    if (!acceptSample(accum)) continue;
     writeSample(kept, sample, plan, limits, packed, ext, sh1, sh2, sh3, sh3b);
     kept += 1;
   }
@@ -431,6 +485,7 @@ function consumeView(
   plan: GaussianDecodePlan,
   limits: SplatEncodingLimits,
   kept: number,
+  accum: DecodeAccum,
   packed: Uint32Array | undefined,
   ext: [Uint32Array, Uint32Array] | undefined,
   sh1: Uint32Array | undefined,
@@ -444,38 +499,45 @@ function consumeView(
   const layout = header.layout;
   const step = plan.stride;
   const little = header.little;
+  const types = layout.types;
+  const tx = types.x ?? 'float';
+  const ty = types.y ?? 'float';
+  const tz = types.z ?? 'float';
+  const tdc0 = types.f_dc_0 ?? 'float';
+  const tdc1 = types.f_dc_1 ?? 'float';
+  const tdc2 = types.f_dc_2 ?? 'float';
+  const tOpacity = types.opacity ?? 'float';
+  const tScale0 = types.scale_0 ?? 'float';
+  const tScale1 = types.scale_1 ?? 'float';
+  const tScale2 = types.scale_2 ?? 'float';
+  const tRot0 = types.rot_0 ?? 'float';
+  const tRot1 = types.rot_1 ?? 'float';
+  const tRot2 = types.rot_2 ?? 'float';
+  const tRot3 = types.rot_3 ?? 'float';
   for (let i = 0; i < verts; i += 1) {
     const index = base + i;
     if (step > 1 && index % step !== 0) continue;
     const at = i * header.stride;
-    const read = (offset: number, name: string) => readScalar(view, at + offset, layout.types[name] ?? 'float', little);
-    const x = read(layout.x, 'x');
-    const y = read(layout.y, 'y');
-    const z = read(layout.z, 'z');
-    const r = 0.5 + SH_C0 * read(layout.dc0, 'f_dc_0');
-    const g = 0.5 + SH_C0 * read(layout.dc1, 'f_dc_1');
-    const b = 0.5 + SH_C0 * read(layout.dc2, 'f_dc_2');
-    const opacity = sigmoid(read(layout.opacity, 'opacity'));
-    const sx = Math.exp(read(layout.scale0, 'scale_0'));
-    const sy = Math.exp(read(layout.scale1, 'scale_1'));
-    const sz = Math.exp(read(layout.scale2, 'scale_2'));
-    const qw = read(layout.rot0, 'rot_0');
-    const qx = read(layout.rot1, 'rot_1');
-    const qy = read(layout.rot2, 'rot_2');
-    const qz = read(layout.rot3, 'rot_3');
+    sample.x = readScalar(view, at + layout.x, tx, little);
+    sample.y = readScalar(view, at + layout.y, ty, little);
+    sample.z = readScalar(view, at + layout.z, tz, little);
+    sample.r = 0.5 + SH_C0 * readScalar(view, at + layout.dc0, tdc0, little);
+    sample.g = 0.5 + SH_C0 * readScalar(view, at + layout.dc1, tdc1, little);
+    sample.b = 0.5 + SH_C0 * readScalar(view, at + layout.dc2, tdc2, little);
+    sample.opacity = sigmoid(readScalar(view, at + layout.opacity, tOpacity, little));
+    sample.sx = Math.exp(readScalar(view, at + layout.scale0, tScale0, little));
+    sample.sy = Math.exp(readScalar(view, at + layout.scale1, tScale1, little));
+    sample.sz = Math.exp(readScalar(view, at + layout.scale2, tScale2, little));
+    sample.qw = readScalar(view, at + layout.rot0, tRot0, little);
+    sample.qx = readScalar(view, at + layout.rot1, tRot1, little);
+    sample.qy = readScalar(view, at + layout.rot2, tRot2, little);
+    sample.qz = readScalar(view, at + layout.rot3, tRot3, little);
+    sample.sh1 = sh1Scratch;
+    sample.sh2 = sh2Scratch;
+    sample.sh3 = sh3Scratch;
     fillRest(view, at, layout, header, plan.shDegree, little, sh1Scratch, sh2Scratch, sh3Scratch);
-    writeSample(
-      kept,
-      { x, y, z, r, g, b, opacity, sx, sy, sz, qx, qy, qz, qw, sh1: sh1Scratch, sh2: sh2Scratch, sh3: sh3Scratch },
-      plan,
-      limits,
-      packed,
-      ext,
-      sh1,
-      sh2,
-      sh3,
-      sh3b,
-    );
+    if (!acceptSample(accum)) continue;
+    writeSample(kept, sample, plan, limits, packed, ext, sh1, sh2, sh3, sh3b);
     kept += 1;
   }
   return kept;
@@ -501,6 +563,55 @@ interface Sample {
   sh3: Float32Array | null;
 }
 
+/** One splat record reused for the whole decode. Chunk awaits never overlap a fill. */
+const sample: Sample = {
+  x: 0,
+  y: 0,
+  z: 0,
+  r: 0,
+  g: 0,
+  b: 0,
+  opacity: 0,
+  sx: 0,
+  sy: 0,
+  sz: 0,
+  qx: 0,
+  qy: 0,
+  qz: 0,
+  qw: 0,
+  sh1: null,
+  sh2: null,
+  sh3: null,
+};
+
+interface DecodeAccum {
+  originX: number;
+  originY: number;
+  originZ: number;
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+  reservoir: Float32Array;
+  seen: number;
+  skippedNonFinite: number;
+}
+
+interface ChunkStats {
+  sumX: number;
+  sumY: number;
+  sumZ: number;
+  finite: number;
+  sh1: Float32Array;
+  sh2: Float32Array;
+  sh3: Float32Array;
+  n1: number;
+  n2: number;
+  n3: number;
+}
+
 function readFloats(
   floats: Float32Array,
   at: number,
@@ -510,28 +621,56 @@ function readFloats(
   sh1: Float32Array | null,
   sh2: Float32Array | null,
   sh3: Float32Array | null,
-): Sample {
+): void {
   const f = (word: number) => floats[at + word] ?? 0;
   if (sh1 && nRest >= 3) fillRestFloats(floats, at + layout.restBase / 4, nRest, sh, sh1, sh2, sh3);
-  return {
-    x: f(layout.x / 4),
-    y: f(layout.y / 4),
-    z: f(layout.z / 4),
-    r: 0.5 + SH_C0 * f(layout.dc0 / 4),
-    g: 0.5 + SH_C0 * f(layout.dc1 / 4),
-    b: 0.5 + SH_C0 * f(layout.dc2 / 4),
-    opacity: sigmoid(f(layout.opacity / 4)),
-    sx: Math.exp(f(layout.scale0 / 4)),
-    sy: Math.exp(f(layout.scale1 / 4)),
-    sz: Math.exp(f(layout.scale2 / 4)),
-    qw: f(layout.rot0 / 4),
-    qx: f(layout.rot1 / 4),
-    qy: f(layout.rot2 / 4),
-    qz: f(layout.rot3 / 4),
-    sh1,
-    sh2,
-    sh3,
-  };
+  sample.x = f(layout.x / 4);
+  sample.y = f(layout.y / 4);
+  sample.z = f(layout.z / 4);
+  sample.r = 0.5 + SH_C0 * f(layout.dc0 / 4);
+  sample.g = 0.5 + SH_C0 * f(layout.dc1 / 4);
+  sample.b = 0.5 + SH_C0 * f(layout.dc2 / 4);
+  sample.opacity = sigmoid(f(layout.opacity / 4));
+  sample.sx = Math.exp(f(layout.scale0 / 4));
+  sample.sy = Math.exp(f(layout.scale1 / 4));
+  sample.sz = Math.exp(f(layout.scale2 / 4));
+  sample.qw = f(layout.rot0 / 4);
+  sample.qx = f(layout.rot1 / 4);
+  sample.qy = f(layout.rot2 / 4);
+  sample.qz = f(layout.rot3 / 4);
+  sample.sh1 = sh1;
+  sample.sh2 = sh2;
+  sample.sh3 = sh3;
+}
+
+/** Subtract the origin, drop non-finite centers, and keep min/max plus a reservoir. */
+function acceptSample(accum: DecodeAccum): boolean {
+  const x = sample.x - accum.originX;
+  const y = sample.y - accum.originY;
+  const z = sample.z - accum.originZ;
+  if (!Number.isFinite(x + y + z)) {
+    accum.skippedNonFinite += 1;
+    return false;
+  }
+  sample.x = x;
+  sample.y = y;
+  sample.z = z;
+  if (x < accum.minX) accum.minX = x;
+  if (y < accum.minY) accum.minY = y;
+  if (z < accum.minZ) accum.minZ = z;
+  if (x > accum.maxX) accum.maxX = x;
+  if (y > accum.maxY) accum.maxY = y;
+  if (z > accum.maxZ) accum.maxZ = z;
+  const seen = accum.seen;
+  const slot = seen < RESERVOIR ? seen : Math.floor(Math.random() * (seen + 1));
+  if (slot < RESERVOIR) {
+    const offset = slot * 3;
+    accum.reservoir[offset] = x;
+    accum.reservoir[offset + 1] = y;
+    accum.reservoir[offset + 2] = z;
+  }
+  accum.seen += 1;
+  return true;
 }
 
 function fillRestFloats(
@@ -812,6 +951,186 @@ function parseGeoref(header: string): GaussianGeoref {
     else if (key === 'maxz') geo.maxZ = value;
   }
   return geo;
+}
+
+function scanChunk(buf: ArrayBuffer, header: GaussianPlyHeader): ChunkStats {
+  const verts = Math.floor(buf.byteLength / header.stride);
+  const stats: ChunkStats = {
+    sumX: 0,
+    sumY: 0,
+    sumZ: 0,
+    finite: 0,
+    sh1: new Float32Array(verts * 9),
+    sh2: new Float32Array(verts * 15),
+    sh3: new Float32Array(verts * 21),
+    n1: 0,
+    n2: 0,
+    n3: 0,
+  };
+  if (verts <= 0) return stats;
+  if (header.fast) scanFast(new Float32Array(buf), verts, header, stats);
+  else scanView(new DataView(buf), verts, header, stats);
+  return stats;
+}
+
+function scanFast(floats: Float32Array, verts: number, header: GaussianPlyHeader, stats: ChunkStats): void {
+  const words = header.stride / 4;
+  const layout = header.layout;
+  const restAtWord = layout.restBase / 4;
+  const nRest = header.nRest;
+  const collect = nRest >= 3 && layout.restBase >= 0;
+  for (let i = 0; i < verts; i += 1) {
+    const at = i * words;
+    const x = floats[at + layout.x / 4] ?? 0;
+    const y = floats[at + layout.y / 4] ?? 0;
+    const z = floats[at + layout.z / 4] ?? 0;
+    if (Number.isFinite(x + y + z)) {
+      stats.sumX += x;
+      stats.sumY += y;
+      stats.sumZ += z;
+      stats.finite += 1;
+    }
+    if (!collect) continue;
+    const restAt = at + restAtWord;
+    stats.n1 = pushBandFloats(floats, restAt, nRest, 0, 3, stats.sh1, stats.n1);
+    if (nRest >= 8) stats.n2 = pushBandFloats(floats, restAt, nRest, 3, 5, stats.sh2, stats.n2);
+    if (nRest >= 15) stats.n3 = pushBandFloats(floats, restAt, nRest, 8, 7, stats.sh3, stats.n3);
+  }
+}
+
+function scanView(view: DataView, verts: number, header: GaussianPlyHeader, stats: ChunkStats): void {
+  const layout = header.layout;
+  const little = header.little;
+  const tx = layout.types.x ?? 'float';
+  const ty = layout.types.y ?? 'float';
+  const tz = layout.types.z ?? 'float';
+  const nRest = header.nRest;
+  const collect = nRest >= 3 && layout.restBase >= 0;
+  for (let i = 0; i < verts; i += 1) {
+    const at = i * header.stride;
+    const x = readScalar(view, at + layout.x, tx, little);
+    const y = readScalar(view, at + layout.y, ty, little);
+    const z = readScalar(view, at + layout.z, tz, little);
+    if (Number.isFinite(x + y + z)) {
+      stats.sumX += x;
+      stats.sumY += y;
+      stats.sumZ += z;
+      stats.finite += 1;
+    }
+    if (!collect) continue;
+    stats.n1 = pushBandView(view, at, layout.restBase, nRest, 0, 3, little, stats.sh1, stats.n1);
+    if (nRest >= 8) stats.n2 = pushBandView(view, at, layout.restBase, nRest, 3, 5, little, stats.sh2, stats.n2);
+    if (nRest >= 15) stats.n3 = pushBandView(view, at, layout.restBase, nRest, 8, 7, little, stats.sh3, stats.n3);
+  }
+}
+
+function pushBandFloats(
+  floats: Float32Array,
+  restAt: number,
+  nRest: number,
+  from: number,
+  count: number,
+  bucket: Float32Array,
+  offset: number,
+): number {
+  const g = restAt + nRest;
+  const b = restAt + nRest * 2;
+  let n = offset;
+  for (let k = 0; k < count; k += 1) {
+    const coeff = from + k;
+    n = pushAbs(bucket, n, floats[restAt + coeff] ?? 0);
+    n = pushAbs(bucket, n, floats[g + coeff] ?? 0);
+    n = pushAbs(bucket, n, floats[b + coeff] ?? 0);
+  }
+  return n;
+}
+
+function pushBandView(
+  view: DataView,
+  at: number,
+  restBase: number,
+  nRest: number,
+  from: number,
+  count: number,
+  little: boolean,
+  bucket: Float32Array,
+  offset: number,
+): number {
+  let n = offset;
+  for (let k = 0; k < count; k += 1) {
+    const coeff = from + k;
+    n = pushAbs(bucket, n, readScalar(view, at + restBase + coeff * 4, 'float', little));
+    n = pushAbs(bucket, n, readScalar(view, at + restBase + (nRest + coeff) * 4, 'float', little));
+    n = pushAbs(bucket, n, readScalar(view, at + restBase + (nRest * 2 + coeff) * 4, 'float', little));
+  }
+  return n;
+}
+
+function pushAbs(bucket: Float32Array, offset: number, value: number): number {
+  if (!Number.isFinite(value)) return offset;
+  bucket[offset] = Math.abs(value);
+  return offset + 1;
+}
+
+function limitsFrom(stats: ChunkStats): SplatEncodingLimits {
+  return {
+    ...DEFAULT_LIMITS,
+    sh1Max: bandLimit(stats.sh1, stats.n1, DEFAULT_LIMITS.sh1Max),
+    sh2Max: bandLimit(stats.sh2, stats.n2, DEFAULT_LIMITS.sh2Max),
+    sh3Max: bandLimit(stats.sh3, stats.n3, DEFAULT_LIMITS.sh3Max),
+  };
+}
+
+function bandLimit(samples: Float32Array, count: number, fallback: number): number {
+  if (count <= 0) return fallback;
+  const filled = samples.subarray(0, count);
+  filled.sort();
+  const index = Math.min(count - 1, Math.max(0, Math.round(0.99 * (count - 1))));
+  return Math.min(4, Math.max(0.25, filled[index] ?? 0));
+}
+
+function midpoint(minText: string | undefined, maxText: string | undefined): number | undefined {
+  if (minText === undefined || maxText === undefined) return undefined;
+  const min = Number(minText);
+  const max = Number(maxText);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined;
+  return (min + max) / 2;
+}
+
+function axisBounds(accum: DecodeAccum): GaussianBounds {
+  if (accum.seen <= 0 || !Number.isFinite(accum.minX)) {
+    return { min: [0, 0, 0], max: [0, 0, 0] };
+  }
+  return {
+    min: [accum.minX, accum.minY, accum.minZ],
+    max: [accum.maxX, accum.maxY, accum.maxZ],
+  };
+}
+
+function robustBounds(accum: DecodeAccum): GaussianBounds {
+  const n = Math.min(accum.seen, RESERVOIR);
+  if (n <= 0) return { min: [0, 0, 0], max: [0, 0, 0] };
+  const xs = axisCopy(accum.reservoir, n, 0);
+  const ys = axisCopy(accum.reservoir, n, 1);
+  const zs = axisCopy(accum.reservoir, n, 2);
+  return {
+    min: [percentile(xs, 0.005), percentile(ys, 0.005), percentile(zs, 0.005)],
+    max: [percentile(xs, 0.995), percentile(ys, 0.995), percentile(zs, 0.995)],
+  };
+}
+
+function axisCopy(sampleCenters: Float32Array, n: number, axis: number): Float32Array {
+  const copy = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) copy[i] = sampleCenters[i * 3 + axis] ?? 0;
+  copy.sort();
+  return copy;
+}
+
+function percentile(sorted: Float32Array, p: number): number {
+  const n = sorted.length;
+  if (n === 0) return 0;
+  const index = Math.min(n - 1, Math.max(0, Math.round(p * (n - 1))));
+  return sorted[index] ?? 0;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

@@ -21,7 +21,7 @@ export class PointCloudRenderable implements Renderable {
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
     if (data.colors) {
-      this.geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3));
+      this.geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3, true));
     }
     this.geometry.computeBoundingSphere();
     const radius = this.geometry.boundingSphere?.radius ?? 1;
@@ -33,6 +33,7 @@ export class PointCloudRenderable implements Renderable {
       color: data.colors ? 0xffffff : 0x9fd8c8,
     });
     this.object = new THREE.Points(this.geometry, this.material);
+    this.object.position.set(data.origin[0], data.origin[1], data.origin[2]);
     this.object.name = name;
     this.object.frustumCulled = true;
   }

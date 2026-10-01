@@ -1,4 +1,5 @@
 import { ExtSplats, PackedSplats, SplatFileType, SplatMesh, type SplatMeshOptions } from '@sparkjsdev/spark';
+import { blobSource, rangeSource, type ByteSource } from '../../core/byteSource';
 import type { AssetSource, FormatLoader, LoadContext, MemoryBudget } from '../../core/types';
 import { sniffGaussian } from '../../core/sniff';
 import { GaussianRenderable, splatCount, type GaussianSceneInfo } from '../../renderables/gaussianRenderable';
@@ -22,13 +23,20 @@ const STREAM_BYTES = 16 * 1024 * 1024;
 const EXTENDED_BYTES = 80 * 1024 * 1024;
 const LOD_ABOVE = 400_000;
 
-async function contentLength(url: string, signal: AbortSignal): Promise<number | undefined> {
+interface HeadProbe {
+  size?: number;
+  acceptRanges: boolean;
+}
+
+async function probeHead(url: string, signal: AbortSignal): Promise<HeadProbe> {
   try {
     const res = await fetch(url, { method: 'HEAD', signal });
     const value = Number(res.headers.get('content-length'));
-    return Number.isFinite(value) && value > 0 ? value : undefined;
+    const size = Number.isFinite(value) && value > 0 ? value : undefined;
+    const accept = (res.headers.get('accept-ranges') ?? '').toLowerCase();
+    return { size, acceptRanges: accept.includes('bytes') };
   } catch {
-    return undefined;
+    return { acceptRanges: false };
   }
 }
 
@@ -42,12 +50,11 @@ async function blobOf(source: AssetSource, ctx: LoadContext): Promise<Blob> {
   return res.blob();
 }
 
-function decodeInWorker(
-  blob: Blob,
-  budget: MemoryBudget,
-  preferExtended: boolean,
-  ctx: LoadContext,
-): Promise<DecodedGaussian> {
+type DecodeRequest =
+  | { blob: Blob; budget: MemoryBudget; preferExtended: boolean }
+  | { url: string; size: number; budget: MemoryBudget; preferExtended: boolean };
+
+function decodeInWorker(request: DecodeRequest, ctx: LoadContext): Promise<DecodedGaussian> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../../workers/gaussianPly.worker.ts', import.meta.url), { type: 'module' });
     let settled = false;
@@ -99,7 +106,7 @@ function decodeInWorker(
     worker.onerror = (event) => {
       finish(new Error(event.message || 'Gaussian decode worker failed'));
     };
-    worker.postMessage({ blob, budget, preferExtended });
+    worker.postMessage(request);
   });
 }
 
@@ -116,6 +123,8 @@ function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean): GaussianSceneIn
     warning: decoded.warning,
     georef: decoded.georef,
     decodedBytes: decoded.decodedBytes,
+    bounds: decoded.bounds,
+    robustBounds: decoded.robustBounds,
   };
 }
 
@@ -168,6 +177,7 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
   } else {
     throw new Error('Gaussian decode produced no splat buffer.');
   }
+  mesh.position.set(decoded.origin[0], decoded.origin[1], decoded.origin[2]);
   let disposed = false;
   const release = () => {
     if (disposed) return;
@@ -215,18 +225,34 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
   }
 }
 
-async function loadStandardPly(source: AssetSource, blob: Blob, ctx: LoadContext, started: number): Promise<GaussianRenderable> {
-  const size = source.sizeBytes ?? blob.size;
+type StandardPlyInput = { kind: 'blob'; blob: Blob } | { kind: 'range'; url: string; size: number };
+
+function standardSource(input: StandardPlyInput, signal: AbortSignal): ByteSource {
+  return input.kind === 'blob' ? blobSource(input.blob) : rangeSource(input.url, input.size, signal);
+}
+
+async function loadStandardPly(
+  source: AssetSource,
+  input: StandardPlyInput,
+  ctx: LoadContext,
+  started: number,
+): Promise<GaussianRenderable> {
+  const size = source.sizeBytes ?? (input.kind === 'blob' ? input.blob.size : input.size);
   const preferExtended = ctx.extendedPrecision || size >= EXTENDED_BYTES;
   let decoded: DecodedGaussian;
   try {
-    decoded = await decodeInWorker(blob, ctx.budget, preferExtended, ctx);
+    decoded = await decodeInWorker(
+      input.kind === 'blob'
+        ? { blob: input.blob, budget: ctx.budget, preferExtended }
+        : { url: input.url, size: input.size, budget: ctx.budget, preferExtended },
+      ctx,
+    );
   } catch (error) {
     if (ctx.signal.aborted) throw error;
     const name = error instanceof Error ? error.name : '';
     if (name === 'GaussianPlyError' || name === 'GaussianPlyUnsupported') throw error;
-    if (blob.size > 64 * 1024 * 1024) throw new Error(explainLoadError(error));
-    decoded = await decodeGaussianPly(blob, {
+    if (size > 64 * 1024 * 1024) throw new Error(explainLoadError(error));
+    decoded = await decodeGaussianPly(standardSource(input, ctx.signal), {
       budget: ctx.budget,
       preferExtended,
       signal: ctx.signal,
@@ -266,21 +292,38 @@ export const gaussianLoader: FormatLoader = {
   async load(source: AssetSource, ctx: LoadContext) {
     const started = performance.now();
     ctx.onProgress({ loaded: 0, stage: 'download', message: `Reading ${source.name}` });
-    const size = source.sizeBytes ?? (source.url ? await contentLength(source.url, ctx.signal) : undefined);
+    const head: HeadProbe = source.url ? await probeHead(source.url, ctx.signal) : { acceptRanges: false };
     throwIfAborted(ctx.signal);
+    const size = source.sizeBytes ?? head.size ?? source.file?.size ?? source.bytes?.byteLength;
+    const useRange = !source.file && !source.bytes && Boolean(source.url) && size !== undefined && head.acceptRanges;
 
     if (source.extension === 'ply' || source.extension === '') {
-      const blob = await blobOf(source, ctx);
-      throwIfAborted(ctx.signal);
-      const header = await inspectGaussianPly(blob);
-      if (header) {
-        try {
-          return await loadStandardPly(source, blob, ctx, started);
-        } catch (error) {
-          if (error instanceof GaussianPlyUnsupported) {
-            /* Compressed or unusual PLY still goes through Spark. */
-          } else {
-            throw new Error(explainLoadError(error));
+      if (useRange && source.url && size !== undefined) {
+        const header = await inspectGaussianPly(rangeSource(source.url, size, ctx.signal));
+        if (header) {
+          try {
+            return await loadStandardPly(source, { kind: 'range', url: source.url, size }, ctx, started);
+          } catch (error) {
+            if (error instanceof GaussianPlyUnsupported) {
+              /* Compressed or unusual PLY still goes through Spark. */
+            } else {
+              throw new Error(explainLoadError(error));
+            }
+          }
+        }
+      } else {
+        const blob = await blobOf(source, ctx);
+        throwIfAborted(ctx.signal);
+        const header = await inspectGaussianPly(blobSource(blob));
+        if (header) {
+          try {
+            return await loadStandardPly(source, { kind: 'blob', blob }, ctx, started);
+          } catch (error) {
+            if (error instanceof GaussianPlyUnsupported) {
+              /* Compressed or unusual PLY still goes through Spark. */
+            } else {
+              throw new Error(explainLoadError(error));
+            }
           }
         }
       }

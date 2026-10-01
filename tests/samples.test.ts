@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { blobSource } from '../src/core/byteSource';
 import { classifyPly, headerText, isGlbMagic } from '../src/core/sniff';
 import { parsePlyPoints } from '../src/loaders/points/parsePly';
 
@@ -19,7 +20,7 @@ describe('bundled samples', () => {
     expect(splat.byteLength).toBeGreaterThan(32 * 1000);
     expect(obj.startsWith('#') || obj.includes('\nv ')).toBe(true);
     expect(isGlbMagic(glb.subarray(0, 4))).toBe(true);
-    const parsed = await parsePlyPoints(new Blob([cloud]), 5000);
+    const parsed = await parsePlyPoints(blobSource(new Blob([cloud])), 5000);
     expect(parsed.sourceCount).toBe(24000);
     expect(parsed.count).toBeLessThanOrEqual(5000);
     expect(parsed.colors?.[0]).toBeGreaterThan(0);

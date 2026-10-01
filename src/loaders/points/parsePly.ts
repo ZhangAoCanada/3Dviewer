@@ -1,9 +1,12 @@
+import type { ByteSource } from '../../core/byteSource';
+
 export interface PointCloudData {
   positions: Float32Array;
-  colors: Float32Array | null;
+  colors: Uint8Array | null;
   count: number;
   sourceCount: number;
   stride: number;
+  origin: [number, number, number];
 }
 
 export class PlyParseError extends Error {
@@ -28,6 +31,13 @@ interface ElementDef {
   hasList: boolean;
 }
 
+interface OriginState {
+  x: number;
+  y: number;
+  z: number;
+  ready: boolean;
+}
+
 const TYPE_SIZE: Record<string, number> = {
   char: 1,
   uchar: 1,
@@ -50,16 +60,17 @@ const TYPE_SIZE: Record<string, number> = {
 const CHUNK = 4 * 1024 * 1024;
 
 /**
- * Stream a PLY point cloud from a Blob. Binary files are read in chunks and
- * subsampled to `maxPoints`, so a multi-hundred-MB cloud does not have to
- * become a single JS array of every vertex.
+ * Stream a PLY point cloud. Binary files are read in chunks and subsampled
+ * to `maxPoints`, so a multi-hundred-MB cloud does not have to become a
+ * single JS array of every vertex. Positions are stored relative to the
+ * first finite vertex.
  */
 export async function parsePlyPoints(
-  blob: Blob,
+  source: ByteSource,
   maxPoints: number,
   onProgress?: (loadedVerts: number, totalVerts: number) => void,
 ): Promise<PointCloudData> {
-  const header = await readHeader(blob);
+  const header = await readHeader(source);
   const elements = parseElements(header.text);
   const vertex = elements.find((el) => el.name === 'vertex');
   if (!vertex) throw new PlyParseError('PLY has no vertex element');
@@ -74,7 +85,8 @@ export async function parsePlyPoints(
   const stride = Math.max(1, Math.ceil(vertex.count / cap));
   const samples = Math.ceil(vertex.count / stride);
   const positions = new Float32Array(samples * 3);
-  const colors = colorProps ? new Float32Array(samples * 3) : null;
+  const colors = colorProps ? new Uint8Array(samples * 3) : null;
+  const origin: OriginState = { x: 0, y: 0, z: 0, ready: false };
 
   let preBytes = 0;
   for (const el of elements) {
@@ -99,11 +111,11 @@ export async function parsePlyPoints(
   report(0, true);
 
   if (header.format === 'ascii') {
-    await readAscii(blob, header.byteLength, vertex, colorProps, stride, positions, colors, report);
+    await readAscii(source, header.byteLength, vertex, colorProps, stride, positions, colors, origin, report);
   } else {
     const little = header.format === 'binary_little_endian';
     await readBinary(
-      blob,
+      source,
       header.byteLength + preBytes,
       vertex,
       x,
@@ -114,6 +126,7 @@ export async function parsePlyPoints(
       little,
       positions,
       colors,
+      origin,
       report,
     );
   }
@@ -125,6 +138,7 @@ export async function parsePlyPoints(
     count: samples,
     sourceCount: vertex.count,
     stride,
+    origin: [origin.x, origin.y, origin.z],
   };
 }
 
@@ -149,9 +163,9 @@ interface HeaderInfo {
   format: 'ascii' | 'binary_little_endian' | 'binary_big_endian';
 }
 
-async function readHeader(blob: Blob): Promise<HeaderInfo> {
-  const cap = Math.min(blob.size, 1024 * 1024);
-  const bytes = new Uint8Array(await blob.slice(0, cap).arrayBuffer());
+async function readHeader(source: ByteSource): Promise<HeaderInfo> {
+  const cap = Math.min(source.size, 1024 * 1024);
+  const bytes = new Uint8Array(await source.read(0, cap));
   const text = new TextDecoder('latin1').decode(bytes);
   const marker = 'end_header';
   const idx = text.indexOf(marker);
@@ -203,6 +217,20 @@ function colorValue(value: number, type: string): number {
   return value / 255;
 }
 
+function colorByte(value: number, type: string): number {
+  const unit = Math.min(1, Math.max(0, colorValue(value, type)));
+  return Math.round(unit * 255);
+}
+
+function noteOrigin(origin: OriginState, x: number, y: number, z: number): void {
+  if (origin.ready) return;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+  origin.x = x;
+  origin.y = y;
+  origin.z = z;
+  origin.ready = true;
+}
+
 function readScalar(view: DataView, offset: number, type: string, little: boolean): number {
   switch (type) {
     case 'float':
@@ -235,7 +263,7 @@ function readScalar(view: DataView, offset: number, type: string, little: boolea
 }
 
 async function readBinary(
-  blob: Blob,
+  source: ByteSource,
   bodyStart: number,
   vertex: ElementDef,
   x: Prop,
@@ -245,12 +273,13 @@ async function readBinary(
   stride: number,
   little: boolean,
   positions: Float32Array,
-  colors: Float32Array | null,
+  colors: Uint8Array | null,
+  origin: OriginState,
   report?: (loaded: number) => void,
 ): Promise<void> {
   const strideBytes = vertex.bytes;
   const bodyBytes = vertex.count * strideBytes;
-  if (bodyStart + bodyBytes > blob.size + 1) {
+  if (bodyStart + bodyBytes > source.size + 1) {
     throw new PlyParseError('PLY vertex data is truncated');
   }
   let filePos = bodyStart;
@@ -260,22 +289,27 @@ async function readBinary(
     const remaining = end - filePos;
     const want = Math.min(CHUNK - (CHUNK % strideBytes || 0), remaining);
     const take = want < strideBytes ? strideBytes : want - (want % strideBytes);
-    const buf = await blob.slice(filePos, filePos + take).arrayBuffer();
+    const buf = await source.read(filePos, filePos + take);
     const view = new DataView(buf);
     const verts = Math.floor(view.byteLength / strideBytes);
     const baseIndex = (filePos - bodyStart) / strideBytes;
     for (let i = 0; i < verts; i++) {
       const index = baseIndex + i;
-      if (index % stride !== 0) continue;
+      if (origin.ready && index % stride !== 0) continue;
       const at = i * strideBytes;
+      const px = readScalar(view, at + x.offset, x.type, little);
+      const py = readScalar(view, at + y.offset, y.type, little);
+      const pz = readScalar(view, at + z.offset, z.type, little);
+      noteOrigin(origin, px, py, pz);
+      if (index % stride !== 0) continue;
       const o = out * 3;
-      positions[o] = readScalar(view, at + x.offset, x.type, little);
-      positions[o + 1] = readScalar(view, at + y.offset, y.type, little);
-      positions[o + 2] = readScalar(view, at + z.offset, z.type, little);
+      positions[o] = px - origin.x;
+      positions[o + 1] = py - origin.y;
+      positions[o + 2] = pz - origin.z;
       if (colors && colorProps) {
-        colors[o] = colorValue(readScalar(view, at + colorProps[0].offset, colorProps[0].type, little), colorProps[0].type);
-        colors[o + 1] = colorValue(readScalar(view, at + colorProps[1].offset, colorProps[1].type, little), colorProps[1].type);
-        colors[o + 2] = colorValue(readScalar(view, at + colorProps[2].offset, colorProps[2].type, little), colorProps[2].type);
+        colors[o] = colorByte(readScalar(view, at + colorProps[0].offset, colorProps[0].type, little), colorProps[0].type);
+        colors[o + 1] = colorByte(readScalar(view, at + colorProps[1].offset, colorProps[1].type, little), colorProps[1].type);
+        colors[o + 2] = colorByte(readScalar(view, at + colorProps[2].offset, colorProps[2].type, little), colorProps[2].type);
       }
       out += 1;
     }
@@ -286,13 +320,14 @@ async function readBinary(
 }
 
 async function readAscii(
-  blob: Blob,
+  source: ByteSource,
   bodyStart: number,
   vertex: ElementDef,
   colorProps: [Prop, Prop, Prop] | null,
   stride: number,
   positions: Float32Array,
-  colors: Float32Array | null,
+  colors: Uint8Array | null,
+  origin: OriginState,
   report?: (loaded: number) => void,
 ): Promise<void> {
   const col = new Map(vertex.props.map((prop, index) => [prop.name, index]));
@@ -310,57 +345,75 @@ async function readAscii(
   let index = 0;
   let out = 0;
   const decoder = new TextDecoder('latin1');
-  while (pos < blob.size && index < vertex.count) {
-    const buf = await blob.slice(pos, Math.min(blob.size, pos + CHUNK)).arrayBuffer();
+  while (pos < source.size && index < vertex.count) {
+    const buf = await source.read(pos, Math.min(source.size, pos + CHUNK));
     pos += buf.byteLength;
-    const text = carry + decoder.decode(buf, { stream: pos < blob.size });
+    const text = carry + decoder.decode(buf, { stream: pos < source.size });
     const lines = text.split(/\r?\n/);
-    carry = pos < blob.size ? (lines.pop() ?? '') : '';
+    carry = pos < source.size ? (lines.pop() ?? '') : '';
     for (const line of lines) {
       if (index >= vertex.count) break;
       const trimmed = line.trim();
       if (!trimmed) continue;
-      if (index % stride === 0) {
+      if (!origin.ready || index % stride === 0) {
         const parts = trimmed.split(/\s+/);
-        const o = out * 3;
-        positions[o] = Number(parts[xi]);
-        positions[o + 1] = Number(parts[yi]);
-        positions[o + 2] = Number(parts[zi]);
-        if (colors && cr !== undefined && cg !== undefined && cb !== undefined && colorProps) {
-          colors[o] = colorValue(Number(parts[cr]), colorProps[0].type);
-          colors[o + 1] = colorValue(Number(parts[cg]), colorProps[1].type);
-          colors[o + 2] = colorValue(Number(parts[cb]), colorProps[2].type);
+        const px = Number(parts[xi]);
+        const py = Number(parts[yi]);
+        const pz = Number(parts[zi]);
+        noteOrigin(origin, px, py, pz);
+        if (index % stride === 0) {
+          const o = out * 3;
+          positions[o] = px - origin.x;
+          positions[o + 1] = py - origin.y;
+          positions[o + 2] = pz - origin.z;
+          if (colors && cr !== undefined && cg !== undefined && cb !== undefined && colorProps) {
+            colors[o] = colorByte(Number(parts[cr]), colorProps[0].type);
+            colors[o + 1] = colorByte(Number(parts[cg]), colorProps[1].type);
+            colors[o + 2] = colorByte(Number(parts[cb]), colorProps[2].type);
+          }
+          out += 1;
         }
-        out += 1;
       }
       index += 1;
     }
     report?.(index);
   }
-  if (carry.trim() && index < vertex.count && index % stride === 0) {
+  if (carry.trim() && index < vertex.count) {
     const parts = carry.trim().split(/\s+/);
-    const o = out * 3;
-    positions[o] = Number(parts[xi]);
-    positions[o + 1] = Number(parts[yi]);
-    positions[o + 2] = Number(parts[zi]);
+    const px = Number(parts[xi]);
+    const py = Number(parts[yi]);
+    const pz = Number(parts[zi]);
+    noteOrigin(origin, px, py, pz);
+    if (index % stride === 0) {
+      const o = out * 3;
+      positions[o] = px - origin.x;
+      positions[o + 1] = py - origin.y;
+      positions[o + 2] = pz - origin.z;
+      if (colors && cr !== undefined && cg !== undefined && cb !== undefined && colorProps) {
+        colors[o] = colorByte(Number(parts[cr]), colorProps[0].type);
+        colors[o + 1] = colorByte(Number(parts[cg]), colorProps[1].type);
+        colors[o + 2] = colorByte(Number(parts[cb]), colorProps[2].type);
+      }
+    }
   }
 }
 
-export function colorizeByHeight(positions: Float32Array): Float32Array {
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (let i = 1; i < positions.length; i += 3) {
-    const y = positions[i] ?? 0;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
+export function colorizeByHeight(positions: Float32Array, upAxis: 'y' | 'z'): Uint8Array {
+  const axis = upAxis === 'z' ? 2 : 1;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = axis; i < positions.length; i += 3) {
+    const value = positions[i] ?? 0;
+    if (value < min) min = value;
+    if (value > max) max = value;
   }
-  const span = Math.max(maxY - minY, 1e-6);
-  const colors = new Float32Array(positions.length);
+  const span = Math.max(max - min, 1e-6);
+  const colors = new Uint8Array(positions.length);
   for (let i = 0; i < positions.length; i += 3) {
-    const t = ((positions[i + 1] ?? 0) - minY) / span;
-    colors[i] = 0.22 + 0.72 * t;
-    colors[i + 1] = 0.62 - 0.18 * t;
-    colors[i + 2] = 0.78 - 0.42 * t;
+    const t = ((positions[i + axis] ?? 0) - min) / span;
+    colors[i] = Math.round((0.22 + 0.72 * t) * 255);
+    colors[i + 1] = Math.round((0.62 - 0.18 * t) * 255);
+    colors[i + 2] = Math.round((0.78 - 0.42 * t) * 255);
   }
   return colors;
 }

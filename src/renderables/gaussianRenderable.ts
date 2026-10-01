@@ -1,7 +1,7 @@
 import { SplatMesh, type SplatMesh as SplatMeshType } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import type { Renderable, RenderableMeta, RenderableStats, RenderSettings } from '../core/types';
-import type { GaussianGeoref } from '../loaders/gaussian/decodeGaussianPly';
+import type { GaussianBounds, GaussianGeoref } from '../loaders/gaussian/decodeGaussianPly';
 import { nextId } from './ids';
 
 type SplatMeshInstance = InstanceType<typeof SplatMesh>;
@@ -18,12 +18,16 @@ export interface GaussianSceneInfo {
   warning?: string;
   georef?: GaussianGeoref;
   decodedBytes: number;
+  bounds?: GaussianBounds;
+  robustBounds?: GaussianBounds;
 }
 
 export class GaussianRenderable implements Renderable {
   readonly id = nextId('splats');
   readonly kind = 'splats' as const;
   readonly object: SplatMeshInstance;
+
+  private cachedLocalBounds: THREE.Box3 | null = null;
 
   constructor(
     readonly name: string,
@@ -93,12 +97,27 @@ export class GaussianRenderable implements Renderable {
     if (!this.object.isInitialized) return null;
     try {
       this.object.updateWorldMatrix(true, false);
-      const box = this.object.getBoundingBox(true);
-      if (box.isEmpty()) return null;
-      return box.applyMatrix4(this.object.matrixWorld);
+      const local = this.localBounds();
+      if (!local || local.isEmpty()) return null;
+      return local.clone().applyMatrix4(this.object.matrixWorld);
     } catch {
       return null;
     }
+  }
+
+  private localBounds(): THREE.Box3 | null {
+    const robust = this.sceneInfo?.robustBounds;
+    if (robust) {
+      return new THREE.Box3(
+        new THREE.Vector3(robust.min[0], robust.min[1], robust.min[2]),
+        new THREE.Vector3(robust.max[0], robust.max[1], robust.max[2]),
+      );
+    }
+    if (this.cachedLocalBounds) return this.cachedLocalBounds;
+    const box = this.object.getBoundingBox(true);
+    if (box.isEmpty()) return null;
+    this.cachedLocalBounds = box.clone();
+    return this.cachedLocalBounds;
   }
 
   dispose(): void {

@@ -51,8 +51,8 @@ export function estimateDecodedBytes(count: number, sh: ShDegree, extended: bool
 
 /**
  * Fit a gaussian PLY into the device budget.
- * Drop SH degree first, then switch off float32 centers, then subsample.
- * Mobile also caps the decoded set at the resident splat budget.
+ * Choose encoding and SH for the resident target (the mobile cap, or the
+ * full cloud), then subsample to that count. A count of 0 or 1 always fits.
  */
 export function planGaussianDecode(args: {
   sourceCount: number;
@@ -65,42 +65,41 @@ export function planGaussianDecode(args: {
   const shCap = Math.min(sourceSh, args.budget.maxSh) as ShDegree;
   const usable = Math.floor(args.budget.cpuBytes * DECODE_FRACTION);
   const encodings = args.preferExtended ? [true, false] : [false];
+  const targetCount =
+    args.budget.profile === 'mobile' ? Math.min(sourceCount, args.budget.maxSplatsResident) : sourceCount;
 
   let shDegree: ShDegree = 0;
   let extended = false;
-  let fullFit = false;
+  let decodedCountChosen = targetCount;
+  let fitted = false;
 
   for (const wantExtended of encodings) {
     for (let sh = shCap; sh >= 0; sh -= 1) {
       const degree = sh as ShDegree;
-      if (sourceCount <= 1 || estimateDecodedBytes(sourceCount, degree, wantExtended) <= usable) {
+      if (targetCount <= 1 || estimateDecodedBytes(targetCount, degree, wantExtended) <= usable) {
         shDegree = degree;
         extended = wantExtended;
-        fullFit = true;
+        decodedCountChosen = targetCount;
+        fitted = true;
         break;
       }
     }
-    if (fullFit) break;
+    if (fitted) break;
+  }
+
+  if (!fitted) {
+    shDegree = 0;
+    extended = false;
+    decodedCountChosen = fitCount(sourceCount, 0, false, usable).count;
   }
 
   let stride = 1;
-  let decodedCount = sourceCount;
-  if (!fullFit) {
-    shDegree = 0;
-    extended = false;
-    const fitted = fitCount(sourceCount, 0, false, usable);
-    stride = fitted.stride;
-    decodedCount = fitted.count;
-  }
-
-  if (args.budget.profile === 'mobile' && decodedCount > args.budget.maxSplatsResident) {
-    const cap = Math.max(1, args.budget.maxSplatsResident);
-    stride = Math.max(stride, Math.ceil(sourceCount / cap));
-    decodedCount = sourceCount === 0 ? 0 : Math.ceil(sourceCount / stride);
-    while (
-      decodedCount > 1 &&
-      estimateDecodedBytes(decodedCount, shDegree, extended) > usable
-    ) {
+  let decodedCount = 0;
+  if (sourceCount > 0) {
+    const chosen = Math.max(1, decodedCountChosen);
+    stride = Math.max(1, Math.ceil(sourceCount / chosen));
+    decodedCount = Math.ceil(sourceCount / stride);
+    while (decodedCount > 1 && estimateDecodedBytes(decodedCount, shDegree, extended) > usable) {
       stride += 1;
       decodedCount = Math.ceil(sourceCount / stride);
     }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { blobSource, type ByteSource } from '../src/core/byteSource';
 import { detectMemoryBudget } from '../src/core/memoryBudget';
 import { decodeGaussianPly, resolveVertexCount } from '../src/loaders/gaussian/decodeGaussianPly';
 import { explainLoadError } from '../src/loaders/gaussian/explainLoadError';
 import { planGaussianDecode, estimateDecodedBytes } from '../src/loaders/gaussian/gaussianPlan';
 import { toHalf, writePackedSplat, DEFAULT_LIMITS } from '../src/loaders/gaussian/packSplat';
+import { halfToFloat } from '../src/render/coarseSurface';
 
 const SH_C0 = 0.28209479177387814;
 
@@ -22,12 +24,12 @@ function gaussianHeader(count: number, comments: string[] = []): string {
   return `${lines.join('\n')}\n`;
 }
 
-function writeSplat(view: DataView, offset: number, x: number, rest0 = 0): void {
+function writeSplat(view: DataView, offset: number, x: number, rest0 = 0, y = 0.25, z = -1): void {
   const fdc = (channel: number) => ((channel === 0 ? 1 : 0) - 0.5) / SH_C0;
   const values = new Array<number>(62).fill(0);
   values[0] = x;
-  values[1] = 0.25;
-  values[2] = -1;
+  values[1] = y;
+  values[2] = z;
   values[6] = fdc(0);
   values[7] = fdc(1);
   values[8] = fdc(2);
@@ -79,7 +81,7 @@ describe('resolveVertexCount', () => {
 describe('decodeGaussianPly', () => {
   it('loads the body splat count when the header count is wrong', async () => {
     const blob = gaussianBlob(5, 2, ['offsetx 539022.51', 'offsety 3377206.74', 'offsetz 22.95', 'epsg 4547'], 0.5);
-    const decoded = await decodeGaussianPly(blob, {
+    const decoded = await decodeGaussianPly(blobSource(blob), {
       budget: desktop,
       preferExtended: false,
       chunkBytes: 500,
@@ -100,12 +102,12 @@ describe('decodeGaussianPly', () => {
     expect(packed).toBeTruthy();
     expect(packed![0]! & 255).toBe(255);
     expect((packed![0]! >>> 8) & 255).toBe(0);
-    expect(packed![5]! & 65535).toBe(toHalf(2));
+    expect(packed![5]! & 65535).toBe(toHalf(2 - decoded.origin[0]));
     expect(decoded.sh1?.some((word) => word !== 0)).toBe(true);
   });
 
   it('does not warn when the header count matches the body', async () => {
-    const decoded = await decodeGaussianPly(gaussianBlob(3, 3), {
+    const decoded = await decodeGaussianPly(blobSource(gaussianBlob(3, 3)), {
       budget: desktop,
       preferExtended: false,
       chunkBytes: 248,
@@ -113,9 +115,92 @@ describe('decodeGaussianPly', () => {
     expect(decoded.count).toBe(3);
     expect(decoded.mismatch).toBe(false);
     expect(decoded.warning).toBeUndefined();
-    expect(decoded.packedArray![9]! & 65535).toBe(toHalf(3));
+    expect(decoded.packedArray![9]! & 65535).toBe(toHalf(3 - decoded.origin[0]));
+  });
+
+  it('keeps robust bounds inside the cloud when a few floaters sit at 1e4', async () => {
+    const count = 10_010;
+    const header = Buffer.from(gaussianHeader(count));
+    const body = Buffer.alloc(count * 248);
+    const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    for (let i = 0; i < 10_000; i += 1) {
+      const t = i / 9999;
+      writeSplat(view, i * 248, t, 0, (i % 100) / 99, (i % 50) / 49);
+    }
+    for (let i = 0; i < 10; i += 1) writeSplat(view, (10_000 + i) * 248, 1e4, 0, 1e4, 1e4);
+    const decoded = await decodeGaussianPly(blobSource(new Blob([header, body])), {
+      budget: desktop,
+      preferExtended: false,
+    });
+    expect(decoded.count).toBe(count);
+    expect(decoded.robustBounds.max[0]).toBeLessThan(2);
+    expect(decoded.bounds.max[0]).toBeCloseTo(1e4, -2);
+  });
+
+  it('drops a splat whose center is NaN', async () => {
+    const decoded = await decodeGaussianPly(blobSource(gaussianBlobAt([1, Number.NaN, 3, 4])), {
+      budget: desktop,
+      preferExtended: false,
+    });
+    expect(decoded.count).toBe(3);
+    expect(decoded.notes.join(' ')).toMatch(/non-finite/);
+  });
+
+  it('keeps a packed center at x = 70000 finite after adding the origin back', async () => {
+    const decoded = await decodeGaussianPly(blobSource(gaussianBlobAt([70_000, 70_000])), {
+      budget: desktop,
+      preferExtended: false,
+    });
+    const local = halfToFloat(decoded.packedArray![1]! & 65535);
+    expect(Number.isFinite(local)).toBe(true);
+    expect(local + decoded.origin[0]).toBeCloseTo(70_000);
+  });
+
+  it('quantizes an SH1 coefficient of 0.03 to within 0.01', async () => {
+    const decoded = await decodeGaussianPly(blobSource(gaussianBlob(1, 1, [], 0.03)), {
+      budget: desktop,
+      preferExtended: false,
+    });
+    const word = decoded.sh1?.[0] ?? 0;
+    const raw = word & 127;
+    const signed = (raw & 64) !== 0 ? raw - 128 : raw;
+    const coef = (signed * decoded.limits.sh1Max) / 63;
+    expect(Math.abs(coef - 0.03)).toBeLessThan(0.01);
+  });
+
+  it('reads the body as sequential non-overlapping ranges', async () => {
+    const blob = gaussianBlob(5, 5);
+    const headerBytes = Buffer.from(gaussianHeader(5)).byteLength;
+    const end = headerBytes + 5 * 248;
+    const calls: Array<[number, number]> = [];
+    const source: ByteSource = {
+      size: blob.size,
+      async read(start: number, endByte: number) {
+        calls.push([start, endByte]);
+        return blob.slice(start, endByte).arrayBuffer();
+      },
+    };
+    await decodeGaussianPly(source, { budget: desktop, preferExtended: false, chunkBytes: 500 });
+    const body = calls.filter(([start]) => start >= headerBytes);
+    expect(body.length).toBeGreaterThan(0);
+    let cursor = headerBytes;
+    for (const [start, stop] of body) {
+      expect(start).toBe(cursor);
+      expect(stop).toBeGreaterThan(start);
+      expect(stop).toBeLessThanOrEqual(end);
+      cursor = stop;
+    }
+    expect(cursor).toBe(end);
   });
 });
+
+function gaussianBlobAt(xs: number[], rest0 = 0): Blob {
+  const header = Buffer.from(gaussianHeader(xs.length));
+  const body = Buffer.alloc(xs.length * 248);
+  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  for (let i = 0; i < xs.length; i += 1) writeSplat(view, i * 248, xs[i] ?? 0, rest0);
+  return new Blob([header, body]);
+}
 
 describe('planGaussianDecode', () => {
   it('keeps a 14,161,020 splat cloud on an 8 GB desktop by lowering SH before subsampling', () => {
@@ -152,9 +237,11 @@ describe('planGaussianDecode', () => {
       budget,
       preferExtended: true,
     });
-    expect(plan.decodedCount).toBeLessThan(14_161_020);
+    expect(plan.decodedCount).toBeLessThanOrEqual(700_000);
     expect(plan.decodedCount).toBeLessThanOrEqual(budget.maxSplatsResident);
     expect(plan.stride).toBeGreaterThan(1);
+    expect(plan.extended).toBe(true);
+    expect(plan.shDegree).toBeGreaterThanOrEqual(1);
     expect(plan.shDegree).toBeLessThanOrEqual(budget.maxSh);
     expect(plan.notes.join(' ')).toMatch(/1 of every/);
   });
