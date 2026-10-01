@@ -60,7 +60,8 @@
       <div id="viewport">
         <canvas id="view" tabindex="0" aria-label="3D viewport"></canvas>
         <p id="nav-hint" class="nav-hint">
-          Drag orbit · Right-drag pan · Scroll zooms to cursor · Double-click flies in
+          <span class="hint-mouse">Drag orbit · Right-drag pan · Scroll zooms to cursor · Double-click flies in</span>
+          <span class="hint-touch">Drag to orbit · Two-finger drag to pan · Pinch to zoom · Double-tap to focus</span>
         </p>
       </div>
 
@@ -73,6 +74,9 @@
             <span id="file-kind" class="badge">Splats</span>
             <span id="file-name" class="file-name"></span>
             <span id="file-size" class="file-size"></span>
+            <button id="geo-badge" class="badge badge-geo" type="button" hidden aria-label="Show georeference">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-map-pin"/></svg><span id="geo-badge-text"></span>
+            </button>
           </div>
         </div>
         <div class="top-actions island">
@@ -80,6 +84,9 @@
             <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg><span class="btn-label">Open</span>
           </button>
           <input id="file-input" type="file" hidden accept=".ply,.splat,.spz,.ksplat,.sog,.rad,.glb,.gltf,.obj,.zip" />
+          <button id="url-btn" class="btn btn-ghost btn-icon hide-phone" type="button" aria-label="Open from URL" title="Open from URL (U)">
+            <svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>
+          </button>
           <div class="menu hide-phone">
             <button id="samples-btn" class="btn btn-ghost" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="samples-menu">
               <svg class="icon" aria-hidden="true"><use href="#i-shapes"/></svg><span class="btn-label">Samples</span>
@@ -91,6 +98,9 @@
           <button id="theme-btn" class="btn btn-ghost btn-icon hide-phone" type="button" aria-label="Switch to light theme" title="Theme (T)">
             <svg class="icon only-dark" aria-hidden="true"><use href="#i-sun"/></svg>
             <svg class="icon only-light" aria-hidden="true"><use href="#i-moon"/></svg>
+          </button>
+          <button id="help-btn" class="btn btn-ghost btn-icon hide-phone" type="button" aria-haspopup="dialog" aria-label="Controls and shortcuts" title="Controls and shortcuts (?)">
+            <svg class="icon" aria-hidden="true"><use href="#i-circle-help"/></svg>
           </button>
           <button id="panel-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Settings" title="Settings (H)" aria-expanded="false" aria-controls="panel">
             <svg class="icon" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>
@@ -139,17 +149,25 @@
         </dl>
       </section>
 
-      <section id="empty" class="empty">
+      <section id="empty" class="empty" hidden aria-labelledby="empty-title">
         <div class="empty-card">
-          <span class="mark lg" aria-hidden="true"></span>
-          <h1>Drop a 3D file</h1>
-          <p>PLY Gaussian splats, .splat, meshes (.glb, .obj), and point clouds. Drag anywhere, or open a sample.</p>
+          <div class="empty-icon" aria-hidden="true"><svg class="icon icon-xl"><use href="#i-upload"/></svg></div>
+          <h1 id="empty-title">Open a 3D scan</h1>
+          <p id="empty-desc">Drop a file anywhere, or choose one from this device. Files are read locally and never uploaded.</p>
           <div class="empty-actions">
-            <button id="empty-open" class="btn btn-primary" type="button">Choose file</button>
-            <button id="empty-sample" class="btn btn-secondary" type="button">Load torus splats</button>
+            <button id="empty-open" class="btn btn-primary btn-lg" type="button"><svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg>Choose file</button>
+            <button id="empty-url" class="btn btn-secondary btn-lg" type="button"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>Open URL</button>
+          </div>
+          <p class="empty-formats">Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb .gltf .obj · Points: .ply</p>
+          <div class="empty-samples" id="empty-samples">
+            <span>Try a sample</span>
+            <button id="empty-sample" class="chip" type="button">3DGS torus</button>
           </div>
         </div>
       </section>
+      <div id="drop-overlay" class="drop-overlay" aria-hidden="true">
+        <div class="drop-inner"><svg class="icon icon-xl"><use href="#i-upload"/></svg><p>Drop to open</p><span>Splats, meshes, or point clouds</span></div>
+      </div>
 
       <aside id="panel" class="panel is-collapsed" aria-labelledby="panel-title">
         <div class="panel-head">
@@ -166,6 +184,11 @@
           </details>
           <details id="sec-geo" class="sec" open hidden>
             <summary>Georeference<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <dl id="geo-info" class="kv"></dl>
+            <div class="sec-actions">
+              <button id="geo-copy" class="btn btn-secondary btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
+              <a id="geo-epsg-link" class="btn btn-ghost btn-sm" href="https://epsg.io/" target="_blank" rel="noopener" hidden><svg class="icon icon-sm" aria-hidden="true"><use href="#i-external-link"/></svg>epsg.io</a>
+            </div>
           </details>
           <details id="sec-display" class="sec" open>
             <summary>Display<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
@@ -207,37 +230,108 @@
             <dl class="kv"><dt>Build</dt><dd id="build-id">dev</dd></dl>
             <p class="hint"><a href="https://github.com/ZhangAoCanada/3Dviewer" target="_blank" rel="noopener">Source on GitHub</a> · Icons by Lucide (ISC)</p>
           </details>
-          <details id="sec-controls" class="sec">
-            <summary>Controls<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <ul class="help">
-              <li><b>Orbit</b> drag around the point under the cursor. A ring marks the pivot</li>
-              <li><b>Pan</b> right-drag, middle-drag, or Shift/Ctrl-drag. The point under the cursor sticks</li>
-              <li><b>Zoom</b> wheel toward the cursor. Closer views move more slowly</li>
-              <li><b>Touch</b> one finger orbits, two fingers pan and pinch-zoom</li>
-              <li><b>Fly</b> drag to look, WASD move, Q/E or Space vertical, Shift sprint</li>
-              <li><b>Double-click</b> or F flies to a point. R resets the view</li>
-            </ul>
-          </details>
         </div>
       </aside>
 
-      <div id="loading" class="loading" hidden>
+      <div id="loading" class="loading">
         <div class="loading-card">
-          <div class="spinner" aria-hidden="true"></div>
-          <div class="loading-copy">
-            <p id="loading-text">Loading</p>
-            <div id="loading-track" class="load-track" hidden>
-              <div id="loading-bar" class="load-bar"></div>
+          <div class="loading-head">
+            <div class="spinner" aria-hidden="true"></div>
+            <div class="loading-titles">
+              <p id="loading-file" class="loading-file"></p>
+              <p id="loading-text" class="loading-text">Starting viewer…</p>
             </div>
-            <p id="loading-detail" class="loading-detail"></p>
+            <span id="loading-elapsed" class="loading-elapsed" aria-hidden="true"></span>
+            <button id="loading-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
           </div>
+          <ol id="loading-steps" class="steps" aria-hidden="true">
+            <li data-step="download"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span><span id="step-download-label">Read</span></li>
+            <li data-step="parse"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span>Decode</li>
+            <li data-step="gpu"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span>GPU upload</li>
+          </ol>
+          <div id="loading-track" class="load-track" role="progressbar" aria-labelledby="loading-text" aria-valuemin="0" aria-valuemax="100" hidden>
+            <div id="loading-bar" class="load-bar"></div>
+          </div>
+          <p id="loading-detail" class="loading-detail"></p>
+          <p id="loading-sr" class="sr-only" aria-live="polite"></p>
         </div>
       </div>
-      <div id="toast" class="toast" hidden role="status"></div>
-      <div id="update-toast" class="update-toast" hidden role="status">
-        <span>New version available</span>
-        <button id="update-reload" class="btn btn-primary" type="button">Reload</button>
+      <div class="toast-stack">
+        <div id="toast" class="toast" role="status" data-kind="error" hidden>
+          <svg class="icon toast-icon" aria-hidden="true"><use id="toast-icon" href="#i-circle-alert"/></svg>
+          <p id="toast-msg" class="toast-msg"></p>
+          <button id="toast-close" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Dismiss"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+        <div id="update-toast" class="toast toast-update" role="status" hidden>
+          <svg class="icon toast-icon" aria-hidden="true"><use href="#i-refresh-cw"/></svg>
+          <p class="toast-msg"><strong>Update available</strong><span>Reload to use the latest version.</span></p>
+          <button id="update-later" class="btn btn-ghost btn-sm" type="button">Later</button>
+          <button id="update-reload" class="btn btn-primary btn-sm" type="button">Reload</button>
+        </div>
       </div>
+      <dialog id="url-dialog" class="dialog" aria-labelledby="url-title">
+        <form id="url-form" method="dialog">
+          <div class="dialog-head">
+            <h2 id="url-title">Open from URL</h2>
+            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" formnovalidate aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <label class="field"><span>File URL</span>
+            <input id="url-input" class="input" type="url" required inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://example.com/scan.ply" />
+          </label>
+          <p id="url-error" class="field-error" role="alert" hidden></p>
+          <p class="hint">The server must allow cross-origin requests (CORS). The link is added to the address bar so you can share this view.</p>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" value="cancel" formnovalidate>Cancel</button>
+            <button class="btn btn-primary" value="open">Open</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="help-dialog" class="dialog dialog-wide" aria-labelledby="help-title">
+        <form method="dialog">
+          <div class="dialog-head">
+            <h2 id="help-title">Controls and shortcuts</h2>
+            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="help-grid">
+            <section>
+              <h3><svg class="icon" aria-hidden="true"><use href="#i-mouse"/></svg>Mouse</h3>
+              <dl class="keys">
+                <dt>Orbit</dt><dd>Drag (around the point under the cursor)</dd>
+                <dt>Pan</dt><dd>Right-drag, middle-drag, or Shift/Ctrl + drag</dd>
+                <dt>Zoom</dt><dd>Scroll (toward the cursor)</dd>
+                <dt>Fly to a point</dt><dd>Double-click</dd>
+              </dl>
+            </section>
+            <section>
+              <h3><svg class="icon" aria-hidden="true"><use href="#i-hand"/></svg>Touch</h3>
+              <dl class="keys">
+                <dt>Orbit</dt><dd>One-finger drag</dd>
+                <dt>Pan and zoom</dt><dd>Two fingers (drag and pinch)</dd>
+                <dt>Fly to a point</dt><dd>Double-tap</dd>
+                <dt>Fly mode</dt><dd>look = one-finger drag; move forward or back = two-finger drag up or down</dd>
+              </dl>
+            </section>
+            <section>
+              <h3><svg class="icon" aria-hidden="true"><use href="#i-keyboard"/></svg>Keyboard</h3>
+              <dl class="keys">
+                <dt><kbd>1</kbd></dt><dd>Orbit mode</dd>
+                <dt><kbd>2</kbd></dt><dd>Fly mode</dd>
+                <dt><kbd>F</kbd></dt><dd>Focus the center</dd>
+                <dt><kbd>R</kbd></dt><dd>Reset view</dd>
+                <dt><kbd>O</kbd></dt><dd>Open file</dd>
+                <dt><kbd>U</kbd></dt><dd>Open URL</dd>
+                <dt><kbd>H</kbd></dt><dd>Settings</dd>
+                <dt><kbd>I</kbd></dt><dd>Stats</dd>
+                <dt><kbd>G</kbd></dt><dd>Ground grid</dd>
+                <dt><kbd>T</kbd></dt><dd>Theme</dd>
+                <dt><kbd>?</kbd></dt><dd>This help</dd>
+                <dt><kbd>Esc</kbd></dt><dd>Close or cancel</dd>
+                <dt>Fly mode</dt><dd><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows move · <kbd>Q</kbd> / <kbd>E</kbd> down / up (<kbd>Space</kbd> also up) · <kbd>Shift</kbd> sprint</dd>
+              </dl>
+            </section>
+          </div>
+        </form>
+      </dialog>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -20,8 +20,14 @@ export function registerAppUpdate(): void {
     window.location.reload();
   };
 
+  const later = document.querySelector<HTMLButtonElement>('#update-later');
+  later?.addEventListener('click', () => {
+    toast.hidden = true;
+  });
+
   button.addEventListener('click', () => {
     button.disabled = true;
+    button.textContent = 'Reloading…';
     void navigator.serviceWorker.getRegistration().then((registration) => {
       registration?.waiting?.postMessage({ type: 'SKIP_WAITING' });
     });

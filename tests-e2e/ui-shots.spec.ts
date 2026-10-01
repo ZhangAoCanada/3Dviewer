@@ -62,11 +62,36 @@ for (const size of sizes) {
         await page.waitForTimeout(300);
         await shot(page, 'loading');
       });
-      // Batch 2+: uncomment as the features land.
-      // test('url-dialog', … click '#url-btn' (desktop) or '#more-btn' then '[data-action=url]' (phone) …)
-      // test('help', … page.keyboard.press('Shift+Slash') (desktop) or More → Controls (phone) …)
-      // test('samples-menu', … desktop dark only: click '#samples-btn' …)
-      // test('more-menu', … phone dark only: click '#more-btn' …)
+      test('url-dialog', async ({ page }) => {
+        if (size.touch) {
+          await page.goto('./');
+          await settle(page);
+          await page.click('#empty-url');
+        } else {
+          await page.goto('?sample=torus-ply');
+          await settle(page);
+          await page.click('#url-btn');
+        }
+        await expect(page.locator('#url-dialog')).toBeVisible();
+        await shot(page, 'url-dialog');
+      });
+      test('help', async ({ page }) => {
+        await page.goto('?sample=torus-ply');
+        await settle(page);
+        // Phone More → Controls is Batch 3. '?' opens the same dialog at both sizes.
+        await page.keyboard.press('Shift+Slash');
+        await expect(page.locator('#help-dialog')).toBeVisible();
+        await shot(page, 'help');
+      });
+      if (size.name === 'desktop' && theme === 'dark') {
+        test('samples-menu', async ({ page }) => {
+          await page.goto('?sample=torus-ply');
+          await settle(page);
+          await page.click('#samples-btn');
+          await expect(page.locator('#samples-menu')).toBeVisible();
+          await shot(page, 'samples-menu');
+        });
+      }
     });
   }
 }
