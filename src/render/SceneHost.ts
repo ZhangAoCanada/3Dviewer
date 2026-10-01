@@ -2,6 +2,7 @@ import { SparkRenderer } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import type { MemoryBudget, Renderable, RenderSettings } from '../core/types';
 import { detectUpAxis } from './cameraMotion';
+import { lodParams } from './lodParams';
 import { NavigationController, type NavMode, type UpMode } from './Navigation';
 import { buildCoarse, collectCoarsePoints, disableSplatRaycast, isSplatObject, pickScene, type SceneHit } from './scenePick';
 import type { CoarseSurface } from './coarseSurface';
@@ -12,6 +13,10 @@ const DEFAULT_STD_DEV = Math.sqrt(8);
 export interface FrameStats {
   fps: number;
   frameMs: number;
+  /** Exponential moving average of `renderer.render` time, in milliseconds. */
+  renderMs: number;
+  /** True when the last sample window drew no frame. */
+  idle: boolean;
   gpuMemoryBytes: number;
   backend: 'webgl2';
   webgpuAvailable: boolean;
@@ -39,6 +44,9 @@ export class SceneHost {
   private fpsElapsed = 0;
   private frameMs = 0;
   private fps = 0;
+  private renderMs = 0;
+  private renderEmaReady = false;
+  private idle = false;
   upMode: UpMode = 'auto';
   private coarse: CoarseSurface | null = null;
   private index: SplatIndex | null = null;
@@ -47,6 +55,11 @@ export class SceneHost {
   private hasBounds = false;
   private viewDirty = true;
   private drewOnce = false;
+  private lastMotionTime = Number.NEGATIVE_INFINITY;
+  private lastSettings: RenderSettings | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private dprQuery: MediaQueryList | null = null;
+  private readonly viewSize = new THREE.Vector2();
   private readonly stillPos = new THREE.Vector3();
   private readonly stillQuat = new THREE.Quaternion();
   private readonly pickForward = new THREE.Vector3();
@@ -91,6 +104,7 @@ export class SceneHost {
     this.renderer.setClearColor(0x10141b, 1);
     this.camera = new THREE.PerspectiveCamera(55, 1, 0.01, 500);
     this.camera.position.set(1.6, 1.1, 2.8);
+    const mobile = budget.profile === 'mobile';
     this.spark = new SparkRenderer({
       renderer: this.renderer,
       maxStdDev: DEFAULT_STD_DEV,
@@ -99,6 +113,7 @@ export class SceneHost {
       enableLod: true,
       lodSplatCount: budget.maxSplatsResident,
       lodSplatScale: 1,
+      ...(mobile ? { lodRenderScale: 1.5, minSortIntervalMs: 33 } : {}),
     });
     this.scene.add(this.spark);
     this.scene.add(this.content);
@@ -122,6 +137,8 @@ export class SceneHost {
       if (point) this.pivotMarker.position.copy(point);
     };
     this.resize();
+    this.observeResize();
+    this.armDprQuery();
   }
 
   get items(): readonly Renderable[] {
@@ -158,14 +175,17 @@ export class SceneHost {
   }
 
   applySettings(settings: RenderSettings): void {
+    this.lastSettings = settings;
+    const lod = lodParams(this.budget, settings);
     this.spark.maxStdDev = DEFAULT_STD_DEV * settings.splatScale;
     this.spark.enable2DGS = settings.enable2DGS;
     this.spark.sortRadial = settings.sortRadial;
-    this.spark.lodSplatScale = settings.lodSplatScale;
-    this.spark.lodSplatCount = Math.round(this.budget.maxSplatsResident * settings.lodSplatScale);
+    this.spark.lodSplatScale = lod.lodSplatScale;
+    this.spark.lodSplatCount = lod.lodSplatCount;
     for (const item of this.renderables) item.applySettings(settings);
     this.applyEnvironment(settings);
     this.applyPixelRatio(settings);
+    this.viewDirty = true;
   }
 
   setFlip(flip: boolean): void {
@@ -291,13 +311,21 @@ export class SceneHost {
     const height = Math.max(1, parent.clientHeight);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height, false);
+    const dpr = this.renderer.getPixelRatio();
+    this.renderer.getSize(this.viewSize);
+    const bufferWidth = Math.floor(width * dpr);
+    const bufferHeight = Math.floor(height * dpr);
+    const sizeChanged = this.viewSize.x !== width || this.viewSize.y !== height;
+    const bufferChanged = this.canvas.width !== bufferWidth || this.canvas.height !== bufferHeight;
+    if (sizeChanged || bufferChanged) this.renderer.setSize(width, height, false);
     this.viewDirty = true;
   }
 
   applyPixelRatio(settings: RenderSettings): void {
+    this.lastSettings = settings;
     const cap = settings.pixelRatio === 'auto' ? this.budget.pixelRatioCap : Number(settings.pixelRatio);
     const dpr = Math.min(window.devicePixelRatio || 1, cap);
+    if (dpr === this.renderer.getPixelRatio()) return;
     this.renderer.setPixelRatio(dpr);
     this.resize();
   }
@@ -313,6 +341,7 @@ export class SceneHost {
       const dt = Math.min(0.05, elapsed);
       this.navigation.update(dt);
       this.updatePivotMarker();
+      this.updateNearPlane();
       for (const item of this.renderables) item.update(dt);
       const draw = this.needsDraw();
       if (this.indexJob) {
@@ -323,17 +352,27 @@ export class SceneHost {
         }
       }
       if (draw) {
+        const t0 = performance.now();
         this.renderer.render(this.scene, this.camera);
+        const sample = performance.now() - t0;
+        this.renderMs = this.renderEmaReady ? this.renderMs + (sample - this.renderMs) * 0.2 : sample;
+        this.renderEmaReady = true;
         this.stillPos.copy(this.camera.position);
         this.stillQuat.copy(this.camera.quaternion);
         this.viewDirty = false;
         this.drewOnce = true;
+        this.fpsFrames += 1;
       }
-      this.fpsFrames += 1;
       this.fpsElapsed += elapsed;
       if (this.fpsElapsed >= 0.4) {
-        this.fps = this.fpsFrames / this.fpsElapsed;
-        this.frameMs = (this.fpsElapsed / this.fpsFrames) * 1000;
+        this.idle = this.fpsFrames === 0;
+        if (this.fpsFrames > 0) {
+          this.fps = this.fpsFrames / this.fpsElapsed;
+          this.frameMs = (this.fpsElapsed / this.fpsFrames) * 1000;
+        } else {
+          this.fps = 0;
+          this.frameMs = 0;
+        }
         this.fpsFrames = 0;
         this.fpsElapsed = 0;
         onFrame(this.stats());
@@ -345,6 +384,8 @@ export class SceneHost {
     return {
       fps: this.fps,
       frameMs: this.frameMs,
+      renderMs: this.renderMs,
+      idle: this.idle,
       gpuMemoryBytes: this.estimateGpuBytes(),
       backend: 'webgl2',
       webgpuAvailable: this.webgpuAvailable,
@@ -355,6 +396,10 @@ export class SceneHost {
   dispose(): void {
     this.running = false;
     this.renderer.setAnimationLoop(null);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    this.dprQuery = null;
     this.clear();
     this.navigation.dispose();
     this.renderer.dispose();
@@ -374,11 +419,69 @@ export class SceneHost {
   }
 
   private needsDraw(): boolean {
+    const moving =
+      this.navigation.isMoving() ||
+      this.pivotMarker.visible ||
+      this.stillPos.distanceToSquared(this.camera.position) > 1e-10 ||
+      Math.abs(this.stillQuat.dot(this.camera.quaternion)) < 1 - 1e-8;
+    if (moving) this.lastMotionTime = performance.now();
     if (!this.drewOnce || this.viewDirty || this.spark.dirty || this.spark.sortDirty) return true;
-    if (this.navigation.isMoving() || this.pivotMarker.visible) return true;
-    if (this.stillPos.distanceToSquared(this.camera.position) > 1e-10) return true;
-    return Math.abs(this.stillQuat.dot(this.camera.quaternion)) < 1 - 1e-8;
+    if (moving || performance.now() - this.lastMotionTime < 1000) return true;
+    return this.pagerPending();
   }
+
+  private pagerPending(): boolean {
+    const pager = (
+      this.spark as unknown as {
+        pager?: {
+          fetchers?: unknown[];
+          fetched?: unknown[];
+          newUploads?: unknown[];
+          readyUploads?: unknown[];
+          lodTreeUpdates?: unknown[];
+        };
+      }
+    ).pager;
+    if (!pager) return false;
+    return Boolean(
+      pager.fetchers?.length ||
+        pager.fetched?.length ||
+        pager.newUploads?.length ||
+        pager.readyUploads?.length ||
+        pager.lodTreeUpdates?.length,
+    );
+  }
+
+  private updateNearPlane(): void {
+    if (!this.hasBounds || !this.navigation.isMoving()) return;
+    const radius = Math.max(this.navigation.sceneRadius, 0.05);
+    const distance = this.camera.position.distanceTo(this.navigation.pivot);
+    const near = THREE.MathUtils.clamp(distance / 400, radius / 1e5, radius / 800);
+    const current = this.camera.near;
+    if (current > 0 && Math.abs(near - current) <= current * 0.1) return;
+    this.camera.near = near;
+    this.camera.updateProjectionMatrix();
+  }
+
+  private observeResize(): void {
+    const parent = this.canvas.parentElement;
+    if (!parent || typeof ResizeObserver === 'undefined') return;
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(parent);
+  }
+
+  private armDprQuery(): void {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    this.dprQuery?.removeEventListener('change', this.onDprChange);
+    const dpr = window.devicePixelRatio || 1;
+    this.dprQuery = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    this.dprQuery.addEventListener('change', this.onDprChange);
+  }
+
+  private onDprChange = (): void => {
+    if (this.lastSettings) this.applyPixelRatio(this.lastSettings);
+    this.armDprQuery();
+  };
 
   private estimateGpuBytes(): number {
     let bytes = 0;

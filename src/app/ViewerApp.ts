@@ -65,7 +65,6 @@ export class ViewerApp {
     this.renderSceneInfo();
     this.renderPerf(this.host.stats());
     this.host.start((stats) => this.renderPerf(stats));
-    window.addEventListener('resize', () => this.host.resize());
     void this.boot();
   }
 
@@ -507,8 +506,8 @@ export class ViewerApp {
       if (item.kind === 'mesh') tris += itemStats.triangles ?? itemStats.primitives;
     }
     const shownSplats = stats.activeSplats > 0 ? stats.activeSplats : splats;
-    must('#hud-fps').textContent = formatFixed(stats.fps, 0);
-    must('#hud-ms').textContent = `${formatFixed(stats.frameMs)} ms`;
+    must('#hud-fps').textContent = stats.idle ? 'idle' : formatFixed(stats.fps, 0);
+    must('#hud-ms').textContent = `${formatFixed(stats.renderMs)} ms`;
     must('#hud-splats').textContent = formatCount(shownSplats);
     must('#hud-points').textContent = formatCount(points);
     must('#hud-tris').textContent = formatCount(tris);
@@ -516,8 +515,8 @@ export class ViewerApp {
     const perf = must('#perf-info');
     const rows: [string, string][] = [
       ['Backend', stats.webgpuAvailable ? 'WebGL2 (WebGPU present)' : 'WebGL2'],
-      ['FPS', formatFixed(stats.fps, 0)],
-      ['Frame', `${formatFixed(stats.frameMs)} ms`],
+      ['FPS', stats.idle ? 'idle' : formatFixed(stats.fps, 0)],
+      ['Frame', `${formatFixed(stats.renderMs)} ms`],
       ['Active splats', formatCount(shownSplats)],
       ['GPU est.', formatBytes(stats.gpuMemoryBytes)],
     ];

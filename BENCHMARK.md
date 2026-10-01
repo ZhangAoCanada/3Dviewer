@@ -6,6 +6,8 @@ Browser: headless Chrome, WebGL2 via SwiftShader (software), viewport 1400×900.
 
 HUD values are copied from the page after the loading overlay cleared and the counters had settled. Load time is the scene panel's **Load** row.
 
+Batch 3 changes what those HUD cells mean. FPS counts only frames that called `renderer.render`. When a 0.4 s window draws nothing, the FPS slot reads **idle** instead of a refresh-rate number. The milliseconds figure is an exponential moving average of that render call (`renderMs`), not the time between animation frames. The table above was copied before that change, so its FPS and Frame columns still include skipped frames.
+
 | Sample | How it was opened | Load | FPS | Frame | HUD count | GPU est. |
 | --- | --- | --- | --- | --- | --- | --- |
 | `torus.ply` (4,800 splats) | startup sample | 47 ms | 34 | 29.1 ms | 4,800 splats | 534 KB |
@@ -77,4 +79,19 @@ Check in Chrome Task Manager: load the 3.5 GB PLY, then load it again. The peak 
 
 The after decode also subtracts the first-chunk origin, derives SH limits, tracks bounds, and reservoir-samples up to 65,536 centers. It does not allocate a `Sample` object per splat. On this file the extra pass and the reservoir dominate that saving.
 
+A later pass keeps that behavior and cuts per-splat overhead: no closure in the float reader, Vitter's Algorithm L for the reservoir (same sample distribution, far fewer random calls once the file exceeds 65,536 splats), and a packed float32 loop that writes scalars straight into the packer. SH limits are still the exact 99th percentile of the first chunk. Same harness, Node on this machine, four fresh processes, interleaved with the batch 2 decoder:
+
+| Decoder | Cold ms (4 runs) | Cold median | Steady ms (3rd call in-process) | Steady median |
+| --- | --- | --- | --- | --- |
+| Batch 2 (`01336df`) | 476, 470, 485, 554 | 480 | 393, 417, 398, 435 | 407 |
+| After the packed-loop pass | 467, 499, 456, 459 | 463 | 376, 371, 369, 364 | 370 |
+
+The cold figure is the one the bench records (`iterations: 1`, no warmup). The steady figure is what a multi-gigabyte file spends most of its time in, after the first chunk has warmed the JIT. Origin, non-finite rejection, bounds, and SH limits are unchanged.
+
 Not measured here: Flip Y long tasks on a 14M scene, a 1 GB `?url=` load on a range-capable host, Chrome Task Manager for the LoD peak, and the stats-panel drop at 8M points. There is no drone PLY in the repo, so `lodCount / count` was not recorded and task 2.2 was skipped.
+
+## Batch 3 frame loop
+
+Mobile Spark options `lodRenderScale: 1.5` and `minSortIntervalMs: 33` are set when the budget profile is `mobile`, and they are not in the UI. This environment has no mid-range Android device or iPhone, and no drone `.rad`, so the plan's "revert unless orbit fps rises by 10%" check was not run. The settings were left as specified.
+
+Not measured here: HUD active-splat ratio at LoD 2.0 vs 1.0, a paged `.rad` sharpening after the pointer is released, the Performance panel while dragging the cutoff slider, slab-demo fps at the new cutoff maximum, and zoom-to-minimum on the slab. The LoD product is covered by `tests/lodParams.test.ts`.

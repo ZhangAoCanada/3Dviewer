@@ -205,18 +205,42 @@ function packSint7(target: Uint32Array, base: number, values: ArrayLike<number>,
 }
 
 function packSint6(target: Uint32Array, base: number, values: ArrayLike<number>, scale: number): void {
-  for (let i = 0; i < values.length; i += 1) {
+  // Same 6-bit placement as i*6 into uint32 words, accumulated in registers.
+  let acc = 0;
+  let bits = 0;
+  let word = 0;
+  let w0 = 0;
+  let w1 = 0;
+  let w2 = 0;
+  let w3 = 0;
+  const n = values.length;
+  for (let i = 0; i < n; i += 1) {
     const sample = (values[i] ?? 0) * scale;
-    const value = Math.round(Math.max(-31, Math.min(31, sample))) & 63;
-    const bitStart = i * 6;
-    const wordStart = Math.floor(bitStart / 32);
-    const bitOffset = bitStart - wordStart * 32;
-    target[base + wordStart] = (target[base + wordStart]! | ((value << bitOffset) >>> 0)) >>> 0;
-    if (bitStart + 6 > wordStart * 32 + 32) {
-      target[base + wordStart + 1] =
-        (target[base + wordStart + 1]! | ((value >>> (32 - bitOffset)) >>> 0)) >>> 0;
+    const clamped = sample < -31 ? -31 : sample > 31 ? 31 : sample;
+    const value = Math.round(clamped) & 63;
+    acc = (acc | (value << bits)) >>> 0;
+    bits += 6;
+    if (bits >= 32) {
+      if (word === 0) w0 = acc;
+      else if (word === 1) w1 = acc;
+      else if (word === 2) w2 = acc;
+      else w3 = acc;
+      word += 1;
+      bits -= 32;
+      acc = bits === 0 ? 0 : value >>> (6 - bits);
     }
   }
+  if (bits > 0) {
+    const low = acc >>> 0;
+    if (word === 0) w0 = low;
+    else if (word === 1) w1 = low;
+    else if (word === 2) w2 = low;
+    else w3 = low;
+  }
+  target[base] = w0;
+  target[base + 1] = w1;
+  target[base + 2] = w2;
+  target[base + 3] = w3;
 }
 
 function packSint8Bytes(b0: number, b1: number, b2: number, b3: number): number {

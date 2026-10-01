@@ -204,7 +204,7 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 
 ## Batch 3 — Rendering and the frame loop
 
-### 3.1 The LoD slider is applied two or three times — P1
+### [x] 3.1 The LoD slider is applied two or three times — P1
 
 - **Evidence**: `SceneHost.ts:152-153` sets `spark.lodSplatScale = s` **and** `spark.lodSplatCount = maxSplatsResident * s`. Spark computes `maxSplats = lodSplatCount * lodSplatScale` (`spark.module.js:14057-14059`), so the effective budget is `maxSplatsResident × s²`. `gaussianRenderable.ts:42` also sets per-mesh `lodScale = s`, a third factor in the LoD traversal (`spark.module.js:14254`).
 - **Root cause**: the slider at 2.0 asks for 4× the resident budget (plus the per-mesh factor), which overloads mobile GPUs. At 0.35 it asks for 0.12×.
@@ -212,7 +212,7 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: unit-test `SceneHost.applySettings` is hard (WebGL). Instead, extract `lodParams(budget, settings) → { lodSplatCount, lodSplatScale }` into `src/render/lodParams.ts` and test that the product equals `maxSplatsResident * s`. Manual: HUD "Active splats" at slider 2.0 is about 2× the value at 1.0, not 4×.
 - **Risk**: low. Users who tuned the slider will see less detail at values above 1.
 
-### 3.2 Idle skipping stalls paged `.rad` refinement — P1
+### [x] 3.2 Idle skipping stalls paged `.rad` refinement — P1
 
 - **Evidence**: `SceneHost.needsDraw` (`SceneHost.ts:363-367`) only redraws for camera motion or `spark.dirty/sortDirty`. In Spark 2.2.0 the pager advances only inside a rendered frame: `driveLod` consumes `pager.consumeLodTreeUpdates()` (`spark.module.js:14157`), `processUploads()` (`:14281`), and `driveFetchers()` (`:14313`). Fetched pages sit in `pager.fetched/newUploads` (`:11515-11520`, `:12017-12022`) without calling `setDirty`.
 - **Root cause**: after the camera stops, network chunks keep arriving but are never uploaded or traversed, so a `.rad` scene stays blurry until the user moves.
@@ -225,7 +225,7 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: manual with a paged `.rad`. Move, release, and wait: detail keeps sharpening without input, and the HUD fps settles to about 0 (idle) once loading finishes. Pinning Spark (task 1.1) keeps these field names valid.
 - **Risk**: low. The field names are Spark internals, so guard every access with optional chaining.
 
-### 3.3 Slider input reallocates the drawing buffer on every tick — P1
+### [x] 3.3 Slider input reallocates the drawing buffer on every tick — P1
 
 - **Evidence**: `SceneHost.applySettings` (`:148-157`) always calls `applyPixelRatio` → `renderer.setPixelRatio` → `setSize`, which writes `canvas.width/height` and clears and reallocates the default framebuffer even when the value is unchanged. It also changes Spark's `renderSize`, which marks LoD dirty. This fires on every `input` event of the splat-scale, point-size, and LoD sliders (`ViewerApp.ts:126-140`).
 - **Root cause**: per-tick framebuffer reallocation causes stutter and flashes on mobile.
@@ -236,42 +236,42 @@ Skipped in batch 2. Step 1 needs `lodCount / count` from the torus sample, `?dem
 - **Verify**: manual. Performance panel while dragging the splat-scale slider: no `canvas.width` writes or GPU memory spikes. The visual result still updates on every tick, which confirms `viewDirty`.
 - **Risk**: low.
 
-### 3.4 Honest FPS and frame-time numbers — P2
+### [x] 3.4 Honest FPS and frame-time numbers — P2
 
 - **Evidence**: `SceneHost.ts:319` increments `fpsFrames` on every rAF tick, including skipped frames. Idle shows about 60 fps and `frameMs` is the rAF interval, not render cost, which misleads benchmarking.
 - **Fix**: count only frames where `draw` is true; measure `const t0 = performance.now(); renderer.render(...); this.renderMs = ema(performance.now() - t0)`. Add `renderMs` and `idle: boolean` to `FrameStats`; show "idle" in the HUD fps slot when no frame drew in the window. Optional: GPU time via `EXT_disjoint_timer_query_webgl2` when available.
 - **Verify**: when idle the HUD shows "idle". While orbiting, fps matches the DevTools frame-rate meter.
 - **Risk**: low. Update `BENCHMARK.md` methodology text.
 
-### 3.5 The "Splat scale" slider changes the Gaussian cutoff, not the splat size — P2
+### [x] 3.5 The "Splat scale" slider changes the Gaussian cutoff, not the splat size — P2
 
 - **Evidence**: `SceneHost.ts:149` `spark.maxStdDev = sqrt(8) * splatScale`, with slider range 0.4–2.2 (`index.html:93`). At 2.2 the quad covers 6.2σ: about 4.8× fill rate for an invisible tail. At 0.4 (1.1σ) splats become hard discs.
 - **Fix** (no visual redesign): clamp the slider to `min="0.75" max="1.15"` (2.1σ–3.25σ) and relabel it "Splat cutoff". Keep the setting key. If a true size scale is wanted later, implement it as a Spark `objectModifier` dyno on scales (separate task).
 - **Verify**: manual fps at max slider, before and after, on the slab demo (`?demo=slab&n=1500000`).
 - **Risk**: low.
 
-### 3.6 Clamp the requested SH degree to what was decoded — P2
+### [x] 3.6 Clamp the requested SH degree to what was decoded — P2
 
 - **Evidence**: settings start at `budget.maxSh` (3 on desktop, `ViewerApp.ts:33-36`). `GaussianRenderable.applySettings` (`:43-50`) then sets `maxSh = 3` and calls `setMaxSh(3)` + `updateGenerator()` on a mesh decoded with SH0–2, forcing a generator rebuild at load for nothing.
 - **Fix**: `const want = Math.min(settings.shDegree, this.sceneInfo?.shDegree ?? 3); if (this.object.maxSh === want) return;` and use `want` below.
 - **Verify**: unit-free; check that loading a planner-reduced scene logs no `updateGenerator` call (temporary console count).
 - **Risk**: low.
 
-### 3.7 Mobile render budget tuning (measured) — P2
+### [x] 3.7 Mobile render budget tuning (measured) — P2
 
 - **Evidence**: `SceneHost.ts:81-90` uses the same Spark options on all profiles. `lodRenderScale` defaults to 1 (1-pixel minimum splat), and `minSortIntervalMs` defaults to 0.
 - **Fix**: for `budget.profile === 'mobile'`, set `lodRenderScale: 1.5` and `minSortIntervalMs: 33`. Expose neither in UI.
 - **Verify**: on a mid-range Android or iPhone with `?demo=slab&n=1500000` and one real drone `.rad`/PLY, record fps while orbiting and while idle before and after in `BENCHMARK.md`. Revert any setting that does not improve fps by at least 10%.
 - **Risk**: low (visual softness at 1.5 is usually invisible).
 
-### 3.8 Resize on container and DPR changes — P2
+### [x] 3.8 Resize on container and DPR changes — P2
 
 - **Evidence**: `ViewerApp.ts:46` only listens to `window.resize`. DPR changes (moving between monitors, browser zoom) are not handled, so the canvas stays blurry or oversized.
 - **Fix**: in `SceneHost`, a `ResizeObserver` on `canvas.parentElement` → `resize()`, plus `matchMedia(\`(resolution: ${devicePixelRatio}dppx)\`)` `change` → re-run `applyPixelRatio(lastSettings)` and re-arm the query. Remove the window listener.
 - **Verify**: drag the window between a 1× and a 2× monitor; `renderer.getPixelRatio()` updates.
 - **Risk**: low.
 
-### 3.9 Adaptive near plane for close inspection — P2
+### [x] 3.9 Adaptive near plane for close inspection — P2
 
 - **Evidence**: `Navigation.frame` (`Navigation.ts:109-110`) sets `near = radius / 800` once. For a 1 km scene that is 0.6 m, so zooming onto a detail clips it, and fly mode can go well inside near.
 - **Fix**: in `SceneHost` before render, if moving, set `near = clamp(distanceToPivot / 400, radius / 1e5, radius / 800)` and `updateProjectionMatrix()` only when it changes by more than 10%.
