@@ -7,11 +7,13 @@ const MAX_POLAR = Math.PI - 0.12;
 const _offset = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _axis = new THREE.Vector3();
+const _probe = new THREE.Vector3();
 const _view = new THREE.Vector3();
 const _toAnchor = new THREE.Vector3();
 const _cursor = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _screenUp = new THREE.Vector3();
+const _spin = new THREE.Quaternion();
 
 /**
  * Flat drone scans are wide in X/Y and short in Z. A tall or cubic scene stays Y-up
@@ -31,28 +33,41 @@ export function upVector(axis: 'y' | 'z', target = new THREE.Vector3()): THREE.V
   return axis === 'z' ? target.set(0, 0, 1) : target.set(0, 1, 0);
 }
 
-/** Grab-style orbit. Drag right yaws so the pivot moves with the pointer. */
+/**
+ * Grab-style orbit. Drag right yaws so the pivot moves with the pointer.
+ * `quaternion`, when set, turns with the same rotation so the pivot stays
+ * under the cursor. A new pivot must not be followed by `lookAt`: that
+ * retargets the camera and, near the up axis, flips the basis.
+ */
 export function orbitAround(
   camera: THREE.Vector3,
   pivot: THREE.Vector3,
   worldUp: THREE.Vector3,
   yaw: number,
   pitch: number,
+  quaternion?: THREE.Quaternion,
 ): void {
   _offset.subVectors(camera, pivot);
   if (_offset.lengthSq() < 1e-12) _offset.copy(worldUp).multiplyScalar(1);
   _up.copy(worldUp).normalize();
-  if (yaw !== 0) _offset.applyAxisAngle(_up, yaw);
-  _axis.crossVectors(_offset, _up);
-  if (_axis.lengthSq() < 1e-10) {
-    _axis.set(1, 0, 0).cross(_up);
-    if (_axis.lengthSq() < 1e-10) _axis.set(0, 1, 0);
+  rotateAbout(_up, yaw, _offset, quaternion);
+  const delta = pitchDelta(polarOf(_offset, _up), pitch);
+  if (delta !== 0) {
+    pitchAxis(_offset, _up, quaternion ?? null);
+    rotateAbout(_axis, delta, _offset, quaternion);
   }
-  _axis.normalize();
-  const polar = Math.acos(THREE.MathUtils.clamp(_offset.clone().normalize().dot(_up), -1, 1));
-  const next = THREE.MathUtils.clamp(polar + pitch, MIN_POLAR, MAX_POLAR);
-  if (next !== polar) _offset.applyAxisAngle(_axis, next - polar);
   camera.copy(pivot).add(_offset);
+}
+
+/** Orbit a camera around `pivot` without rebuilding its basis via `lookAt`. */
+export function orbitCamera(
+  camera: THREE.Camera,
+  pivot: THREE.Vector3,
+  worldUp: THREE.Vector3,
+  yaw: number,
+  pitch: number,
+): void {
+  orbitAround(camera.position, pivot, worldUp, yaw, pitch, camera.quaternion);
 }
 
 export function polarAngle(camera: THREE.Vector3, pivot: THREE.Vector3, worldUp: THREE.Vector3): number {
@@ -136,6 +151,59 @@ export function panInViewPlane(
   _right.addScaledVector(_screenUp, dyPx * worldPerPixel);
   camera.add(_right);
   pivot.add(_right);
+}
+
+function polarOf(offset: THREE.Vector3, up: THREE.Vector3): number {
+  const len = offset.length();
+  if (len < 1e-12) return 0;
+  return Math.acos(THREE.MathUtils.clamp(offset.dot(up) / len, -1, 1));
+}
+
+/**
+ * Rotation angle around `offset × up`. A positive angle lowers the polar
+ * angle, so drag-down (positive pitch) moves the camera toward the up pole
+ * and the clamp stops it just short of that pole.
+ */
+function pitchDelta(polar: number, pitch: number): number {
+  if (pitch === 0) return 0;
+  const polarStep = -pitch;
+  let clamped = polarStep;
+  if (polar + polarStep < MIN_POLAR) clamped = Math.min(0, MIN_POLAR - polar);
+  else if (polar + polarStep > MAX_POLAR) clamped = Math.max(0, MAX_POLAR - polar);
+  return -clamped;
+}
+
+function pitchAxis(offset: THREE.Vector3, up: THREE.Vector3, quaternion: THREE.Quaternion | null): void {
+  _axis.crossVectors(offset, up);
+  if (_axis.lengthSq() < 1e-8 * Math.max(offset.lengthSq(), 1)) {
+    if (quaternion) {
+      _axis.set(1, 0, 0).applyQuaternion(quaternion);
+      _axis.addScaledVector(up, -_axis.dot(up));
+    }
+    if (_axis.lengthSq() < 1e-10) {
+      _axis.set(1, 0, 0).cross(up);
+      if (_axis.lengthSq() < 1e-10) _axis.set(0, 1, 0);
+    }
+    _axis.normalize();
+    _probe.copy(offset);
+    if (_probe.lengthSq() < 1e-12) _probe.copy(up);
+    _probe.applyAxisAngle(_axis, 1e-3);
+    if (_probe.dot(up) > offset.dot(up)) _axis.negate();
+    return;
+  }
+  _axis.normalize();
+}
+
+function rotateAbout(
+  axis: THREE.Vector3,
+  angle: number,
+  offset: THREE.Vector3,
+  quaternion?: THREE.Quaternion,
+): void {
+  if (angle === 0) return;
+  _spin.setFromAxisAngle(axis, angle);
+  offset.applyQuaternion(_spin);
+  quaternion?.premultiply(_spin);
 }
 
 export function smoothstep(t: number): number {

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { orbitAround, panInViewPlane, smoothstep, upVector, wheelNotches, zoomToward } from './cameraMotion';
+import { orbitCamera, panInViewPlane, smoothstep, upVector, wheelNotches, zoomToward } from './cameraMotion';
 
 export type NavMode = 'orbit' | 'fly';
 export type UpAxis = 'y' | 'z';
@@ -174,8 +174,7 @@ export class NavigationController {
           this.pitchVel = 0;
           return;
         }
-        orbitAround(this.camera.position, this.pivot, this.worldUp, this.yawVel * dt, this.pitchVel * dt);
-        this.lookAtPivot();
+        orbitCamera(this.camera, this.pivot, this.worldUp, this.yawVel * dt, this.pitchVel * dt);
         const decay = Math.exp(-INERTIA_DECAY * dt);
         this.yawVel *= decay;
         this.pitchVel *= decay;
@@ -327,8 +326,9 @@ export class NavigationController {
     if (this.drag === 'arm') {
       if (Math.hypot(event.clientX - this.armX, event.clientY - this.armY) < 4) return;
       if (this.armed === 'orbit') {
+        // The picked point becomes the orbit center. Looking at it would
+        // swing the camera onto that point before the drag has moved.
         this.pivot.copy(this.armedPoint);
-        this.lookAtPivot();
         this.onPivot?.(this.pivot);
       } else {
         this.anchor.copy(this.armedPoint);
@@ -345,8 +345,7 @@ export class NavigationController {
     if (this.drag === 'orbit') {
       const yaw = THREE.MathUtils.clamp(-dx * 0.0052 * this.sensitivity, -0.18, 0.18);
       const pitch = THREE.MathUtils.clamp(dy * 0.0042 * this.sensitivity, -0.16, 0.16);
-      orbitAround(this.camera.position, this.pivot, this.worldUp, yaw, pitch);
-      this.lookAtPivot();
+      orbitCamera(this.camera, this.pivot, this.worldUp, yaw, pitch);
       const dt = 1 / 60;
       this.yawVel = yaw / dt;
       this.pitchVel = pitch / dt;
@@ -363,7 +362,6 @@ export class NavigationController {
       dy,
       depth,
     );
-    this.lookAtPivot();
   };
 
   private movePinch(): void {
@@ -388,7 +386,6 @@ export class NavigationController {
       this.minDistance(),
       this.anchorSurface,
     );
-    this.lookAtPivot();
     panInViewPlane(
       this.camera.position,
       this.pivot,
@@ -399,7 +396,6 @@ export class NavigationController {
       cy - this.pinchY,
       Math.max(this.camera.position.distanceTo(this.anchor), this.minDistance()),
     );
-    this.lookAtPivot();
   }
 
   private onPointerUp = (event: PointerEvent): void => {
@@ -441,7 +437,6 @@ export class NavigationController {
       this.minDistance(),
       hit.surface,
     );
-    this.lookAtPivot();
     this.yawVel = 0;
     this.pitchVel = 0;
   };
