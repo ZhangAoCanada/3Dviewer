@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blobSource, type ByteSource } from '../src/core/byteSource';
 import { detectMemoryBudget } from '../src/core/memoryBudget';
-import { decodeGaussianPly, resolveVertexCount } from '../src/loaders/gaussian/decodeGaussianPly';
+import { decodeGaussianPly, readGaussianPlyHeader, resolveVertexCount } from '../src/loaders/gaussian/decodeGaussianPly';
 import { explainLoadError } from '../src/loaders/gaussian/explainLoadError';
 import { planGaussianDecode, estimateDecodedBytes, LOD_ABOVE } from '../src/loaders/gaussian/gaussianPlan';
 import { toHalf, writePackedSplat, DEFAULT_LIMITS } from '../src/loaders/gaussian/packSplat';
@@ -61,6 +61,53 @@ const desktop = {
   maxSh: 3 as const,
   pixelRatioCap: 2,
 };
+
+describe('PLY georeference comments', () => {
+  async function georef(comments: string[]) {
+    const header = await readGaussianPlyHeader(blobSource(new Blob([gaussianHeader(1, comments)])));
+    return header.georef;
+  }
+
+  it('keeps a positive EPSG code from the header comment', async () => {
+    const geo = await georef(['epsg 4547']);
+    expect(geo.epsg).toBe('4547');
+    const prefixed = await georef(['EPSG EPSG:4326']);
+    expect(prefixed.epsg).toBe('4326');
+  });
+
+  it.each(['0', '00', 'EPSG:0', 'NaN', 'nan', '-1', '0.0', '+0'])(
+    'does not emit epsg %s as a coordinate reference system',
+    async (value) => {
+      const geo = await georef([
+        'offsetx 12.5',
+        'offsety 3',
+        'offsetz 4',
+        `epsg ${value}`,
+        'minx 0',
+        'miny 1',
+        'minz 2',
+        'maxx 3',
+        'maxy 4',
+        'maxz 5',
+      ]);
+      expect(geo.epsg).toBeUndefined();
+      expect(geo.offsetX).toBe('12.5');
+      expect(geo.minX).toBe('0');
+      expect(geo.maxZ).toBe('5');
+    },
+  );
+
+  it('lets a later unknown code replace an earlier real one', async () => {
+    const geo = await georef(['epsg 4326', 'epsg 0']);
+    expect(geo.epsg).toBeUndefined();
+  });
+
+  it('leaves epsg unset when the header has no CRS comment', async () => {
+    const geo = await georef(['offsetx 1']);
+    expect(geo.epsg).toBeUndefined();
+    expect(geo.offsetX).toBe('1');
+  });
+});
 
 describe('resolveVertexCount', () => {
   it('trusts the body when the owner file stride divides it exactly', () => {

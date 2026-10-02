@@ -1,3 +1,4 @@
+import { presentEpsg } from '../core/epsg';
 import { detectMemoryBudget } from '../core/memoryBudget';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
@@ -1051,30 +1052,26 @@ export class ViewerApp {
     const section = must('#sec-geo');
     const badge = must('#geo-badge');
     const link = must<HTMLAnchorElement>('#geo-epsg-link');
-    const epsgRaw = extra?.epsg != null ? String(extra.epsg) : '';
-    const code = epsgRaw.replace(/^EPSG:/i, '');
+    const crs = presentEpsg(extra?.epsg);
     const offset = extra?.offset != null ? String(extra.offset) : '';
     const bounds = extra?.bounds != null ? String(extra.bounds) : '';
     const parts = bounds.split('→').map((part) => part.trim());
     const min = parts.length === 2 ? parts[0] ?? '' : '';
     const max = parts.length === 2 ? parts[1] ?? '' : '';
     const rows: [string, string][] = [];
-    if (code) rows.push(['CRS', `EPSG:${code}`]);
+    if (crs.crs) rows.push(['CRS', crs.crs]);
     if (offset) rows.push(['Offset', offset]);
     if (min) rows.push(['Min', min]);
     if (max) rows.push(['Max', max]);
     section.hidden = rows.length === 0;
-    badge.hidden = code.length === 0;
-    if (code) must('#geo-badge-text').textContent = `EPSG:${code}`;
-    if (/^\d+$/.test(code)) {
-      link.hidden = false;
-      link.href = `https://epsg.io/${code}`;
-    } else {
-      link.hidden = true;
-    }
+    badge.hidden = crs.badge == null;
+    must('#geo-badge-text').textContent = crs.badge ?? '';
+    link.hidden = crs.href == null;
+    if (crs.href) link.href = crs.href;
+    else link.removeAttribute('href');
     fillKv(must('#geo-info'), rows, true);
     const lines = [
-      code ? `CRS: EPSG:${code}` : '',
+      crs.crs ? `CRS: ${crs.crs}` : '',
       offset ? `Offset: ${offset}` : '',
       min ? `Bounds min: ${min}` : '',
       max ? `Bounds max: ${max}` : '',
