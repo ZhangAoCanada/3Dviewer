@@ -70,9 +70,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ steps.tag.outputs.name }}
-          releaseName: 3Dviewer ${{ steps.tag.outputs.name }}
+          releaseName: Omniview ${{ steps.tag.outputs.name }}
           releaseBody: |
-            Desktop installers for 3Dviewer. These builds are unsigned and not notarized.
+            Desktop installers for Omniview. These builds are unsigned and not notarized.
 
             - Windows: SmartScreen says the app is unrecognized. Choose **More info**, then **Run anyway**.
             - macOS: the first open is blocked. **Right-click the app > Open**, then **Open** again.

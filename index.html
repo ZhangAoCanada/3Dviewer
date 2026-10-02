@@ -10,9 +10,11 @@
       name="description"
       content="Real-time viewer for 3D Gaussian splats, meshes, and point clouds."
     />
-    <title>3Dviewer</title>
+    <title>Omniview</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script>
       try {
         const stored = localStorage.getItem('3dviewer-theme');
@@ -71,8 +73,8 @@
     <div id="app">
       <header class="topbar">
         <div class="brand island">
-          <span class="mark" aria-hidden="true"></span>
-          <span class="brand-name">3Dviewer</span>
+          <img class="mark" src="/logo.svg" alt="" />
+          <span class="brand-name">Omniview</span>
           <div id="file-chip" class="file-chip" hidden>
             <span class="divider" aria-hidden="true"></span>
             <span id="file-kind" class="badge">Splats</span>
@@ -177,7 +179,8 @@
 
       <section id="empty" class="empty" hidden aria-labelledby="empty-title">
         <div class="empty-card">
-          <div class="empty-icon" aria-hidden="true"><svg class="icon icon-xl"><use href="#i-upload"/></svg></div>
+          <img class="empty-logo" src="/logo.svg" alt="" />
+          <p class="empty-brand">Omniview</p>
           <h1 id="empty-title">Open a 3D scan</h1>
           <p id="empty-desc">Drop a file anywhere, or choose one from this device. Files are read locally and never uploaded.</p>
           <div class="empty-actions">
@@ -256,6 +259,7 @@
           <details id="sec-about" class="sec">
             <summary>About<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
             <dl class="kv"><dt>Build</dt><dd id="build-id">dev</dd></dl>
+            <p class="hint">Omniview is a real-time viewer for Gaussian splats, meshes, and point clouds.</p>
             <p class="hint"><a href="https://github.com/ZhangAoCanada/3Dviewer" target="_blank" rel="noopener">Source on GitHub</a> · Icons by Lucide (ISC)</p>
           </details>
         </div>
@@ -320,6 +324,7 @@
             <h2 id="help-title">Controls and shortcuts</h2>
             <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
           </div>
+          <p class="hint">Omniview shortcuts. Files stay on this device.</p>
           <div class="help-grid">
             <section>
               <h3><svg class="icon" aria-hidden="true"><use href="#i-mouse"/></svg>Mouse</h3>
@@ -363,10 +368,10 @@
       <dialog id="download-dialog" class="dialog" aria-labelledby="download-title">
         <form method="dialog">
           <div class="dialog-head">
-            <h2 id="download-title">Download desktop app</h2>
+            <h2 id="download-title">Download Omniview</h2>
             <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
           </div>
-          <p class="hint">The desktop app uses the system WebView and opens large local files on this computer. Installers are on the latest GitHub release.</p>
+          <p class="hint">The Omniview desktop app uses the system WebView and opens large local files on this computer. Installers are on the latest GitHub release.</p>
           <ul class="download-list">
             <li><a class="download-row" data-os="windows" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener"><span class="download-os">Windows</span><span class="download-files">.msi and .exe</span><span class="badge download-badge" hidden>This device</span></a></li>
             <li><a class="download-row" data-os="macos" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener"><span class="download-os">macOS</span><span class="download-files">universal .dmg</span><span class="badge download-badge" hidden>This device</span></a></li>

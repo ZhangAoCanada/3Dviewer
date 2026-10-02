@@ -1,4 +1,3 @@
-import { deflateSync } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -289,87 +288,8 @@ function writeCrate() {
   writeFileSync(join(samples, 'crate.glb'), Buffer.concat([header, jh, jsonChunk, bh, binChunk]));
 }
 
-function crc32(buf) {
-  let c = ~0;
-  for (const byte of buf) {
-    c ^= byte;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  }
-  return ~c >>> 0;
-}
-
-function pngChunk(type, data) {
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const name = Buffer.from(type);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([name, data])), 0);
-  return Buffer.concat([length, name, data, crc]);
-}
-
-function writeIcon(size, file) {
-  const rgba = Buffer.alloc(size * size * 4);
-  const cx = size / 2;
-  const cy = size / 2;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 4;
-      const dx = (x + 0.5 - cx) / size;
-      const dy = (y + 0.5 - cy) / size;
-      const card = Math.max(Math.abs(dx), Math.abs(dy));
-      const bg = card < 0.42 ? [18, 22, 30, 255] : [12, 15, 20, 0];
-      rgba[i] = bg[0];
-      rgba[i + 1] = bg[1];
-      rgba[i + 2] = bg[2];
-      rgba[i + 3] = bg[3];
-      const r = Math.hypot(dx + 0.02, dy + 0.02) / 0.22;
-      if (r < 1) {
-        rgba[i] = Math.round(126 + 40 * (1 - r));
-        rgba[i + 1] = Math.round(224 - 30 * r);
-        rgba[i + 2] = Math.round(198 + 20 * r);
-        rgba[i + 3] = 255;
-      }
-      const r2 = Math.hypot(dx - 0.12, dy - 0.1) / 0.09;
-      if (r2 < 1) {
-        rgba[i] = 158;
-        rgba[i + 1] = 182;
-        rgba[i + 2] = 255;
-        rgba[i + 3] = 255;
-      }
-    }
-  }
-  const raw = Buffer.alloc((size * 4 + 1) * size);
-  for (let y = 0; y < size; y++) {
-    raw[y * (size * 4 + 1)] = 0;
-    rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
-  }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 6;
-  const png = Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', deflateSync(raw)),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-  writeFileSync(join(root, 'public', file), png);
-}
-
 const splats = writeGaussian();
 const points = writeCloud();
 writeSphere();
 writeCrate();
-writeIcon(192, 'icon-192.png');
-writeIcon(512, 'icon-512.png');
-writeFileSync(
-  join(root, 'public', 'favicon.svg'),
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#12161e"/>
-  <circle cx="28" cy="30" r="14" fill="#7ee0c6"/>
-  <circle cx="40" cy="36" r="7" fill="#9eb6ff"/>
-</svg>
-`,
-);
 console.log(`generated torus splats=${splats} cloud points=${points}`);
