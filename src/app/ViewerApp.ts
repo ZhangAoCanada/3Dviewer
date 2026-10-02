@@ -84,6 +84,11 @@ export class ViewerApp {
     this.renderSceneInfo();
     this.renderPerf(this.host.stats());
     this.host.start((stats) => this.renderPerf(stats));
+    // The stylesheet arrives with this module. Arm the drawer-clearance
+    // transition only after the first paint, or the toolbar slides in.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => document.body.classList.add('chrome-ready'));
+    });
     void this.boot();
   }
 

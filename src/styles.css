@@ -393,10 +393,40 @@ html.is-desktop #download-menu-item { display: none !important; }
 body:not(.is-fullscreen) .when-fullscreen,
 body.is-fullscreen .when-windowed { display: none; }
 @media (min-width: 641px) {
+  /* Keep bottom chrome on the viewport center. A side drawer used to recenter
+     it in the leftover space, which made the toolbar jump. Shift only when the
+     open drawer would cover the island, and only by that overlap. */
+  body.chrome-ready .toolbar {
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+  body.chrome-ready .toast-stack {
+    transition: transform var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out);
+  }
+  body.chrome-ready .nav-hint {
+    transition:
+      opacity var(--dur-slow) var(--ease-out),
+      transform var(--dur-base) var(--ease-out),
+      max-width var(--dur-base) var(--ease-out);
+  }
+  body.panel-open {
+    --drawer-pad: calc(var(--panel-w) + var(--safe-right) + var(--inset) + var(--gap));
+  }
   body.panel-open .toolbar,
   body.panel-open .nav-hint,
   body.panel-open .toast-stack {
-    left: calc((100% - var(--panel-w) - var(--inset)) / 2);
+    /* 50% is half this element; 50vw is the viewport center. */
+    transform: translateX(calc(
+      -50% - min(
+        max(0px, 50% + var(--drawer-pad) - 50vw),
+        max(0px, 50vw - 50% - var(--safe-left) - var(--inset))
+      )
+    ));
+  }
+  body.panel-open .nav-hint {
+    max-width: min(720px, calc(100% - 2 * var(--inset)), calc(100% - var(--drawer-pad) - var(--safe-left) - var(--inset)));
+  }
+  body.panel-open .toast-stack {
+    width: min(520px, calc(100% - 2 * var(--inset)), calc(100% - var(--drawer-pad) - var(--safe-left) - var(--inset)));
   }
 }
 
@@ -707,6 +737,13 @@ input[type='range']::-moz-range-thumb {
   body.panel-open .nav-hint,
   body.panel-open .toast-stack {
     left: calc((100% - min(var(--panel-w), 46vw) - var(--inset)) / 2);
+    transform: translateX(-50%);
+  }
+  body.panel-open .nav-hint {
+    max-width: min(720px, calc(100% - 2 * var(--inset)));
+  }
+  body.panel-open .toast-stack {
+    width: min(520px, calc(100% - 2 * var(--inset)));
   }
 }
 .panel-body {
