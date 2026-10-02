@@ -159,7 +159,7 @@ Owns `src/ui/**`, `src/styles.css`, and `src/render/Navigation.ts`.
 
 ### 5. Native packaging
 
-Add `src-tauri/` or a Capacitor project in a follow-up. The web build (`base: /3Dviewer/` for Pages, overridable later) is the asset. No second renderer.
+`src-tauri/` is a Tauri 2 shell around this Vite build. WebGL2, WASM, and workers run in the system WebView (WebView2, WKWebView, WebKitGTK). The desktop build sets `base` to `./` and does not register the service worker. Local open and drag-and-drop hand the page a `File` (`dragDropEnabled: false`) so `Blob.slice` reads a multi-gigabyte PLY in chunks. There is no second renderer. Capacitor is still a possible later target for phones.
 
 ### 6. WebGPU backend
 

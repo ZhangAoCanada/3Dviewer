@@ -49,7 +49,35 @@ npm run preview   # http://localhost:4173/3Dviewer/
 
 `npm run generate:assets` rebuilds the small files in `public/samples/` and the PWA icons. The app is an installable PWA. A new deploy shows a Reload toast; the build id in the About section is the commit (or `VITE_BUILD_LABEL`) baked into that build.
 
-Production `base` is `/3Dviewer/` so asset URLs match GitHub Pages.
+Production `base` is `/3Dviewer/` so asset URLs match GitHub Pages. The desktop build sets `base` to `./` when the Tauri CLI is the one invoking it.
+
+## Desktop app
+
+The same Vite build runs in a [Tauri 2](https://v2.tauri.app/) window. Tauri uses the system WebView: WebView2 on Windows, WKWebView on macOS, and WebKitGTK on Linux. WebGL2, WASM, and the existing module workers run there. There is no second renderer.
+
+```bash
+npm run desktop        # tauri dev
+npm run desktop:build  # tauri build
+```
+
+Open and drag-and-drop stay in the WebView (`dragDropEnabled` is off), so the page receives a `File`. The existing `Blob.slice` path reads a multi-gigabyte PLY in chunks. The shell does not copy the file into a second buffer. The service worker and the Reload toast are disabled inside the app. The GitHub Pages build is unchanged.
+
+### Installers
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds the desktop app when a tag `v*.*.*` is pushed, and when the workflow is run by hand. It uploads unsigned installers to a GitHub Release:
+
+| Platform | Files |
+| --- | --- |
+| Windows | `.msi` and NSIS `.exe` |
+| macOS | universal `.dmg` |
+| Linux | `.AppImage` and `.deb` |
+
+The tag should match `package.json` (`v0.1.0` for `0.1.0`). These builds are not code-signed or notarized. The macOS bundle is ad-hoc signed so Gatekeeper does not report it as damaged.
+
+- **Windows:** SmartScreen says the app is unrecognized. Choose **More info**, then **Run anyway**.
+- **macOS:** the first open is blocked. **Right-click the app > Open**, then **Open** again.
+
+**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. The first release appears after a `v0.1.0` tag is pushed.
 
 ## Deploy
 

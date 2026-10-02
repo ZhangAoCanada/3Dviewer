@@ -19,6 +19,7 @@ import { explainLoadError } from '../loaders/gaussian/explainLoadError';
 import { createDemoSlab } from '../render/demoSlab';
 import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
+import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
 import { bindMenu } from '../ui/menu';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
@@ -113,6 +114,7 @@ export class ViewerApp {
     must('#url-btn').addEventListener('click', () => this.openUrlDialog());
     must('#empty-url').addEventListener('click', () => this.openUrlDialog());
     must('#help-btn').addEventListener('click', () => this.openHelp());
+    must('#download-btn').addEventListener('click', () => this.openDownloadDialog());
     must('#loading-cancel').addEventListener('click', () => this.cancelLoad());
     must('#geo-badge').addEventListener('click', () => this.showGeoref());
     must('#geo-copy').addEventListener('click', () => {
@@ -393,6 +395,7 @@ export class ViewerApp {
       if (action === 'url') this.openUrlDialog();
       else if (action === 'theme') this.toggleTheme();
       else if (action === 'help') this.openHelp();
+      else if (action === 'download') this.openDownloadDialog();
     });
     this.trackMenu(moreButton, moreMenu);
   }
@@ -945,6 +948,21 @@ export class ViewerApp {
 
   private openHelp(): void {
     const dialog = must<HTMLDialogElement>('#help-dialog');
+    if (!dialog.open) dialog.showModal();
+  }
+
+  private openDownloadDialog(): void {
+    const os = detectDesktopOs();
+    for (const row of document.querySelectorAll<HTMLElement>('#download-dialog [data-os]')) {
+      const current = row.dataset.os === os;
+      row.classList.toggle('is-current', current);
+      if (current) row.setAttribute('aria-current', 'true');
+      else row.removeAttribute('aria-current');
+      const badge = row.querySelector<HTMLElement>('.download-badge');
+      if (badge) badge.hidden = !current;
+    }
+    must('#download-note').textContent = unsignedInstallNote(os);
+    const dialog = must<HTMLDialogElement>('#download-dialog');
     if (!dialog.open) dialog.showModal();
   }
 

@@ -23,6 +23,15 @@
         /* ignore private mode */
       }
     </script>
+    <script>
+      try {
+        if ('__TAURI_INTERNALS__' in window || '__TAURI__' in window) {
+          document.documentElement.classList.add('is-desktop');
+        }
+      } catch (e) {
+        /* not the desktop shell */
+      }
+    </script>
   </head>
   <body>
     <svg class="sprite" aria-hidden="true" focusable="false">
@@ -57,6 +66,7 @@
 <symbol id="i-mouse" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="7" /><path d="M12 6v4" /></symbol>
 <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" /><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" /><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></symbol>
 <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /></symbol>
     </svg>
     <div id="app">
       <header class="topbar">
@@ -96,6 +106,9 @@
           <button id="help-btn" class="btn btn-ghost btn-icon hide-phone" type="button" aria-haspopup="dialog" aria-label="Controls and shortcuts" title="Controls and shortcuts (?)">
             <svg class="icon" aria-hidden="true"><use href="#i-circle-help"/></svg>
           </button>
+          <button id="download-btn" class="btn btn-ghost hide-phone" type="button" aria-haspopup="dialog" aria-label="Download desktop app" title="Download desktop app">
+            <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span class="btn-label">Download desktop app</span>
+          </button>
           <button id="panel-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Settings" title="Settings (H)" aria-expanded="false" aria-controls="panel">
             <svg class="icon" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>
           </button>
@@ -105,6 +118,7 @@
               <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="url"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>Open from URL</button>
               <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="theme"><svg class="icon only-dark" aria-hidden="true"><use href="#i-sun"/></svg><svg class="icon only-light" aria-hidden="true"><use href="#i-moon"/></svg><span class="theme-label">Light theme</span></button>
               <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="help"><svg class="icon" aria-hidden="true"><use href="#i-circle-help"/></svg>Controls</button>
+              <button id="download-menu-item" type="button" role="menuitem" class="menu-item menu-item-row" data-action="download"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download desktop app</button>
               <div class="menu-heading" role="presentation">Samples</div>
               <div id="more-samples" role="none"></div>
             </div>
@@ -341,6 +355,25 @@
                 <dt>Fly mode</dt><dd><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows move · <kbd>Q</kbd> / <kbd>E</kbd> down / up (<kbd>Space</kbd> also up) · <kbd>Shift</kbd> sprint</dd>
               </dl>
             </section>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="download-dialog" class="dialog" aria-labelledby="download-title">
+        <form method="dialog">
+          <div class="dialog-head">
+            <h2 id="download-title">Download desktop app</h2>
+            <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+          </div>
+          <p class="hint">The desktop app uses the system WebView and opens large local files on this computer. Installers are on the latest GitHub release.</p>
+          <ul class="download-list">
+            <li><a class="download-row" data-os="windows" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener"><span class="download-os">Windows</span><span class="download-files">.msi and .exe</span><span class="badge download-badge" hidden>This device</span></a></li>
+            <li><a class="download-row" data-os="macos" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener"><span class="download-os">macOS</span><span class="download-files">universal .dmg</span><span class="badge download-badge" hidden>This device</span></a></li>
+            <li><a class="download-row" data-os="linux" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener"><span class="download-os">Linux</span><span class="download-files">.AppImage and .deb</span><span class="badge download-badge" hidden>This device</span></a></li>
+          </ul>
+          <p id="download-note" class="hint"></p>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" value="cancel">Close</button>
+            <a class="btn btn-primary" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener">Latest release</a>
           </div>
         </form>
       </dialog>
