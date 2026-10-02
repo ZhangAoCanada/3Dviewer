@@ -40,12 +40,20 @@ export interface MemoryBudget {
   pixelRatioCap: number;
 }
 
+/** URL measurement overrides. Absent unless `?lod=force` or `?sh=N` was set. */
+export interface GaussianLoadOverrides {
+  forceLod?: boolean;
+  maxSh?: 0 | 1 | 2 | 3;
+}
+
 export interface LoadContext {
   signal: AbortSignal;
   onProgress: (progress: LoadProgress) => void;
   budget: MemoryBudget;
   /** When true, gaussian loads request extended (float32 center) encoding. */
   extendedPrecision: boolean;
+  /** Read once from the page URL and forwarded to the gaussian decode plan. */
+  overrides?: GaussianLoadOverrides;
 }
 
 export type ShadingMode = 'lit' | 'flat' | 'normals';

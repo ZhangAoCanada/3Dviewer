@@ -2,6 +2,7 @@ import { SplatMesh, type SplatMesh as SplatMeshType } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import type { Renderable, RenderableMeta, RenderableStats, RenderSettings } from '../core/types';
 import type { GaussianBounds, GaussianGeoref } from '../loaders/gaussian/decodeGaussianPly';
+import { estimateDecodedBytes, type ShDegree } from '../loaders/gaussian/gaussianPlan';
 import { nextId } from './ids';
 
 type SplatMeshInstance = InstanceType<typeof SplatMesh>;
@@ -14,6 +15,8 @@ export interface GaussianSceneInfo {
   sampleStride: number;
   extended: boolean;
   lod: boolean;
+  /** Splats in the LoD tree. Zero when LoD was not built. */
+  lodCount: number;
   mismatch: boolean;
   warning?: string;
   georef?: GaussianGeoref;
@@ -58,7 +61,10 @@ export class GaussianRenderable implements Renderable {
     const count = splatCount(this.object);
     const info = this.sceneInfo;
     const extended = info ? info.extended : Boolean(this.object.extSplats);
-    const memory = info?.decodedBytes ?? (bufferBytes(this.object) || count * (extended ? 64 : 32));
+    const baseMemory = info?.decodedBytes ?? (bufferBytes(this.object) || count * (extended ? 64 : 32));
+    const lodCount = info?.lodCount ?? 0;
+    const memory =
+      baseMemory + (lodCount > 0 ? estimateDecodedBytes(lodCount, shDegreeOf(info?.shDegree ?? 0), extended) : 0);
     const shText = info
       ? info.shDegree === info.sourceSh
         ? String(info.shDegree)
@@ -70,6 +76,9 @@ export class GaussianRenderable implements Renderable {
       sh: shText,
     };
     if (info && info.sampleStride > 1) extra.stride = info.sampleStride;
+    if (lodCount > 0 && count > 0) {
+      extra.lodSplats = `${lodCount.toLocaleString()} (×${(lodCount / count).toFixed(2)})`;
+    }
     if (info?.mismatch) {
       extra.header = info.headerCount.toLocaleString();
       extra.body = info.sourceCount.toLocaleString();
@@ -124,6 +133,13 @@ export class GaussianRenderable implements Renderable {
     this.object.dispose();
     this.object.removeFromParent();
   }
+}
+
+function shDegreeOf(value: number): ShDegree {
+  if (value <= 0) return 0;
+  if (value === 1) return 1;
+  if (value === 2) return 2;
+  return 3;
 }
 
 function bufferBytes(mesh: SplatMeshInstance): number {

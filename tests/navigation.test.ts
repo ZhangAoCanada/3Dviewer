@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   detectUpAxis,
+  groundPlaneHit,
+  isFlatScene,
   orbitAround,
   orbitCamera,
+  orbitDelta,
   panInViewPlane,
+  panOnPlane,
   polarAngle,
   releaseVelocity,
+  smoothZoomStep,
+  wheelNotches,
   zoomToward,
 } from '../src/render/cameraMotion';
+import { chooseOrbitPivot } from '../src/render/Navigation';
 import { CoarseSurface, halfToFloat, sampleStride } from '../src/render/coarseSurface';
 import { toHalf } from '../src/loaders/gaussian/packSplat';
 
@@ -265,6 +272,120 @@ describe('release velocity', () => {
     const slow = Array.from({ length: 24 }, () => ({ dtMs: 16, angle: speed * 0.016 }));
     expect(releaseVelocity(fast)).toBeCloseTo(releaseVelocity(slow), 5);
     expect(releaseVelocity(fast)).toBeCloseTo(speed, 2);
+  });
+
+  it('matches 35 ms and 70 ms streams of equal angular speed', () => {
+    const speed = 0.4;
+    const fast = Array.from({ length: 16 }, () => ({ dtMs: 35, angle: speed * 0.035 }));
+    const slow = Array.from({ length: 16 }, () => ({ dtMs: 70, angle: speed * 0.07 }));
+    expect(releaseVelocity(fast)).toBeCloseTo(releaseVelocity(slow), 5);
+  });
+});
+
+describe('flat scenes', () => {
+  it('treats the drone scan as flat and a cube as not', () => {
+    expect(isFlatScene(new THREE.Vector3(590, 490, 77), 'z')).toBe(true);
+    expect(isFlatScene(new THREE.Vector3(1, 1, 1), 'y')).toBe(false);
+  });
+
+  it('hits the ground plane in front and rejects the other cases', () => {
+    const up = new THREE.Vector3(0, 0, 1);
+    const origin = new THREE.Vector3(4, 5, 10);
+    const hit = groundPlaneHit(origin, new THREE.Vector3(0, 0, -1), up, 0, 100);
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBeCloseTo(0, 6);
+    expect(hit!.x).toBeCloseTo(4, 6);
+    expect(groundPlaneHit(origin, new THREE.Vector3(0, 0, 1), up, 0, 100)).toBeNull();
+    expect(groundPlaneHit(origin, new THREE.Vector3(1, 0, 0), up, 0, 100)).toBeNull();
+    expect(groundPlaneHit(origin, new THREE.Vector3(0, 0, -1), up, 0, 5)).toBeNull();
+  });
+
+  it('keeps the current pivot when the pick is empty', () => {
+    const current = new THREE.Vector3(1, 2, 3);
+    const hit = { point: new THREE.Vector3(9, 9, 9), surface: false, kind: 'none' as const };
+    expect(chooseOrbitPivot(hit, current)).toBe(current);
+    expect(chooseOrbitPivot({ ...hit, kind: 'ground' }, current)).toBe(hit.point);
+  });
+});
+
+describe('orbit delta', () => {
+  it('follows a fast drag and only clamps capture glitches', () => {
+    expect(orbitDelta(120, 0, 1).yaw).toBe(-0.624);
+    expect(orbitDelta(400, 0, 1).yaw).toBe(-0.9);
+  });
+
+  it('stops a flat orbit just below the horizon and still yaws', () => {
+    const polar0 = (80 * Math.PI) / 180;
+    const radius = 10;
+    const camera = new THREE.Vector3(Math.sin(polar0) * radius, 0, Math.cos(polar0) * radius);
+    const pivot = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 0, 1);
+    const maxPolar = Math.PI / 2 + 0.05;
+    for (let i = 0; i < 100; i += 1) orbitAround(camera, pivot, up, 0, -0.05, undefined, maxPolar);
+    expect(Math.abs(polarAngle(camera, pivot, up) - maxPolar)).toBeLessThanOrEqual(1e-6);
+    const before = camera.clone();
+    orbitAround(camera, pivot, up, 0.4, 0, undefined, maxPolar);
+    expect(camera.distanceTo(before)).toBeGreaterThan(0.5);
+  });
+});
+
+describe('wheel smoothing', () => {
+  it('delivers one notch at 30 Hz and at 120 Hz', () => {
+    const slow = deliveredZoom(30);
+    const fast = deliveredZoom(120);
+    expect(slow).toBeGreaterThanOrEqual(0.999);
+    expect(fast).toBeGreaterThanOrEqual(0.999);
+    expect(Math.abs(slow - fast)).toBeLessThan(1e-3);
+  });
+
+  it('maps 125 pixels to one notch', () => {
+    expect(wheelNotches(125, 0)).toBe(1);
+  });
+});
+
+function deliveredZoom(hz: number): number {
+  let pending = 1;
+  let total = 0;
+  const dt = 1 / hz;
+  const steps = Math.round(0.5 * hz);
+  for (let i = 0; i < steps; i += 1) {
+    const step = smoothZoomStep(pending, dt, 0.07);
+    pending -= step;
+    total += step;
+  }
+  return total;
+}
+
+describe('ground pan', () => {
+  it('keeps altitude and leaves the anchor on the cursor ray', () => {
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
+    const up = new THREE.Vector3(0, 0, 1);
+    camera.up.copy(up);
+    camera.position.set(0, -80, 40);
+    const pivot = new THREE.Vector3(0, 0, 0);
+    camera.lookAt(pivot);
+    camera.updateMatrixWorld(true);
+    const anchor = new THREE.Vector3(10, 0, 0);
+    const beforeZ = camera.position.z;
+    const ndc = anchor.clone().project(camera);
+    const cursor = new THREE.Vector3(ndc.x + 0.15, ndc.y, 0.5).unproject(camera).sub(camera.position).normalize();
+    expect(panOnPlane(camera, pivot, anchor, cursor, up)).toBe(true);
+    expect(Math.abs(camera.position.z - beforeZ)).toBeLessThanOrEqual(1e-9);
+    const dist = Math.max(anchor.distanceTo(camera.position), 1e-6);
+    const along = anchor.clone().sub(camera.position).dot(cursor);
+    const closest = camera.position.clone().addScaledVector(cursor, along);
+    expect(closest.distanceTo(anchor)).toBeLessThanOrEqual(1e-6 * dist);
+  });
+
+  it('rejects a near-horizontal ray', () => {
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    const pivot = new THREE.Vector3();
+    const anchor = new THREE.Vector3(0, 0, 0);
+    const before = camera.position.clone();
+    const ray = new THREE.Vector3(1, 0, -0.05).normalize();
+    expect(panOnPlane(camera, pivot, anchor, ray, new THREE.Vector3(0, 0, 1))).toBe(false);
+    expect(camera.position.distanceToSquared(before)).toBe(0);
   });
 });
 

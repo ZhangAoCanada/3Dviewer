@@ -95,3 +95,23 @@ Not measured here: Flip Y long tasks on a 14M scene, a 1 GB `?url=` load on a ra
 Mobile Spark options `lodRenderScale: 1.5` and `minSortIntervalMs: 33` are set when the budget profile is `mobile`, and they are not in the UI. This environment has no mid-range Android device or iPhone, and no drone `.rad`, so the plan's "revert unless orbit fps rises by 10%" check was not run. The settings were left as specified.
 
 Not measured here: HUD active-splat ratio at LoD 2.0 vs 1.0, a paged `.rad` sharpening after the pointer is released, the Performance panel while dragging the cutoff slider, slab-demo fps at the new cutoff maximum, and zoom-to-minimum on the slab. The LoD product is covered by `tests/lodParams.test.ts`.
+
+## Owner measurements for the 14,161,020-splat drone scan
+
+These cells are for the owner to fill on the real file, in desktop Chrome. This environment has no drone PLY and no Chrome Task Manager, so the numbers are blank.
+
+1. Open Settings (the panel button) and expand **Performance**. Leave that section open while you orbit. The new **Sort** row is the time between depth-sort starts, in milliseconds. It is a smoothed average. While the view sits still it falls back to **—** after about three seconds with no new sort. While you drag, read the number once it stops jumping. That number is "sort ms while orbiting".
+2. Catch-up time is a stopwatch check: flick the view, release, and time how long the splats take to look settled after the ring disappears.
+3. LoD splats, when a level-of-detail tree was built, are the **LoD splats** row under **Scene**. The figure in parentheses is `lodCount / count`. **Pick index** in that same section should read **ready** before you record a run.
+4. Memory is Chrome Task Manager: the tab plus the GPU process. Note the peak while the file is still loading, then the steady value after the view has settled.
+5. Open the viewer with the query string already in the address bar, then choose the drone file (or put the file on a URL and use `?url=`). Do not remove the query before the first load of that run. Record one row per address:
+
+| Run | Decoded SH | LoD | lodCount / count | Peak memory | Steady memory | Orbit fps | Sort ms | Catch-up |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| default (no `lod` or `sh` params) | | | | | | | | |
+| `?lod=force&sh=1` | | | | | | | | |
+| `?lod=force&sh=0` | | | | | | | | |
+| `torus.ply` sample | | | | | | | | |
+| `?demo=slab&n=1500000` | | | | | | | | |
+
+For the torus sample and the slab demo, only `lodCount / count` is required. If `?lod=force&sh=1` crashes the tab, write "crashed" in that row. `?sh=2` and `?sh=3` are the same kind of cap if you want an extra row; the three runs above are the ones this batch asks for.

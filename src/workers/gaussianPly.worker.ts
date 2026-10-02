@@ -1,5 +1,5 @@
 import { blobSource, rangeSource, type ByteSource } from '../core/byteSource';
-import type { MemoryBudget } from '../core/types';
+import type { GaussianLoadOverrides, MemoryBudget } from '../core/types';
 import { decodeGaussianPly, GaussianPlyError, type DecodedGaussian, type DecodeProgress } from '../loaders/gaussian/decodeGaussianPly';
 
 interface RequestMessage {
@@ -8,6 +8,7 @@ interface RequestMessage {
   size?: number;
   budget: MemoryBudget;
   preferExtended: boolean;
+  overrides?: GaussianLoadOverrides;
 }
 
 type ResponseMessage =
@@ -24,10 +25,11 @@ export function handleDecodeRequest(
   data: RequestMessage,
   post: (message: ResponseMessage, transfer?: Transferable[]) => void,
 ): Promise<void> {
-  const { budget, preferExtended } = data;
+  const { budget, preferExtended, overrides } = data;
   return decodeGaussianPly(sourceFor(data), {
     budget,
     preferExtended,
+    overrides,
     onProgress: (progress) => {
       post({ type: 'progress', progress });
     },

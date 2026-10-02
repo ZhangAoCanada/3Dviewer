@@ -51,8 +51,8 @@ async function blobOf(source: AssetSource, ctx: LoadContext): Promise<Blob> {
 }
 
 type DecodeRequest =
-  | { blob: Blob; budget: MemoryBudget; preferExtended: boolean }
-  | { url: string; size: number; budget: MemoryBudget; preferExtended: boolean };
+  | { blob: Blob; budget: MemoryBudget; preferExtended: boolean; overrides?: LoadContext['overrides'] }
+  | { url: string; size: number; budget: MemoryBudget; preferExtended: boolean; overrides?: LoadContext['overrides'] };
 
 function decodeInWorker(request: DecodeRequest, ctx: LoadContext): Promise<DecodedGaussian> {
   return new Promise((resolve, reject) => {
@@ -110,7 +110,7 @@ function decodeInWorker(request: DecodeRequest, ctx: LoadContext): Promise<Decod
   });
 }
 
-function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean): GaussianSceneInfo {
+function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean, lodCount = 0): GaussianSceneInfo {
   return {
     sourceCount: decoded.sourceCount,
     headerCount: decoded.headerCount,
@@ -119,6 +119,7 @@ function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean): GaussianSceneIn
     sampleStride: decoded.stride,
     extended: decoded.extended,
     lod: lodBuilt,
+    lodCount,
     mismatch: decoded.mismatch,
     warning: decoded.warning,
     georef: decoded.georef,
@@ -128,7 +129,11 @@ function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean): GaussianSceneIn
   };
 }
 
-async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: LoadContext): Promise<{ mesh: SplatMesh; lodBuilt: boolean }> {
+async function meshFromDecoded(
+  decoded: DecodedGaussian,
+  name: string,
+  ctx: LoadContext,
+): Promise<{ mesh: SplatMesh; lodBuilt: boolean; lodCount: number }> {
   throwIfAborted(ctx.signal);
   const encoding = {
     rgbMin: decoded.limits.rgbMin,
@@ -196,6 +201,7 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
     await mesh.initialized;
     disposeIfAborted({ dispose: release }, ctx.signal);
     let lodBuilt = false;
+    let lodCount = 0;
     if (decoded.lod) {
       ctx.onProgress({
         loaded: decoded.count,
@@ -208,6 +214,7 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
         disposeIfAborted({ dispose: release }, ctx.signal);
         mesh.enableLod = true;
         lodBuilt = true;
+        lodCount = (mesh.extSplats?.lodSplats ?? mesh.packedSplats?.lodSplats)?.numSplats ?? 0;
       } catch (error) {
         if (ctx.signal.aborted) {
           release();
@@ -218,7 +225,7 @@ async function meshFromDecoded(decoded: DecodedGaussian, name: string, ctx: Load
         decoded.notes.push(note);
       }
     }
-    return { mesh, lodBuilt };
+    return { mesh, lodBuilt, lodCount };
   } catch (error) {
     release();
     throw error;
@@ -243,8 +250,8 @@ async function loadStandardPly(
   try {
     decoded = await decodeInWorker(
       input.kind === 'blob'
-        ? { blob: input.blob, budget: ctx.budget, preferExtended }
-        : { url: input.url, size: input.size, budget: ctx.budget, preferExtended },
+        ? { blob: input.blob, budget: ctx.budget, preferExtended, overrides: ctx.overrides }
+        : { url: input.url, size: input.size, budget: ctx.budget, preferExtended, overrides: ctx.overrides },
       ctx,
     );
   } catch (error) {
@@ -255,6 +262,7 @@ async function loadStandardPly(
     decoded = await decodeGaussianPly(standardSource(input, ctx.signal), {
       budget: ctx.budget,
       preferExtended,
+      overrides: ctx.overrides,
       signal: ctx.signal,
       onProgress: (progress) => {
         ctx.onProgress({ ...progress, stage: 'parse' });
@@ -262,7 +270,7 @@ async function loadStandardPly(
     });
   }
   throwIfAborted(ctx.signal);
-  const { mesh, lodBuilt } = await meshFromDecoded(decoded, source.name, ctx);
+  const { mesh, lodBuilt, lodCount } = await meshFromDecoded(decoded, source.name, ctx);
   ctx.onProgress({
     loaded: decoded.count,
     total: decoded.sourceCount,
@@ -278,7 +286,7 @@ async function loadStandardPly(
       bytes: size,
     },
     mesh,
-    sceneInfo(decoded, lodBuilt),
+    sceneInfo(decoded, lodBuilt, lodCount),
   );
 }
 

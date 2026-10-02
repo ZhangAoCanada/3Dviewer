@@ -42,6 +42,7 @@ export function buildCoarse(points: Float32Array | null): CoarseSurface | null {
 export interface SceneHit {
   point: THREE.Vector3;
   surface: boolean;
+  kind: 'surface' | 'ground' | 'none';
 }
 
 export function pickScene(
@@ -60,7 +61,7 @@ export function pickScene(
     const dist = origin.distanceTo(point);
     if (dist >= bestDist) return;
     bestDist = dist;
-    best = { point: point.clone(), surface };
+    best = { point: point.clone(), surface, kind: 'surface' };
   };
 
   if (meshes.length > 0) {
@@ -80,7 +81,7 @@ export function pickScene(
     const span = rayBox(origin, dir, bounds);
     if (span) {
       const t = span.tNear > 0 ? span.tNear : Math.max(span.tFar * 0.5, 0);
-      return { point: origin.clone().addScaledVector(dir, t), surface: false };
+      return { point: origin.clone().addScaledVector(dir, t), surface: false, kind: 'none' };
     }
   }
   const dir = direction.clone().normalize();
@@ -89,10 +90,10 @@ export function pickScene(
   if (viewLen < 1e-6) return null;
   view.multiplyScalar(1 / viewLen);
   const denom = view.dot(dir);
-  if (Math.abs(denom) < 1e-5) return { point: pivot.clone(), surface: false };
+  if (Math.abs(denom) < 1e-5) return { point: pivot.clone(), surface: false, kind: 'none' };
   const t = view.dot(pivot.clone().sub(origin)) / denom;
-  if (t < 0.05) return { point: pivot.clone(), surface: false };
-  return { point: origin.clone().addScaledVector(dir, t), surface: false };
+  if (t < 0.05) return { point: pivot.clone(), surface: false, kind: 'none' };
+  return { point: origin.clone().addScaledVector(dir, t), surface: false, kind: 'none' };
 }
 
 function appendSplats(mesh: SplatLike, samples: number[], maxPoints: number): void {

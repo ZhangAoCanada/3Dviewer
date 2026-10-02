@@ -5,6 +5,7 @@ import { readProbe, sourceFromFile, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
   type AssetSource,
+  type GaussianLoadOverrides,
   type LoadProgress,
   type RenderSettings,
   type ShadingMode,
@@ -39,6 +40,8 @@ export class ViewerApp {
   private hintHeld = false;
   private hintCleanup: (() => void) | null = null;
   private readonly menus: { button: HTMLButtonElement; menu: HTMLElement; close: () => void }[] = [];
+  /** Captured once from the page URL so later `history.replaceState` calls keep it. */
+  private readonly gaussianOverrides = readGaussianOverrides();
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -551,6 +554,7 @@ export class ViewerApp {
         signal: abort.signal,
         budget: detectMemoryBudget(),
         extendedPrecision: this.settings.extendedPrecision,
+        overrides: this.gaussianOverrides,
         onProgress: (progress) => {
           arm(progress.stage);
           if (generation !== this.generation) return;
@@ -997,6 +1001,7 @@ export class ViewerApp {
         stride: 'Sample stride',
         header: 'Header count',
         body: 'Body count',
+        lodSplats: 'LoD splats',
       };
       if (stats.extra) {
         for (const [key, value] of Object.entries(stats.extra)) {
@@ -1004,7 +1009,14 @@ export class ViewerApp {
           rows.push([extraLabels[key] ?? key, String(value)]);
         }
       }
+      const pickLabel = this.host.pickIndexLabel();
+      if (pickLabel) rows.push(['Pick index', pickLabel]);
       fillKv(root, rows);
+      if (pickLabel) {
+        const cells = root.querySelectorAll('dd');
+        const last = cells[cells.length - 1];
+        if (last) last.id = 'pick-index';
+      }
       this.renderGeoref(stats.extra);
     }
     this.renderFileChip();
@@ -1131,6 +1143,8 @@ export class ViewerApp {
             ? `${formatCompact(tris)} tris`
             : '—';
     must('#hud-summary-gpu').textContent = formatBytes(stats.gpuMemoryBytes);
+    const pickIndex = document.getElementById('pick-index');
+    if (pickIndex) pickIndex.textContent = this.host.pickIndexLabel();
     const rowValue: Record<string, number> = { splats: shownSplats, points, tris };
     for (const row of hud.querySelectorAll<HTMLElement>('[data-hud-row]')) {
       row.hidden = (rowValue[row.dataset.hudRow ?? ''] ?? 0) === 0;
@@ -1141,6 +1155,7 @@ export class ViewerApp {
       ['Backend', stats.webgpuAvailable ? 'WebGL2 (WebGPU present)' : 'WebGL2'],
       ['FPS', stats.idle ? 'idle' : formatFixed(stats.fps, 0)],
       ['Frame', `${formatFixed(stats.renderMs)} ms`],
+      ['Sort', stats.sortMs == null ? '—' : `${formatFixed(stats.sortMs, 0)} ms`],
       ['Active splats', formatCount(shownSplats)],
       ['GPU est.', formatBytes(stats.gpuMemoryBytes)],
     ];
@@ -1154,6 +1169,19 @@ export class ViewerApp {
       }),
     );
   }
+}
+
+function readGaussianOverrides(): GaussianLoadOverrides | undefined {
+  if (typeof location === 'undefined') return undefined;
+  const params = new URLSearchParams(location.search);
+  const overrides: GaussianLoadOverrides = {};
+  if (params.get('lod') === 'force') overrides.forceLod = true;
+  const sh = params.get('sh');
+  if (sh === '0' || sh === '1' || sh === '2' || sh === '3') {
+    overrides.maxSh = Number(sh) as GaussianLoadOverrides['maxSh'];
+  }
+  if (!overrides.forceLod && overrides.maxSh == null) return undefined;
+  return overrides;
 }
 
 function fillKv(root: HTMLElement, rows: [string, string][], mono = false): void {

@@ -1,4 +1,4 @@
-import type { MemoryBudget } from '../../core/types';
+import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
 
 /** Spark's splat texture width. Packed buffers must cover a whole texture. */
 export const SPLAT_TEX_WIDTH = 2048;
@@ -59,10 +59,11 @@ export function planGaussianDecode(args: {
   sourceSh: ShDegree;
   budget: MemoryBudget;
   preferExtended: boolean;
+  overrides?: GaussianLoadOverrides;
 }): GaussianDecodePlan {
   const sourceCount = Math.max(0, Math.floor(args.sourceCount));
   const sourceSh = args.sourceSh;
-  const shCap = Math.min(sourceSh, args.budget.maxSh) as ShDegree;
+  const shCap = Math.min(sourceSh, args.budget.maxSh, args.overrides?.maxSh ?? sourceSh) as ShDegree;
   const usable = Math.floor(args.budget.cpuBytes * DECODE_FRACTION);
   const encodings = args.preferExtended ? [true, false] : [false];
   const targetCount =
@@ -106,8 +107,9 @@ export function planGaussianDecode(args: {
   }
 
   const estimatedBytes = estimateDecodedBytes(decodedCount, shDegree, extended);
-  const lod =
-    decodedCount >= LOD_ABOVE && estimatedBytes * 2 <= args.budget.cpuBytes * LOD_HEADROOM;
+  const lod = args.overrides?.forceLod
+    ? decodedCount >= LOD_ABOVE
+    : decodedCount >= LOD_ABOVE && estimatedBytes * 2 <= args.budget.cpuBytes * LOD_HEADROOM;
 
   const notes: string[] = [];
   if (shDegree < sourceSh) {
