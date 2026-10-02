@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-labelledby="title">
+  <title id="title">Omniview</title>
+  <!--
+    Omniview icon, 1024 viewBox.
+    Rounded tile (radius 22%) in #f8fafc. The ring is #14b8a6 — the brand teal
+    between the app accent tokens (#0f766e light, #5eead4 dark) — with about
+    12% padding. It stays solid from 1 o'clock counter-clockwise through the
+    left side to 6 o'clock. Clockwise from 1 o'clock the outer arc becomes a
+    3-row voxel grid that thins, then from 3 o'clock to 6 o'clock it dissolves
+    into soft splat ovals that trail a little outside the ring.
+    scripts/build-icons.mjs derives the transparent header mark and every PNG.
+  -->
+  <rect width="1024" height="1024" rx="225.28" fill="#f8fafc"/>
+  <path fill="#14b8a6" d="M 706 175.98 A 388 388 0 1 0 512 900 L 512 756 A 244 244 0 1 1 634 300.69 Z"/>
+  <g fill="#14b8a6">
+    <rect x="643.42" y="275.74" width="40" height="40" transform="rotate(-55 663.42 295.74)"/>
+    <rect x="673.25" y="233.15" width="40" height="40" transform="rotate(-55 693.25 253.15)"/>
+    <rect x="703.08" y="190.55" width="40" height="40" transform="rotate(-55 723.08 210.55)"/>
+    <rect x="678.68" y="305.32" width="40" height="40" transform="rotate(-45 698.68 325.32)"/>
+    <rect x="715.45" y="268.55" width="40" height="40" transform="rotate(-45 735.45 288.55)"/>
+    <rect x="752.22" y="231.78" width="40" height="40" transform="rotate(-45 772.22 251.78)"/>
+    <rect x="708.26" y="340.58" width="40" height="40" transform="rotate(-35 728.26 360.58)"/>
+    <rect x="750.85" y="310.75" width="40" height="40" transform="rotate(-35 770.85 330.75)"/>
+    <rect x="793.45" y="280.92" width="40" height="40" transform="rotate(-35 813.45 300.92)"/>
+    <rect x="731.27" y="380.43" width="40" height="40" transform="rotate(-25 751.27 400.43)"/>
+    <rect x="778.39" y="358.45" width="40" height="40" transform="rotate(-25 798.39 378.45)"/>
+    <rect x="747" y="423.67" width="40" height="40" transform="rotate(-15 767 443.67)"/>
+  </g>
+  <g fill="#14b8a6">
+    <ellipse cx="858.12" cy="327.97" rx="16" ry="11" opacity="0.95" transform="rotate(68 858.12 327.97)"/>
+    <ellipse cx="913.81" cy="396.78" rx="13" ry="9" opacity="0.78" transform="rotate(69 913.81 396.78)"/>
+    <ellipse cx="952.92" cy="481.17" rx="11" ry="7.5" opacity="0.58" transform="rotate(90 952.92 481.17)"/>
+    <ellipse cx="833.58" cy="472.51" rx="16" ry="11" opacity="0.92" transform="rotate(86 833.58 472.51)"/>
+    <ellipse cx="802.4" cy="542.52" rx="14" ry="9.5" opacity="0.80" transform="rotate(92 802.4 542.52)"/>
+    <ellipse cx="876.42" cy="563.22" rx="13" ry="9" opacity="0.72" transform="rotate(103 876.42 563.22)"/>
+    <ellipse cx="963.56" cy="575.46" rx="9" ry="6" opacity="0.42" transform="rotate(90 963.56 575.46)"/>
+    <ellipse cx="767.9" cy="615.39" rx="12" ry="8" opacity="0.62" transform="rotate(118 767.9 615.39)"/>
+    <ellipse cx="834.66" cy="642.36" rx="11" ry="7.5" opacity="0.55" transform="rotate(109 834.66 642.36)"/>
+    <ellipse cx="910.69" cy="673.08" rx="8" ry="5.5" opacity="0.34" transform="rotate(119 910.69 673.08)"/>
+    <ellipse cx="754.71" cy="701.62" rx="10" ry="7" opacity="0.46" transform="rotate(123 754.71 701.62)"/>
+    <ellipse cx="811.44" cy="745.95" rx="9" ry="6" opacity="0.36" transform="rotate(132 811.44 745.95)"/>
+    <ellipse cx="880.79" cy="800.13" rx="7" ry="5" opacity="0.24" transform="rotate(122 880.79 800.13)"/>
+    <ellipse cx="683.63" cy="748.23" rx="8" ry="5.5" opacity="0.34" transform="rotate(149 683.63 748.23)"/>
+    <ellipse cx="723.6" cy="803.25" rx="7" ry="5" opacity="0.26" transform="rotate(140 723.6 803.25)"/>
+    <ellipse cx="770.63" cy="867.97" rx="6" ry="4" opacity="0.18" transform="rotate(152 770.63 867.97)"/>
+    <ellipse cx="621.45" cy="812.7" rx="6" ry="4" opacity="0.22" transform="rotate(157 621.45 812.7)"/>
+    <ellipse cx="652.23" cy="897.27" rx="5" ry="3.5" opacity="0.16" transform="rotate(166 652.23 897.27)"/>
+    <ellipse cx="547.54" cy="850.14" rx="4.5" ry="3" opacity="0.16" transform="rotate(176 547.54 850.14)"/>
+  </g>
+</svg>

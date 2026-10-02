@@ -1,4 +1,4 @@
-# 3Dviewer
+# Omniview
 
 A real-time viewer for 3D Gaussian splats, meshes, and point clouds. It runs in the browser on desktop, phones, and iPads, and is set up for [GitHub Pages](https://zhangaocanada.github.io/3Dviewer/).
 
@@ -47,7 +47,7 @@ npm run build
 npm run preview   # http://localhost:4173/3Dviewer/
 ```
 
-`npm run generate:assets` rebuilds the small files in `public/samples/` and the PWA icons. The app is an installable PWA. A new deploy shows a Reload toast; the build id in the About section is the commit (or `VITE_BUILD_LABEL`) baked into that build.
+`npm run generate:assets` rebuilds the small files in `public/samples/`. `npm run build:icons` rebuilds the favicon, PWA icons, header mark, and Tauri icons from `assets/brand/omniview.svg`. The app is an installable PWA. A new deploy shows a Reload toast; the build id in the About section is the commit (or `VITE_BUILD_LABEL`) baked into that build.
 
 Production `base` is `/3Dviewer/` so asset URLs match GitHub Pages. The desktop build sets `base` to `./` when the Tauri CLI is the one invoking it.
 
@@ -72,12 +72,12 @@ Open and drag-and-drop stay in the WebView (`dragDropEnabled` is off), so the pa
 | macOS | universal `.dmg` |
 | Linux | `.AppImage` and `.deb` |
 
-The tag should match `package.json` (`v0.1.0` for `0.1.0`). These builds are not code-signed or notarized. The macOS bundle is ad-hoc signed so Gatekeeper does not report it as damaged.
+The tag should match `package.json` (`v0.2.0` for `0.2.0`). These builds are not code-signed or notarized. The macOS bundle is ad-hoc signed so Gatekeeper does not report it as damaged.
 
 - **Windows:** SmartScreen says the app is unrecognized. Choose **More info**, then **Run anyway**.
 - **macOS:** the first open is blocked. **Right-click the app > Open**, then **Open** again.
 
-**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. The first release appears after a `v0.1.0` tag is pushed.
+**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. A release is published when a `v0.2.0` tag is pushed.
 
 ## Deploy
 

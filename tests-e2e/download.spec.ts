@@ -4,11 +4,14 @@ const release = 'https://github.com/ZhangAoCanada/3Dviewer/releases/latest';
 
 test('download dialog highlights this computer and links to the latest release', async ({ page }) => {
   await page.goto('/');
+  await expect(page).toHaveTitle('Omniview');
+  await expect(page.locator('.brand-name')).toHaveText('Omniview');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
   await expect(page.locator('#download-btn')).toBeVisible();
   await page.click('#download-btn');
   const dialog = page.locator('#download-dialog');
   await expect(dialog).toBeVisible();
+  await expect(dialog.locator('#download-title')).toHaveText('Download Omniview');
   await expect(dialog.locator(`a[href="${release}"]`)).toHaveCount(4);
   const os = await page.evaluate(() => {
     const ua = navigator.userAgent;
