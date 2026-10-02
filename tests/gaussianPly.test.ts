@@ -3,7 +3,7 @@ import { blobSource, type ByteSource } from '../src/core/byteSource';
 import { detectMemoryBudget } from '../src/core/memoryBudget';
 import { decodeGaussianPly, resolveVertexCount } from '../src/loaders/gaussian/decodeGaussianPly';
 import { explainLoadError } from '../src/loaders/gaussian/explainLoadError';
-import { planGaussianDecode, estimateDecodedBytes } from '../src/loaders/gaussian/gaussianPlan';
+import { planGaussianDecode, estimateDecodedBytes, LOD_ABOVE } from '../src/loaders/gaussian/gaussianPlan';
 import { toHalf, writePackedSplat, DEFAULT_LIMITS } from '../src/loaders/gaussian/packSplat';
 import { halfToFloat } from '../src/render/coarseSurface';
 
@@ -221,6 +221,7 @@ describe('planGaussianDecode', () => {
     expect(plan.extended).toBe(true);
     expect(plan.shDegree).toBe(2);
     expect(plan.lod).toBe(false);
+    expect(plan.notes.join(' ')).not.toMatch(/level of detail/i);
     expect(plan.estimatedBytes).toBeLessThanOrEqual(Math.floor(budget.cpuBytes * 0.62));
     expect(estimateDecodedBytes(plan.decodedCount, plan.shDegree, true)).toBe(plan.estimatedBytes);
   });
@@ -244,6 +245,7 @@ describe('planGaussianDecode', () => {
     expect(plan.shDegree).toBeGreaterThanOrEqual(1);
     expect(plan.shDegree).toBeLessThanOrEqual(budget.maxSh);
     expect(plan.notes.join(' ')).toMatch(/1 of every/);
+    expect(plan.lod).toBe(false);
   });
 
   it('drops float32 centers and then subsamples when the budget is tiny', () => {
@@ -264,6 +266,67 @@ describe('planGaussianDecode', () => {
     expect(plan.shDegree).toBe(0);
     expect(plan.decodedCount).toBeLessThan(8_000);
     expect(plan.notes.join(' ')).toMatch(/half-float/);
+  });
+
+  it('leaves LoD off when a second copy would fit, unless lod=force', () => {
+    const budget = detectMemoryBudget({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      deviceMemory: 8,
+      hardwareConcurrency: 8,
+      maxTouchPoints: 0,
+    });
+    // 4,000,000 extended SH3 pads to one 2048² layer. Twice that still fits in
+    // cpuBytes * 0.85, which is the check that used to turn LoD on.
+    const sourceCount = 4_000_000;
+    const base = {
+      sourceCount,
+      sourceSh: 3 as const,
+      budget,
+      preferExtended: true,
+    };
+    const plan = planGaussianDecode(base);
+    expect(plan.decodedCount).toBe(sourceCount);
+    expect(plan.stride).toBe(1);
+    expect(plan.shDegree).toBe(3);
+    expect(plan.estimatedBytes * 2).toBeLessThanOrEqual(budget.cpuBytes * 0.85);
+    expect(plan.lod).toBe(false);
+    expect(plan.notes.join(' ')).not.toMatch(/level of detail/i);
+
+    const forced = planGaussianDecode({ ...base, overrides: { forceLod: true } });
+    expect(forced.lod).toBe(true);
+    expect(forced.decodedCount).toBe(plan.decodedCount);
+    expect(forced.shDegree).toBe(plan.shDegree);
+    expect(forced.extended).toBe(plan.extended);
+
+    const mid = planGaussianDecode({
+      sourceCount: 7_900_000,
+      sourceSh: 3,
+      budget,
+      preferExtended: true,
+    });
+    expect(mid.decodedCount).toBe(7_900_000);
+    expect(mid.stride).toBe(1);
+    expect(mid.shDegree).toBeGreaterThanOrEqual(2);
+    expect(mid.lod).toBe(false);
+    const midForced = planGaussianDecode({
+      sourceCount: 7_900_000,
+      sourceSh: 3,
+      budget,
+      preferExtended: true,
+      overrides: { forceLod: true },
+    });
+    expect(midForced.lod).toBe(true);
+    expect(midForced.shDegree).toBe(mid.shDegree);
+    expect(midForced.decodedCount).toBe(mid.decodedCount);
+
+    const below = planGaussianDecode({
+      sourceCount: LOD_ABOVE - 1,
+      sourceSh: 0,
+      budget,
+      preferExtended: false,
+      overrides: { forceLod: true },
+    });
+    expect(below.lod).toBe(false);
   });
 
   it('forces LoD and caps spherical harmonics from URL overrides', () => {
