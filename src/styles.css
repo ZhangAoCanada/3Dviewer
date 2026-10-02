@@ -224,6 +224,8 @@ button { cursor: pointer; }
   .hide-phone { display: none !important; }
   .show-phone { display: revert !important; }
 }
+html.is-desktop #download-btn,
+html.is-desktop #download-menu-item { display: none !important; }
 
 .btn, .seg {
   display: inline-flex;
@@ -1036,6 +1038,36 @@ body.is-dragging .drop-overlay { opacity: 1; }
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-5);
+}
+.download-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.download-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  text-decoration: none;
+}
+.download-row:hover { border-color: var(--color-border-strong); }
+.download-row.is-current {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.download-os { font-weight: var(--weight-semibold); }
+.download-files {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 .input {
   appearance: none;

@@ -1,7 +1,8 @@
 /// <reference types="vitest/config" />
 import { execSync } from 'node:child_process';
-import { defineConfig } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { appBase } from './src/desktop/basePath';
 
 function appBuild(): string {
   const override = process.env.VITE_BUILD_LABEL?.trim();
@@ -15,13 +16,13 @@ function appBuild(): string {
   }
 }
 
-export default defineConfig({
-  base: '/3Dviewer/',
-  define: {
-    __APP_BUILD__: JSON.stringify(appBuild()),
-  },
-  plugins: [
-    VitePWA({
+export default defineConfig(() => {
+  const desktop = appBase() === './';
+  const devHost = process.env.TAURI_DEV_HOST;
+  const tauriDebug = process.env.TAURI_ENV_DEBUG === 'true';
+  const plugins: PluginOption[] = [];
+  if (!desktop) {
+    plugins.push(VitePWA({
       // A waiting worker stays installed until the Reload toast calls skipWaiting.
       registerType: 'prompt',
       injectRegister: false,
@@ -62,18 +63,32 @@ export default defineConfig({
           },
         ],
       },
-    }),
-  ],
-  server: {
-    port: 5173,
-    host: true,
-  },
-  build: {
-    target: 'es2022',
-    chunkSizeWarningLimit: 4000,
-  },
-  test: {
-    include: ['tests/**/*.test.ts'],
-    environment: 'node',
-  },
+    }));
+  }
+  return {
+    base: appBase(),
+    clearScreen: !desktop,
+    define: {
+      __APP_BUILD__: JSON.stringify(appBuild()),
+    },
+    plugins,
+    server: {
+      port: 5173,
+      strictPort: desktop,
+      host: desktop ? devHost || false : true,
+      hmr: devHost ? { protocol: 'ws', host: devHost, port: 1421 } : undefined,
+      watch: {
+        ignored: ['**/src-tauri/**'],
+      },
+    },
+    build: {
+      target: desktop ? (process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari13') : 'es2022',
+      chunkSizeWarningLimit: 4000,
+      ...(tauriDebug ? { minify: false as const, sourcemap: true } : {}),
+    },
+    test: {
+      include: ['tests/**/*.test.ts'],
+      environment: 'node',
+    },
+  };
 });

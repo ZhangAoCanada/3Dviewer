@@ -2,6 +2,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+if (process.env.TAURI_ENV_PLATFORM) {
+  console.log('check-precache: skipped for the desktop build');
+  process.exit(0);
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const swPath = join(root, 'dist', 'sw.js');
 const assetsDir = join(root, 'dist', 'assets');

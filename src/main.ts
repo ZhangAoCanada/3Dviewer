@@ -2,6 +2,7 @@ import '@fontsource/dm-sans/400.css';
 import '@fontsource/dm-sans/600.css';
 import './styles.css';
 import { registerAppUpdate } from './app/registerUpdate';
+import { isDesktopApp } from './desktop/runtime';
 import { ViewerApp } from './app/ViewerApp';
 
 registerAppUpdate();
@@ -13,7 +14,7 @@ const loading = document.querySelector<HTMLElement>('#loading');
 // those two requests overlap and the sample body comes back short. Wait until
 // the worker is active so the first fetch is served from the precache.
 async function waitForServiceWorker(): Promise<void> {
-  if (!('serviceWorker' in navigator)) return;
+  if (isDesktopApp() || !('serviceWorker' in navigator)) return;
   await Promise.race([
     navigator.serviceWorker.ready,
     new Promise<void>((resolve) => {

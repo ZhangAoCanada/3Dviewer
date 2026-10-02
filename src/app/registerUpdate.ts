@@ -1,3 +1,5 @@
+import { isDesktopApp } from '../desktop/runtime';
+
 const UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
@@ -8,6 +10,7 @@ const UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 export function registerAppUpdate(): void {
   const build = document.querySelector('#build-id');
   if (build) build.textContent = __APP_BUILD__;
+  if (isDesktopApp()) return;
 
   const toast = document.querySelector<HTMLElement>('#update-toast');
   const button = document.querySelector<HTMLButtonElement>('#update-reload');
