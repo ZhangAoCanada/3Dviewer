@@ -14,9 +14,11 @@ export const EXTENDED_SPLAT_BYTES = [32, 48, 64, 96] as const;
 /** Share of MemoryBudget.cpuBytes used for the decoded buffers themselves. */
 export const DECODE_FRACTION = 0.62;
 
-/** Worker LoD builds a second copy. Only start it when that copy fits. */
+/**
+ * `?lod=force` builds a worker LoD tree only at or above this splat count.
+ * LoD is off for every other load, even when a second copy would fit.
+ */
 export const LOD_ABOVE = 400_000;
-const LOD_HEADROOM = 0.85;
 
 export type ShDegree = 0 | 1 | 2 | 3;
 
@@ -107,9 +109,7 @@ export function planGaussianDecode(args: {
   }
 
   const estimatedBytes = estimateDecodedBytes(decodedCount, shDegree, extended);
-  const lod = args.overrides?.forceLod
-    ? decodedCount >= LOD_ABOVE
-    : decodedCount >= LOD_ABOVE && estimatedBytes * 2 <= args.budget.cpuBytes * LOD_HEADROOM;
+  const lod = Boolean(args.overrides?.forceLod) && decodedCount >= LOD_ABOVE;
 
   const notes: string[] = [];
   if (shDegree < sourceSh) {
@@ -124,9 +124,6 @@ export function planGaussianDecode(args: {
     notes.push(
       `Showing ${decodedCount.toLocaleString()} of ${sourceCount.toLocaleString()} splats (1 of every ${stride}).`,
     );
-  }
-  if (decodedCount >= LOD_ABOVE && !lod) {
-    notes.push('Sorting the full decoded set. A level-of-detail copy did not fit beside it.');
   }
 
   return {

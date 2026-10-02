@@ -4,6 +4,7 @@ import type { AssetSource, FormatLoader, LoadContext, MemoryBudget } from '../..
 import { sniffGaussian } from '../../core/sniff';
 import { GaussianRenderable, splatCount, type GaussianSceneInfo } from '../../renderables/gaussianRenderable';
 import { decodeGaussianPly, GaussianPlyUnsupported, inspectGaussianPly, type DecodedGaussian } from './decodeGaussianPly';
+import { LOD_ABOVE } from './gaussianPlan';
 import { disposeIfAborted, throwIfAborted } from './disposeIfAborted';
 import { explainLoadError } from './explainLoadError';
 
@@ -21,7 +22,6 @@ const FILE_TYPES: Record<string, SplatFileType> = {
 const STREAM_BYTES = 16 * 1024 * 1024;
 /** Float32 centers when the decoded scene can afford them. Drone PLYs are far past this. */
 const EXTENDED_BYTES = 80 * 1024 * 1024;
-const LOD_ABOVE = 400_000;
 
 interface HeadProbe {
   size?: number;
@@ -183,6 +183,7 @@ async function meshFromDecoded(
     throw new Error('Gaussian decode produced no splat buffer.');
   }
   mesh.position.set(decoded.origin[0], decoded.origin[1], decoded.origin[2]);
+  mesh.enableLod = false;
   let disposed = false;
   const release = () => {
     if (disposed) return;
@@ -348,10 +349,10 @@ async function loadViaSpark(
   size: number | undefined,
 ): Promise<GaussianRenderable> {
   const extended = ctx.extendedPrecision || (size !== undefined && size >= EXTENDED_BYTES);
+  const forceLod = ctx.overrides?.forceLod === true;
   const options: SplatMeshOptions = {
     fileName: source.name,
-    lod: true,
-    lodAbove: LOD_ABOVE,
+    lod: forceLod,
     extSplats: extended,
     onProgress: (event) => {
       const total = event.total > 0 ? event.total : size;
@@ -363,6 +364,7 @@ async function loadViaSpark(
       });
     },
   };
+  if (forceLod) options.lodAbove = LOD_ABOVE;
   const fileType = FILE_TYPES[source.extension];
   if (fileType) options.fileType = fileType;
   if (source.extension === 'rad') options.paged = true;
@@ -386,6 +388,9 @@ async function loadViaSpark(
 
   throwIfAborted(ctx.signal);
   const mesh = new SplatMesh(options);
+  // Paged .rad already has a baked tree, so Spark's pager still streams it.
+  // Every other file keeps enableLod off unless ?lod=force built a tree.
+  if (!forceLod && !mesh.paged) mesh.enableLod = false;
   let disposed = false;
   const release = () => {
     if (disposed) return;

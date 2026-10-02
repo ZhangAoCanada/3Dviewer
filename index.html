@@ -247,6 +247,8 @@
               Large Gaussian PLY files are read in chunks and packed outside the WASM heap, so a multi-gigabyte
               file is never one ArrayBuffer. Spherical harmonics drop first, then splats are subsampled, if the
               device budget cannot hold the whole cloud. Sorting still runs in a WASM worker.
+              Level of detail is off for every file. Add <code>?lod=force</code> to the address to build a tree
+              for a cloud of at least 400,000 splats.
               A paged <code>.rad</code> is the format that loads instantly next time; baking one is a Spark
               <code>build-lod</code> step, not a download from this page.
             </p>
