@@ -1,4 +1,5 @@
 import type { ByteSource } from '../../core/byteSource';
+import { epsgCode } from '../../core/epsg';
 import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
 import {
   paddedSplatCount,
@@ -1075,7 +1076,11 @@ function parseGeoref(header: string): GaussianGeoref {
     if (key === 'offsetx') geo.offsetX = value;
     else if (key === 'offsety') geo.offsetY = value;
     else if (key === 'offsetz') geo.offsetZ = value;
-    else if (key === 'epsg') geo.epsg = value;
+    else if (key === 'epsg') {
+      const code = epsgCode(value);
+      if (code) geo.epsg = code;
+      else delete geo.epsg;
+    }
     else if (key === 'minx') geo.minX = value;
     else if (key === 'miny') geo.minY = value;
     else if (key === 'minz') geo.minZ = value;

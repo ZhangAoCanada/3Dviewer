@@ -1,5 +1,6 @@
 import { SplatMesh, type SplatMesh as SplatMeshType } from '@sparkjsdev/spark';
 import * as THREE from 'three';
+import { epsgCode } from '../core/epsg';
 import type { Renderable, RenderableMeta, RenderableStats, RenderSettings } from '../core/types';
 import type { GaussianBounds, GaussianGeoref } from '../loaders/gaussian/decodeGaussianPly';
 import { estimateDecodedBytes, type ShDegree } from '../loaders/gaussian/gaussianPlan';
@@ -84,7 +85,8 @@ export class GaussianRenderable implements Renderable {
       extra.body = info.sourceCount.toLocaleString();
     }
     const geo = info?.georef;
-    if (geo?.epsg) extra.epsg = geo.epsg;
+    const epsg = epsgCode(geo?.epsg);
+    if (epsg) extra.epsg = epsg;
     if (geo?.offsetX || geo?.offsetY || geo?.offsetZ) {
       extra.offset = [geo.offsetX ?? '—', geo.offsetY ?? '—', geo.offsetZ ?? '—'].join(', ');
     }
