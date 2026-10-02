@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CoarseSurface, sampleStride } from '../src/render/coarseSurface';
-import { collectIndexSources, SplatIndex, SplatIndexJob } from '../src/render/splatIndex';
+import { toHalf } from '../src/loaders/gaussian/packSplat';
+import { collectIndexSources, gridFor, SplatIndex, SplatIndexJob } from '../src/render/splatIndex';
 
 function planeWithSpike(count: number, spikeIndex: number): Float32Array {
   const positions = new Float32Array(count * 3);
@@ -11,9 +12,14 @@ function planeWithSpike(count: number, spikeIndex: number): Float32Array {
     positions[i * 3 + 1] = Math.floor(i / side) * 0.4;
     positions[i * 3 + 2] = 0;
   }
-  positions[spikeIndex * 3] = 10;
-  positions[spikeIndex * 3 + 1] = 12;
-  positions[spikeIndex * 3 + 2] = 6;
+  // Six centers, so the spike is a supported object. A single center is a floater.
+  const cluster = [0, 1, 3, 4, 6, 7];
+  for (const offset of cluster) {
+    const index = spikeIndex + offset;
+    positions[index * 3] = 10 + (offset % 3) * 0.02;
+    positions[index * 3 + 1] = 12 + Math.floor(offset / 3) * 0.02;
+    positions[index * 3 + 2] = 6;
+  }
   return positions;
 }
 
@@ -143,7 +149,127 @@ describe('splat index', () => {
     expect(Math.abs(target.y)).toBeLessThanOrEqual(1e-3);
     expect(Math.abs(target.z)).toBeLessThanOrEqual(1e-3);
   });
+
+  it('covers every axis of a large flat scene', () => {
+    expectCovered(new THREE.Vector3(590, 490, 77), 14_161_020, 1_770_128);
+    expectCovered(new THREE.Vector3(5000, 10, 10), 2e6, 2e6 / 8);
+    expectCovered(new THREE.Vector3(1, 1, 1), 100, 4096);
+  });
+
+  it('picks the far corner of a 590 by 490 metre grid', () => {
+    const columns = 296;
+    const rows = 246;
+    const positions = new Float32Array((columns * rows + 1) * 3);
+    let cursor = 0;
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < columns; x += 1) {
+        positions[cursor++] = x * 2;
+        positions[cursor++] = y * 2;
+        positions[cursor++] = 0;
+      }
+    }
+    positions[cursor++] = 0;
+    positions[cursor++] = 0;
+    positions[cursor++] = 77;
+    const index = SplatIndex.fromPositions(positions, undefined, 1_770_128);
+    const hit = pickAt(index, 585, 485, 200);
+    expect(hit).not.toBeNull();
+    expect(Math.abs(hit!.z)).toBeLessThanOrEqual(0.05);
+  });
+
+  it('lands on the slab instead of one floater', () => {
+    const positions = withExtra(gridPoints(200, 200, 0.5, 0), [[0, 0, 20]]);
+    const hit = pickAt(SplatIndex.fromPositions(positions), 0, 0, 100);
+    expect(hit).not.toBeNull();
+    expect(Math.abs(hit!.z)).toBeLessThanOrEqual(0.05);
+  });
+
+  it('keeps a tight blob that is actually supported', () => {
+    const blob: number[][] = [
+      [0, 0, 20],
+      [0.02, 0, 20],
+      [-0.02, 0, 20],
+      [0, 0.02, 20],
+      [0, -0.02, 20],
+      [0.02, 0.02, 20],
+    ];
+    const positions = withExtra(gridPoints(200, 200, 0.5, 0), blob);
+    const hit = pickAt(SplatIndex.fromPositions(positions), 0, 0, 100);
+    expect(hit).not.toBeNull();
+    expect(hit!.z).toBeCloseTo(20, 1);
+  });
+
+  it('skips a floater whose opacity is below 0.1 even with support of 1', () => {
+    const slab = 200;
+    const packed = new Uint32Array((slab * slab + 1) * 4);
+    let index = 0;
+    for (let y = 0; y < slab; y += 1) {
+      for (let x = 0; x < slab; x += 1) {
+        writePackedCenter(packed, index, x * 0.5, y * 0.5, 0, 255);
+        index += 1;
+      }
+    }
+    writePackedCenter(packed, index, 0, 0, 20, 10);
+    const built = SplatIndex.fromPacked(packed);
+    const origin = new THREE.Vector3(0, 0, 100);
+    const direction = new THREE.Vector3(0, 0, -1);
+    const target = new THREE.Vector3();
+    expect(built.pick(origin, direction, direction, THREE.MathUtils.degToRad(55), 900, target, 1)).toBe(true);
+    expect(Math.abs(target.z)).toBeLessThanOrEqual(0.05);
+  });
+
+  it('advances one 8000-splat chunk on a 0.01 ms pump', () => {
+    const count = 1_000_000;
+    const positions = new Float32Array(count * 3);
+    const box = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(1, 1, 1));
+    const job = SplatIndexJob.fromPositions(positions, box);
+    expect(job.pump(0.01)).toBe(false);
+    expect(job.progress).toBe(8000 / (2 * 1e6));
+  });
 });
+
+function expectCovered(size: THREE.Vector3, count: number, maxCells: number): void {
+  const grid = gridFor(size, count);
+  expect(grid.nx * grid.cell).toBeGreaterThanOrEqual(size.x);
+  expect(grid.ny * grid.cell).toBeGreaterThanOrEqual(size.y);
+  expect(grid.nz * grid.cell).toBeGreaterThanOrEqual(size.z);
+  expect(grid.nx * grid.ny * grid.nz).toBeLessThanOrEqual(maxCells);
+  expect(grid.nx).toBeLessThanOrEqual(1024);
+  expect(grid.ny).toBeLessThanOrEqual(1024);
+  expect(grid.nz).toBeLessThanOrEqual(1024);
+}
+
+function gridPoints(columns: number, rows: number, spacing: number, z: number): Float32Array {
+  const positions = new Float32Array(columns * rows * 3);
+  let cursor = 0;
+  for (let y = 0; y < rows; y += 1) {
+    for (let x = 0; x < columns; x += 1) {
+      positions[cursor++] = x * spacing;
+      positions[cursor++] = y * spacing;
+      positions[cursor++] = z;
+    }
+  }
+  return positions;
+}
+
+function withExtra(base: Float32Array, extra: number[][]): Float32Array {
+  const positions = new Float32Array(base.length + extra.length * 3);
+  positions.set(base);
+  let cursor = base.length;
+  for (const point of extra) {
+    positions[cursor++] = point[0] ?? 0;
+    positions[cursor++] = point[1] ?? 0;
+    positions[cursor++] = point[2] ?? 0;
+  }
+  return positions;
+}
+
+function writePackedCenter(packed: Uint32Array, index: number, x: number, y: number, z: number, alpha: number): void {
+  const o = index * 4;
+  packed[o] = (alpha & 255) << 24;
+  packed[o + 1] = toHalf(x) | (toHalf(y) << 16);
+  packed[o + 2] = toHalf(z);
+}
 
 function bruteRayPoint(
   positions: Float32Array,

@@ -1,11 +1,12 @@
 import { SparkRenderer } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import type { MemoryBudget, Renderable, RenderSettings } from '../core/types';
-import { detectUpAxis } from './cameraMotion';
+import { detectUpAxis, groundPlaneHit, isFlatScene, upVector } from './cameraMotion';
 import { lodParams } from './lodParams';
 import { NavigationController, type NavMode, type UpMode } from './Navigation';
 import { buildCoarse, collectCoarsePoints, disableSplatRaycast, isSplatObject, pickScene, type SceneHit } from './scenePick';
 import type { CoarseSurface } from './coarseSurface';
+import { SortIntervalTracker } from './sortTimer';
 import { collectIndexSources, SplatIndex, SplatIndexJob } from './splatIndex';
 
 const DEFAULT_STD_DEV = Math.sqrt(8);
@@ -21,6 +22,8 @@ export interface FrameStats {
   backend: 'webgl2';
   webgpuAvailable: boolean;
   activeSplats: number;
+  /** Recent sort interval, or null when no sort has started in the last 3 s. */
+  sortMs: number | null;
 }
 
 /**
@@ -69,6 +72,10 @@ export class SceneHost {
   private readonly wheelMeshes: THREE.Object3D[] = [];
   private indexStamp = '';
   private flipVersion = 0;
+  private flat = false;
+  private groundLevel = 0;
+  private readonly sortTimer = new SortIntervalTracker();
+  private readonly groundUp = new THREE.Vector3();
   private readonly pivotMarker = createPivotMarker();
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
@@ -135,11 +142,15 @@ export class SceneHost {
     this.scene.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
     this.navigation.pick = (x, y, kind) => this.pick(x, y, kind);
-    this.navigation.onPivot = (point) => {
+    this.navigation.onPivot = (point, kind) => {
       const visible = point !== null;
       if (this.pivotMarker.visible !== visible) this.viewDirty = true;
       this.pivotMarker.visible = visible;
       if (point) this.pivotMarker.position.copy(point);
+      if (kind) {
+        paintPivot(this.pivotMarker, kind === 'surface' ? 0x7ee0c6 : 0xf2b45a);
+        this.viewDirty = true;
+      }
     };
     this.resize();
     this.observeResize();
@@ -167,6 +178,9 @@ export class SceneHost {
     this.indexJob = null;
     this.indexStamp = '';
     this.coarse = null;
+    this.flat = false;
+    this.groundLevel = 0;
+    this.sortTimer.reset();
     this.hasBounds = false;
     this.viewDirty = true;
     this.rebuildPickMeshes();
@@ -233,8 +247,9 @@ export class SceneHost {
     this.hasBounds = true;
     const size = box.getSize(new THREE.Vector3());
     this.navigation.up = this.upMode === 'auto' ? detectUpAxis(size) : this.upMode;
+    this.flat = isFlatScene(size, this.navigation.up);
     this.rebuildCoarse();
-    this.navigation.frame(box);
+    this.navigation.frame(box, this.flat ? this.groundLevel : undefined);
     this.placeGrid(box, size);
     this.viewDirty = true;
     const stamp = this.indexKey();
@@ -268,7 +283,16 @@ export class SceneHost {
   }
 
   private rebuildCoarse(): void {
-    this.coarse = buildCoarse(collectCoarsePoints(this.content));
+    const points = collectCoarsePoints(this.content);
+    this.coarse = buildCoarse(points);
+    if (points && points.length >= 3) this.groundLevel = medianComponent(points, this.navigation.up === 'z' ? 2 : 1);
+  }
+
+  /** "ready", "building 43%", or "" when this scene has no pick index. */
+  pickIndexLabel(): string {
+    if (this.index) return 'ready';
+    if (this.indexJob) return `building ${Math.min(99, Math.round(this.indexJob.progress * 100))}%`;
+    return '';
   }
 
   private startIndex(box: THREE.Box3): void {
@@ -302,16 +326,33 @@ export class SceneHost {
         indexPoint = this.pickPoint;
       }
     }
-    return pickScene(
-      this.raycaster.ray.origin,
-      this.raycaster.ray.direction,
+    const origin = this.raycaster.ray.origin;
+    const direction = this.raycaster.ray.direction;
+    const surfaceHit = pickScene(
+      origin,
+      direction,
       this.index ? null : this.coarse,
       meshes,
       this.raycaster,
-      this.hasBounds ? this.bounds : null,
+      null,
       this.navigation.pivot,
       indexPoint,
     );
+    if (surfaceHit?.kind === 'surface') return surfaceHit;
+    if (this.flat) {
+      const ground = groundPlaneHit(
+        origin,
+        direction,
+        upVector(this.navigation.up, this.groundUp),
+        this.groundLevel,
+        4 * Math.max(this.navigation.sceneRadius, 0.05),
+      );
+      if (ground) return { point: ground, surface: false, kind: 'ground' };
+      return surfaceHit ? { point: surfaceHit.point, surface: false, kind: 'none' } : null;
+    }
+    const miss = pickScene(origin, direction, null, [], this.raycaster, this.hasBounds ? this.bounds : null, this.navigation.pivot, null);
+    if (!miss) return null;
+    return { point: miss.point, surface: false, kind: 'none' };
   }
 
   resize(): void {
@@ -353,8 +394,9 @@ export class SceneHost {
       this.updateNearPlane();
       for (const item of this.renderables) item.update(dt);
       const draw = this.needsDraw();
+      this.sortTimer.sample((this.spark as unknown as { lastSortTime?: number }).lastSortTime, time);
       if (this.indexJob) {
-        const done = this.indexJob.pump(draw ? 0.35 : 1.4);
+        const done = this.indexJob.pump(draw ? 2 : 6);
         if (done) {
           this.index = this.indexJob.finish();
           this.indexJob = null;
@@ -399,6 +441,7 @@ export class SceneHost {
       backend: 'webgl2',
       webgpuAvailable: this.webgpuAvailable,
       activeSplats: this.spark.activeSplats || 0,
+      sortMs: this.sortTimer.ms,
     };
   }
 
@@ -551,6 +594,22 @@ function triangleCount(object: THREE.Object3D): number {
   if (geometry.index) return geometry.index.count / 3;
   const position = geometry.getAttribute('position');
   return position ? position.count / 3 : 0;
+}
+
+function medianComponent(points: Float32Array, axis: number): number {
+  const values: number[] = [];
+  for (let i = axis; i < points.length; i += 3) values.push(points[i] ?? 0);
+  values.sort((a, b) => a - b);
+  const mid = Math.floor(values.length / 2);
+  if (values.length % 2 === 0) return ((values[mid - 1] ?? 0) + (values[mid] ?? 0)) / 2;
+  return values[mid] ?? 0;
+}
+
+function paintPivot(group: THREE.Group, color: number): void {
+  for (const child of group.children) {
+    const material = (child as THREE.Mesh).material;
+    if (material instanceof THREE.MeshBasicMaterial) material.color.setHex(color);
+  }
 }
 
 function createPivotMarker(): THREE.Group {

@@ -265,6 +265,32 @@ describe('planGaussianDecode', () => {
     expect(plan.decodedCount).toBeLessThan(8_000);
     expect(plan.notes.join(' ')).toMatch(/half-float/);
   });
+
+  it('forces LoD and caps spherical harmonics from URL overrides', () => {
+    const budget = detectMemoryBudget({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      deviceMemory: 8,
+      hardwareConcurrency: 8,
+      maxTouchPoints: 0,
+    });
+    const forced = planGaussianDecode({
+      sourceCount: 14_161_020,
+      sourceSh: 3,
+      budget,
+      preferExtended: true,
+      overrides: { forceLod: true },
+    });
+    expect(forced.lod).toBe(true);
+    expect(forced.decodedCount).toBe(14_161_020);
+    const capped = planGaussianDecode({
+      sourceCount: 14_161_020,
+      sourceSh: 3,
+      budget,
+      preferExtended: true,
+      overrides: { maxSh: 1 },
+    });
+    expect(capped.shDegree).toBeLessThanOrEqual(1);
+  });
 });
 
 describe('explainLoadError', () => {

@@ -3,6 +3,9 @@ import * as THREE from 'three';
 /** Polar angle limits keep the camera from flipping over the up axis. */
 const MIN_POLAR = 0.12;
 const MAX_POLAR = Math.PI - 0.12;
+const YAW_PER_PX = 0.0052;
+const PITCH_PER_PX = 0.0042;
+const MAX_ORBIT_STEP = 0.9;
 
 const _offset = new THREE.Vector3();
 const _up = new THREE.Vector3();
@@ -33,6 +36,47 @@ export function upVector(axis: 'y' | 'z', target = new THREE.Vector3()): THREE.V
   return axis === 'z' ? target.set(0, 0, 1) : target.set(0, 1, 0);
 }
 
+/** Thickness along `up` is at most 0.28 of the widest other side. */
+export function isFlatScene(size: THREE.Vector3, up: 'y' | 'z'): boolean {
+  const sx = Math.max(Math.abs(size.x), 1e-8);
+  const sy = Math.max(Math.abs(size.y), 1e-8);
+  const sz = Math.max(Math.abs(size.z), 1e-8);
+  const thickness = up === 'z' ? sz : sy;
+  const other = up === 'z' ? Math.max(sx, sy) : Math.max(sx, sz);
+  return thickness / other <= 0.28;
+}
+
+/**
+ * Ray against the plane `up · p = level`. `dir` is a unit direction.
+ * Returns null when the hit is behind the origin, the ray is parallel, or `t` exceeds `maxT`.
+ */
+export function groundPlaneHit(
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  up: THREE.Vector3,
+  level: number,
+  maxT: number,
+): THREE.Vector3 | null {
+  const denom = up.dot(dir);
+  if (Math.abs(denom) < 1e-8) return null;
+  const t = (level - up.dot(origin)) / denom;
+  if (t <= 0 || t > maxT) return null;
+  return origin.clone().addScaledVector(dir, t);
+}
+
+/** Pointer deltas to yaw and pitch. The 0.9 rad clamp only catches capture glitches. */
+export function orbitDelta(dx: number, dy: number, sensitivity: number): { yaw: number; pitch: number } {
+  return {
+    yaw: THREE.MathUtils.clamp(-dx * YAW_PER_PX * sensitivity, -MAX_ORBIT_STEP, MAX_ORBIT_STEP),
+    pitch: THREE.MathUtils.clamp(dy * PITCH_PER_PX * sensitivity, -MAX_ORBIT_STEP, MAX_ORBIT_STEP),
+  };
+}
+
+/** Fraction of `pending` consumed this frame. `tau` is the smoothing time constant. */
+export function smoothZoomStep(pending: number, dt: number, tau: number): number {
+  return pending * (1 - Math.exp(-dt / tau));
+}
+
 /**
  * Grab-style orbit. Drag right yaws so the pivot moves with the pointer.
  * `quaternion`, when set, turns with the same rotation so the pivot stays
@@ -46,12 +90,13 @@ export function orbitAround(
   yaw: number,
   pitch: number,
   quaternion?: THREE.Quaternion,
+  maxPolar = MAX_POLAR,
 ): void {
   _offset.subVectors(camera, pivot);
   if (_offset.lengthSq() < 1e-12) _offset.copy(worldUp).multiplyScalar(1);
   _up.copy(worldUp).normalize();
   rotateAbout(_up, yaw, _offset, quaternion);
-  const delta = pitchDelta(polarOf(_offset, _up), pitch);
+  const delta = pitchDelta(polarOf(_offset, _up), pitch, maxPolar);
   if (delta !== 0) {
     pitchAxis(_offset, _up, quaternion ?? null);
     rotateAbout(_axis, delta, _offset, quaternion);
@@ -66,8 +111,9 @@ export function orbitCamera(
   worldUp: THREE.Vector3,
   yaw: number,
   pitch: number,
+  maxPolar = MAX_POLAR,
 ): void {
-  orbitAround(camera.position, pivot, worldUp, yaw, pitch, camera.quaternion);
+  orbitAround(camera.position, pivot, worldUp, yaw, pitch, camera.quaternion, maxPolar);
 }
 
 export function polarAngle(camera: THREE.Vector3, pivot: THREE.Vector3, worldUp: THREE.Vector3): number {
@@ -150,13 +196,40 @@ export function panInViewPlane(
   pivot.add(_right);
 }
 
-const RELEASE_DT_MIN = 1 / 240;
-const RELEASE_DT_MAX = 1 / 20;
+/**
+ * Slide the camera on the plane through `anchor` so that point stays under the cursor.
+ * Returns false when the ray is within 5° of the horizon, behind the camera, or too long.
+ */
+export function panOnPlane(
+  camera: THREE.Camera,
+  pivot: THREE.Vector3,
+  anchor: THREE.Vector3,
+  rayDir: THREE.Vector3,
+  up: THREE.Vector3,
+): boolean {
+  const slope = up.dot(rayDir);
+  if (slope > -0.087) return false;
+  _toAnchor.subVectors(anchor, camera.position);
+  const dist = _toAnchor.length();
+  const t = up.dot(_toAnchor) / slope;
+  if (t <= 0 || t > 6 * dist) return false;
+  _cursor.copy(camera.position).addScaledVector(rayDir, t);
+  _right.subVectors(anchor, _cursor);
+  const cap = 0.5 * dist;
+  const len = _right.length();
+  if (len > cap && len > 1e-12) _right.multiplyScalar(cap / len);
+  camera.position.add(_right);
+  pivot.add(_right);
+  return true;
+}
 
-/** One pointer sample of orbit release velocity. `dtMs` is clamped to 240–20 Hz. */
+const RELEASE_DT_MIN = 1 / 240;
+const RELEASE_DT_MAX = 1 / 10;
+
+/** One pointer sample of orbit release velocity. `dtMs` is clamped to 240–10 Hz. */
 export function blendReleaseVelocity(velocity: number, dtMs: number, angle: number): number {
   const dt = THREE.MathUtils.clamp(dtMs / 1000, RELEASE_DT_MIN, RELEASE_DT_MAX);
-  return THREE.MathUtils.lerp(velocity, angle / dt, 0.5);
+  return THREE.MathUtils.clamp(THREE.MathUtils.lerp(velocity, angle / dt, 0.5), -6, 6);
 }
 
 /** Release velocity after a stream of `{ dtMs, angle }` pointer samples. */
@@ -177,12 +250,12 @@ function polarOf(offset: THREE.Vector3, up: THREE.Vector3): number {
  * angle, so drag-down (positive pitch) moves the camera toward the up pole
  * and the clamp stops it just short of that pole.
  */
-function pitchDelta(polar: number, pitch: number): number {
+function pitchDelta(polar: number, pitch: number, maxPolar = MAX_POLAR): number {
   if (pitch === 0) return 0;
   const polarStep = -pitch;
   let clamped = polarStep;
   if (polar + polarStep < MIN_POLAR) clamped = Math.min(0, MIN_POLAR - polar);
-  else if (polar + polarStep > MAX_POLAR) clamped = Math.max(0, MAX_POLAR - polar);
+  else if (polar + polarStep > maxPolar) clamped = Math.max(0, maxPolar - polar);
   return -clamped;
 }
 
@@ -226,5 +299,5 @@ export function smoothstep(t: number): number {
 
 export function wheelNotches(deltaY: number, deltaMode: number): number {
   const pixels = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY;
-  return pixels / 100;
+  return pixels / 125;
 }

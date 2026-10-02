@@ -2,8 +2,11 @@ import * as THREE from 'three';
 import {
   blendReleaseVelocity,
   orbitCamera,
+  orbitDelta,
   panInViewPlane,
+  panOnPlane,
   smoothstep,
+  smoothZoomStep,
   upVector,
   wheelNotches,
   zoomToward,
@@ -13,13 +16,24 @@ export type NavMode = 'orbit' | 'fly';
 export type UpAxis = 'y' | 'z';
 export type UpMode = 'auto' | UpAxis;
 
+export type PickKind = 'surface' | 'ground' | 'none';
+
 export interface PickResult {
   point: THREE.Vector3;
   surface: boolean;
+  kind: PickKind;
 }
 
 const LOOK_LIMIT = Math.PI / 2 - 0.04;
-const INERTIA_DECAY = 5.2;
+const INERTIA_DECAY = 7;
+const PINCH_K = 0.01;
+const ZOOM_TAU = 0.07;
+
+/** Sky misses keep the orbit center. A surface or ground hit becomes the new pivot. */
+export function chooseOrbitPivot(hit: PickResult, currentPivot: THREE.Vector3): THREE.Vector3 {
+  if (hit.kind === 'none') return currentPivot;
+  return hit.point;
+}
 
 /**
  * Orbit around the point under the pointer, zoom toward the cursor, and pan
@@ -33,7 +47,7 @@ export class NavigationController {
   up: UpAxis = 'y';
   readonly pivot = new THREE.Vector3();
   pick: ((clientX: number, clientY: number, kind?: 'wheel') => PickResult | null) | null = null;
-  onPivot: ((point: THREE.Vector3 | null) => void) | null = null;
+  onPivot: ((point: THREE.Vector3 | null, kind?: PickKind) => void) | null = null;
 
   private readonly keys = new Set<string>();
   private readonly pointers = new Map<number, { x: number; y: number; type: string }>();
@@ -68,12 +82,21 @@ export class NavigationController {
   private readonly lookRight = new THREE.Vector3();
   private readonly armedPoint = new THREE.Vector3();
   private armed: 'orbit' | 'pan' | 'none' = 'none';
+  private armedKind: PickKind = 'none';
   private armX = 0;
   private armY = 0;
   private lastMoveTime = 0;
   private flyTouchCount = 0;
   private lastTap: { time: number; x: number; y: number } | null = null;
   private wheelCache: { x: number; y: number; time: number; hit: PickResult } | null = null;
+  private zoomPending = 0;
+  private readonly zoomAnchor = new THREE.Vector3();
+  private zoomSurface = false;
+  private pivotHideAt = 0;
+  private flat = false;
+  private maxPolar = Math.PI - 0.12;
+  private readonly cursorRay = new THREE.Vector3();
+  private readonly cursorNdc = new THREE.Vector3();
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -94,6 +117,10 @@ export class NavigationController {
   }
 
   setMode(mode: NavMode): void {
+    this.zoomPending = 0;
+    this.pivotHideAt = 0;
+    this.yawVel = 0;
+    this.pitchVel = 0;
     this.mode = mode;
     this.endDrag();
     this.animating = false;
@@ -109,7 +136,7 @@ export class NavigationController {
   }
 
   /** Instant frame used when a file finishes loading. */
-  frame(box: THREE.Box3): number {
+  frame(box: THREE.Box3, groundLevel?: number): number {
     upVector(this.up, this.worldUp);
     this.camera.up.copy(this.worldUp);
     const center = box.getCenter(new THREE.Vector3());
@@ -124,11 +151,17 @@ export class NavigationController {
     this.camera.updateProjectionMatrix();
     this.camera.up.copy(this.worldUp);
     this.pivot.copy(center);
+    this.flat = groundLevel !== undefined;
+    this.maxPolar = this.flat ? Math.PI / 2 + 0.05 : Math.PI - 0.12;
+    if (groundLevel !== undefined) {
+      if (this.up === 'z') this.pivot.z = groundLevel;
+      else this.pivot.y = groundLevel;
+    }
     this.lookAtPivot();
     this.speed = Math.max(radius * 0.65, 0.2);
     this.sceneRadius = radius;
     this.homeCamera.copy(this.camera.position);
-    this.homePivot.copy(center);
+    this.homePivot.copy(this.pivot);
     this.hasHome = true;
     this.animating = false;
     this.yawVel = 0;
@@ -165,6 +198,7 @@ export class NavigationController {
   /** True while a drag, coast, flight, or camera animation is changing the view. */
   isMoving(): boolean {
     if (this.animating || this.drag !== 'none') return true;
+    if (Math.abs(this.zoomPending) > 1e-3) return true;
     if (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4) return true;
     return this.mode === 'fly' && this.keys.size > 0;
   }
@@ -180,18 +214,21 @@ export class NavigationController {
       return;
     }
     if (this.mode === 'orbit') {
+      this.applyPendingZoom(dt);
       if (this.drag === 'none' && (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4)) {
         const remain = Math.hypot(this.yawVel, this.pitchVel) / INERTIA_DECAY;
         if (remain < 0.01) {
           this.yawVel = 0;
           this.pitchVel = 0;
+          if (!(this.pivotHideAt > performance.now())) this.onPivot?.(null);
           return;
         }
-        orbitCamera(this.camera, this.pivot, this.worldUp, this.yawVel * dt, this.pitchVel * dt);
+        orbitCamera(this.camera, this.pivot, this.worldUp, this.yawVel * dt, this.pitchVel * dt, this.maxPolar);
         const decay = Math.exp(-INERTIA_DECAY * dt);
         this.yawVel *= decay;
         this.pitchVel *= decay;
       }
+      this.hideWheelPivot();
       return;
     }
     this.updateFly(dt);
@@ -227,14 +264,17 @@ export class NavigationController {
     this.animToPivot.copy(pivot);
     this.animT = 0;
     this.animating = true;
+    this.zoomPending = 0;
+    this.pivotHideAt = 0;
     this.yawVel = 0;
     this.pitchVel = 0;
+    this.onPivot?.(null);
   }
 
   private query(clientX: number, clientY: number, kind?: 'wheel'): PickResult {
     const hit = this.pick?.(clientX, clientY, kind);
     if (hit) return hit;
-    return { point: this.pivot.clone(), surface: false };
+    return { point: this.pivot.clone(), surface: false, kind: 'none' };
   }
 
   private capture(pointerId: number): void {
@@ -246,10 +286,11 @@ export class NavigationController {
   }
 
   private endDrag(): void {
+    const coast = this.drag === 'orbit' && (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4);
     this.drag = 'none';
     this.armed = 'none';
     this.camera.quaternion.normalize();
-    this.onPivot?.(null);
+    if (!coast) this.onPivot?.(null);
   }
 
   private onContextMenu = (event: Event): void => {
@@ -259,6 +300,9 @@ export class NavigationController {
   private onPointerDown = (event: PointerEvent): void => {
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, type: event.pointerType });
     this.animating = false;
+    this.zoomPending = 0;
+    this.pivotHideAt = 0;
+    this.onPivot?.(null);
     if (this.mode === 'fly') {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       this.drag = 'fly';
@@ -316,7 +360,8 @@ export class NavigationController {
   private armDrag(kind: 'orbit' | 'pan', x: number, y: number): void {
     const hit = this.query(x, y);
     this.armed = kind;
-    this.armedPoint.copy(hit.point);
+    this.armedKind = hit.kind;
+    this.armedPoint.copy(kind === 'orbit' ? chooseOrbitPivot(hit, this.pivot) : hit.point);
     this.anchorSurface = hit.surface;
     this.armX = x;
     this.armY = y;
@@ -344,9 +389,10 @@ export class NavigationController {
         // The picked point becomes the orbit center. Looking at it would
         // swing the camera onto that point before the drag has moved.
         this.pivot.copy(this.armedPoint);
-        this.onPivot?.(this.pivot);
+        this.onPivot?.(this.pivot, this.armedKind);
       } else {
         this.anchor.copy(this.armedPoint);
+        this.onPivot?.(this.anchor, this.armedKind);
       }
       this.drag = this.armed === 'pan' ? 'pan' : 'orbit';
       this.lastX = this.armX;
@@ -358,16 +404,29 @@ export class NavigationController {
     this.lastY = event.clientY;
     if (dx === 0 && dy === 0) return;
     if (this.drag === 'orbit') {
-      const yaw = THREE.MathUtils.clamp(-dx * 0.0052 * this.sensitivity, -0.18, 0.18);
-      const pitch = THREE.MathUtils.clamp(dy * 0.0042 * this.sensitivity, -0.16, 0.16);
-      orbitCamera(this.camera, this.pivot, this.worldUp, yaw, pitch);
+      const { yaw, pitch } = orbitDelta(dx, dy, this.sensitivity);
+      orbitCamera(this.camera, this.pivot, this.worldUp, yaw, pitch, this.maxPolar);
       const dtMs = event.timeStamp - this.lastMoveTime;
       this.lastMoveTime = event.timeStamp;
       this.yawVel = blendReleaseVelocity(this.yawVel, dtMs, yaw);
       this.pitchVel = blendReleaseVelocity(this.pitchVel, dtMs, pitch);
       return;
     }
+    if (this.flat) {
+      const rayDir = this.unproject(event.clientX, event.clientY);
+      if (panOnPlane(this.camera, this.pivot, this.anchor, rayDir, this.worldUp)) return;
+    }
     panInViewPlane(this.camera, this.pivot, this.camera.fov, this.dom.clientHeight, dx, dy, this.anchor);
+  }
+
+  private unproject(clientX: number, clientY: number): THREE.Vector3 {
+    const rect = this.dom.getBoundingClientRect();
+    const ndcX = ((clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1;
+    const ndcY = -((clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1;
+    this.cursorNdc.set(ndcX, ndcY, 0.5);
+    this.camera.updateMatrixWorld();
+    this.cursorRay.copy(this.cursorNdc).unproject(this.camera).sub(this.camera.position).normalize();
+    return this.cursorRay;
   };
 
   private movePinch(): void {
@@ -424,13 +483,13 @@ export class NavigationController {
       return;
     }
     if (this.drag !== 'none' && (event.pointerId === this.dragId || this.pointers.size === 0)) {
-      const showInertia = this.drag === 'orbit';
       const stopped = event.timeStamp - this.lastMoveTime > 80;
-      this.endDrag();
-      if (!showInertia || stopped) {
+      const showInertia = this.drag === 'orbit' && !stopped;
+      if (!showInertia) {
         this.yawVel = 0;
         this.pitchVel = 0;
       }
+      this.endDrag();
     }
   };
 
@@ -445,19 +504,53 @@ export class NavigationController {
       return;
     }
     const hit = this.cachedWheelHit(event.clientX, event.clientY, event.timeStamp);
-    const notches = -wheelNotches(event.deltaY, event.deltaMode);
-    zoomToward(
-      this.camera.position,
-      this.pivot,
-      hit.point,
-      notches,
-      this.sensitivity,
-      this.minDistance(),
-      hit.surface,
-    );
+    this.zoomAnchor.copy(hit.point);
+    this.zoomSurface = hit.surface;
+    this.onPivot?.(this.zoomAnchor, hit.kind);
+    this.pivotHideAt = performance.now() + 350;
+    if (event.ctrlKey && event.deltaMode === 0) {
+      const notches = (-event.deltaY * PINCH_K) / (0.38 * this.sensitivity);
+      zoomToward(
+        this.camera.position,
+        this.pivot,
+        this.zoomAnchor,
+        notches,
+        this.sensitivity,
+        this.minDistance(),
+        this.zoomSurface,
+      );
+    } else {
+      this.zoomPending += -wheelNotches(event.deltaY, event.deltaMode);
+    }
     this.yawVel = 0;
     this.pitchVel = 0;
   };
+
+  private applyPendingZoom(dt: number): void {
+    if (Math.abs(this.zoomPending) <= 1e-3) {
+      this.zoomPending = 0;
+      return;
+    }
+    const step = smoothZoomStep(this.zoomPending, dt, ZOOM_TAU);
+    zoomToward(
+      this.camera.position,
+      this.pivot,
+      this.zoomAnchor,
+      step,
+      this.sensitivity,
+      this.minDistance(),
+      this.zoomSurface,
+    );
+    this.zoomPending -= step;
+    if (Math.abs(this.zoomPending) < 1e-3) this.zoomPending = 0;
+  }
+
+  private hideWheelPivot(): void {
+    if (this.pivotHideAt <= 0 || performance.now() < this.pivotHideAt || this.drag !== 'none') return;
+    if (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4) return;
+    this.pivotHideAt = 0;
+    this.onPivot?.(null);
+  }
 
   private onDoubleClick = (event: MouseEvent): void => {
     if (this.mode !== 'orbit') return;

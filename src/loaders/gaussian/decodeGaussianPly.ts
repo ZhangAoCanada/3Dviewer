@@ -1,5 +1,5 @@
 import type { ByteSource } from '../../core/byteSource';
-import type { MemoryBudget } from '../../core/types';
+import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
 import {
   paddedSplatCount,
   planGaussianDecode,
@@ -163,6 +163,7 @@ export interface DecodeGaussianOptions {
   signal?: AbortSignal;
   onProgress?: (progress: DecodeProgress) => void;
   limits?: SplatEncodingLimits;
+  overrides?: GaussianLoadOverrides;
 }
 
 export interface DecodedGaussian {
@@ -258,6 +259,7 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     sourceSh: header.sourceSh,
     budget: options.budget,
     preferExtended: options.preferExtended,
+    overrides: options.overrides,
   });
   if (plan.decodedCount <= 0) {
     throw new GaussianPlyError('Gaussian PLY contains no splats.');

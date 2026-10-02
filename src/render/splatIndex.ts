@@ -3,10 +3,14 @@ import * as THREE from 'three';
 import { halfToFloat } from './coarseSurface';
 import { isSplatObject } from './scenePick';
 
-const MAX_AXIS = 160;
+const MAX_AXIS = 1024;
 const NEAR_PIXELS = 3.5;
 const FAR_PIXELS = 14;
 const MAX_TESTS = 100_000;
+const MIN_PICK_OPACITY = 0.1;
+const MIN_SUPPORT = 3;
+const CANDIDATE_CAP = 2048;
+const INDEX_CHUNK = 8_000;
 
 const HALF = new Float32Array(65536);
 for (let i = 0; i < 65536; i += 1) HALF[i] = halfToFloat(i);
@@ -18,6 +22,8 @@ interface IndexSource {
   matrix: Float64Array | null;
   packed?: Uint32Array;
   ext?: Float32Array;
+  /** Uint32 view of `ext`, so word 3 keeps the half-float opacity bits. */
+  extBits?: Uint32Array;
   positions?: { getX(index: number): number; getY(index: number): number; getZ(index: number): number };
 }
 
@@ -30,6 +36,9 @@ export class SplatIndex {
   readonly count: number;
   private readonly seen: Uint32Array;
   private stamp = 1;
+
+  private readonly candT = new Float64Array(CANDIDATE_CAP);
+  private readonly candNear = new Uint8Array(CANDIDATE_CAP);
 
   constructor(
     private readonly sources: IndexSource[],
@@ -52,16 +61,16 @@ export class SplatIndex {
     return this.nx * this.ny * this.nz;
   }
 
-  static fromPositions(positions: Float32Array, box?: THREE.Box3): SplatIndex {
-    const count = Math.floor(positions.length / 3);
-    const attribute = new THREE.BufferAttribute(positions, 3);
-    const source: IndexSource = { count, base: 0, matrix: null, positions: attribute };
+  static fromPositions(positions: Float32Array, box?: THREE.Box3, maxCells?: number): SplatIndex {
+    return finishJob(SplatIndexJob.fromPositions(positions, box, maxCells));
+  }
+
+  /** Packed RGBA word 0, half-float centers. Used by the opacity pick test. */
+  static fromPacked(packed: Uint32Array, box?: THREE.Box3, maxCells?: number): SplatIndex {
+    const count = Math.floor(packed.length / 4);
+    const source: IndexSource = { count, base: 0, matrix: null, packed };
     const bounds = box ?? boundsOf(source);
-    const job = new SplatIndexJob([source], bounds);
-    job.pump(1e9);
-    const index = job.finish();
-    if (!index) throw new Error('Splat index did not finish');
-    return index;
+    return finishJob(new SplatIndexJob([source], bounds, maxCells));
   }
 
   /**
@@ -76,6 +85,7 @@ export class SplatIndex {
     fov: number,
     viewHeight: number,
     target: THREE.Vector3,
+    minSupport = MIN_SUPPORT,
   ): boolean {
     const dx = direction.x;
     const dy = direction.y;
@@ -106,25 +116,36 @@ export class SplatIndex {
 
     let bestNear = Infinity;
     let bestFar = Infinity;
+    let supportedNear = Infinity;
+    let supportedFar = Infinity;
+    let stopT = Infinity;
+    let candCount = 0;
     let tests = 0;
-    // Stop at the closest center that actually lies under the cursor pixel.
-    // A nearer center a few pixels away must not hide that surface.
-    const limit = () => (Number.isFinite(bestNear) ? bestNear : Infinity);
-    const consider = (index: number) => {
-      if (!worldOf(this.sources, index)) return;
+    const worldPerPixelAt = (t: number) => pixelScale * Math.max(1e-3, t * Math.abs(forwardDot));
+    const widthAt = (t: number) => Math.max(0.02 * t, 2 * FAR_PIXELS * worldPerPixelAt(t));
+    const consider = (index: number): boolean => {
+      const located = locate(this.sources, index);
+      if (!located) return false;
+      if (opacityOf(located.source, located.local) < MIN_PICK_OPACITY) return false;
       const vx = placed.x - ox;
       const vy = placed.y - oy;
       const vz = placed.z - oz;
       const t = vx * dirX + vy * dirY + vz * dirZ;
-      if (t < 1e-3 || t > limit()) return;
+      if (t < 1e-3 || t > stopT) return false;
       const perpX = vx - dirX * t;
       const perpY = vy - dirY * t;
       const perpZ = vz - dirZ * t;
       const perp2 = perpX * perpX + perpY * perpY + perpZ * perpZ;
-      const viewZ = Math.max(1e-3, t * Math.abs(forwardDot));
-      const worldPerPixel = pixelScale * viewZ;
-      if (perp2 <= (worldPerPixel * NEAR_PIXELS) ** 2 && t < bestNear) bestNear = t;
-      if (perp2 <= (worldPerPixel * FAR_PIXELS) ** 2 && t < bestFar) bestFar = t;
+      const worldPerPixel = worldPerPixelAt(t);
+      const near = perp2 <= (worldPerPixel * NEAR_PIXELS) ** 2;
+      if (perp2 > (worldPerPixel * FAR_PIXELS) ** 2) return false;
+      if (near && t < bestNear) bestNear = t;
+      if (t < bestFar) bestFar = t;
+      if (candCount >= CANDIDATE_CAP) return false;
+      this.candT[candCount] = t;
+      this.candNear[candCount] = near ? 1 : 0;
+      candCount += 1;
+      return true;
     };
 
     let tEnter = Math.max(span.tNear, 0);
@@ -146,12 +167,15 @@ export class SplatIndex {
     const maxSteps = this.nx + this.ny + this.nz + 4;
 
     for (let step = 0; step < maxSteps; step += 1) {
-      if (tEnter > limit()) break;
+      if (tEnter > stopT) break;
       let stop = false;
+      let added = false;
       for (let ozCell = -1; ozCell <= 1 && !stop; ozCell += 1) {
         for (let oyCell = -1; oyCell <= 1 && !stop; oyCell += 1) {
           for (let oxCell = -1; oxCell <= 1; oxCell += 1) {
-            tests = this.visit(ix + oxCell, iy + oyCell, iz + ozCell, consider, tests);
+            const visit = this.visit(ix + oxCell, iy + oyCell, iz + ozCell, consider, tests);
+            tests = visit.tests;
+            if (visit.added) added = true;
             if (tests >= MAX_TESTS) {
               stop = true;
               break;
@@ -159,7 +183,14 @@ export class SplatIndex {
           }
         }
       }
-      if (stop || tEnter > limit()) break;
+      if (added && candCount >= minSupport) {
+        const resolved = resolveSupport(this.candT, this.candNear, candCount, widthAt, minSupport);
+        supportedNear = resolved.nearT;
+        supportedFar = resolved.farT;
+        const bestSupported = Number.isFinite(supportedNear) ? supportedNear : supportedFar;
+        if (Number.isFinite(bestSupported)) stopT = bestSupported + widthAt(bestSupported);
+      }
+      if (stop || tEnter > stopT) break;
       if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
         ix += stepX;
         if (ix < 0 || ix >= this.nx) break;
@@ -179,7 +210,13 @@ export class SplatIndex {
       if (tEnter > span.tFar + this.cell) break;
     }
 
-    const t = Number.isFinite(bestNear) ? bestNear : bestFar;
+    const t = Number.isFinite(supportedNear)
+      ? supportedNear
+      : Number.isFinite(supportedFar)
+        ? supportedFar
+        : Number.isFinite(bestNear)
+          ? bestNear
+          : bestFar;
     if (!Number.isFinite(t)) return false;
     target.set(ox + dirX * t, oy + dirY * t, oz + dirZ * t);
     return true;
@@ -189,22 +226,32 @@ export class SplatIndex {
     ix: number,
     iy: number,
     iz: number,
-    consider: (globalIndex: number) => void,
+    consider: (globalIndex: number) => boolean,
     tests: number,
-  ): number {
-    if (ix < 0 || iy < 0 || iz < 0 || ix >= this.nx || iy >= this.ny || iz >= this.nz) return tests;
+  ): { tests: number; added: boolean } {
+    if (ix < 0 || iy < 0 || iz < 0 || ix >= this.nx || iy >= this.ny || iz >= this.nz) {
+      return { tests, added: false };
+    }
     const key = ix + this.nx * (iy + this.ny * iz);
-    if (this.seen[key] === this.stamp) return tests;
+    if (this.seen[key] === this.stamp) return { tests, added: false };
     this.seen[key] = this.stamp;
     const start = this.offsets[key] ?? 0;
     const end = this.offsets[key + 1] ?? start;
+    let added = false;
     for (let i = start; i < end; i += 1) {
-      consider(this.indices[i] ?? 0);
+      if (consider(this.indices[i] ?? 0)) added = true;
       tests += 1;
-      if (tests >= MAX_TESTS) return tests;
+      if (tests >= MAX_TESTS) return { tests, added };
     }
-    return tests;
+    return { tests, added };
   }
+}
+
+function finishJob(job: SplatIndexJob): SplatIndex {
+  job.pump(1e9);
+  const index = job.finish();
+  if (!index) throw new Error('Splat index did not finish');
+  return index;
 }
 
 /** Builds the index a few milliseconds at a time so a 14M cloud does not hitch. */
@@ -220,13 +267,18 @@ export class SplatIndexJob {
   private offsets: Uint32Array | null = null;
   private indices: Uint32Array | null = null;
   private cursor: Uint32Array | null = null;
+  private readonly total: number;
+  private histDone = 0;
+  private fillDone = 0;
 
   constructor(
     private readonly sources: IndexSource[],
     box: THREE.Box3,
+    maxCells?: number,
   ) {
     const size = box.getSize(new THREE.Vector3());
-    const grid = gridFor(size, sources.reduce((sum, source) => sum + source.count, 0));
+    this.total = sources.reduce((sum, source) => sum + source.count, 0);
+    const grid = gridFor(size, this.total, maxCells);
     this.cell = grid.cell;
     this.nx = grid.nx;
     this.ny = grid.ny;
@@ -237,6 +289,14 @@ export class SplatIndexJob {
     this.minZ = box.min.z;
   }
 
+  static fromPositions(positions: Float32Array, box?: THREE.Box3, maxCells?: number): SplatIndexJob {
+    const count = Math.floor(positions.length / 3);
+    const attribute = new THREE.BufferAttribute(positions, 3);
+    const source: IndexSource = { count, base: 0, matrix: null, positions: attribute };
+    const bounds = box ?? boundsOf(source);
+    return new SplatIndexJob([source], bounds, maxCells);
+  }
+
   private readonly minX: number;
   private readonly minY: number;
   private readonly minZ: number;
@@ -245,13 +305,21 @@ export class SplatIndexJob {
     return this.phase === 'done';
   }
 
-  /** Returns true when the index is ready. */
+  /** Histogram and fill are weighted equally, so a finished job is 1. */
+  get progress(): number {
+    if (this.phase === 'done' || this.total <= 0) return 1;
+    return (this.histDone + this.fillDone) / (2 * this.total);
+  }
+
+  /** Returns true when the index is ready. Each loop step is one chunk. */
   pump(budgetMs: number): boolean {
-    const end = performance.now() + Math.max(0.05, budgetMs);
-    while (performance.now() < end && this.phase !== 'done') {
-      if (this.phase === 'hist') this.pumpHist(end);
+    const start = performance.now();
+    const budget = Math.max(0, budgetMs);
+    while (this.phase !== 'done') {
+      if (this.phase === 'hist') this.stepHist();
       else if (this.phase === 'prefix') this.prefix();
-      else this.pumpFill(end);
+      else this.stepFill();
+      if (performance.now() - start >= budget) break;
     }
     return this.phase === 'done';
   }
@@ -272,23 +340,24 @@ export class SplatIndexJob {
     );
   }
 
-  private pumpHist(end: number): void {
-    const { sources } = this;
-    while (performance.now() < end && this.sourceCursor < sources.length) {
-      const source = sources[this.sourceCursor];
-      if (!source) break;
-      const stop = Math.min(source.count, this.localCursor + 24_000);
-      for (let i = this.localCursor; i < stop; i += 1) {
-        const cell = this.cellOf(source, i);
-        if (cell >= 0) this.hist[cell] += 1;
-      }
-      this.localCursor = stop;
-      if (this.localCursor >= source.count) {
-        this.sourceCursor += 1;
-        this.localCursor = 0;
-      }
+  private stepHist(): void {
+    const source = this.sources[this.sourceCursor];
+    if (!source) {
+      this.phase = 'prefix';
+      return;
     }
-    if (this.sourceCursor >= sources.length) this.phase = 'prefix';
+    const stop = Math.min(source.count, this.localCursor + INDEX_CHUNK);
+    for (let i = this.localCursor; i < stop; i += 1) {
+      const cell = this.cellOf(source, i);
+      if (cell >= 0) this.hist[cell] += 1;
+    }
+    this.histDone += stop - this.localCursor;
+    this.localCursor = stop;
+    if (this.localCursor >= source.count) {
+      this.sourceCursor += 1;
+      this.localCursor = 0;
+    }
+    if (this.sourceCursor >= this.sources.length) this.phase = 'prefix';
   }
 
   private prefix(): void {
@@ -308,28 +377,30 @@ export class SplatIndexJob {
     this.phase = sum === 0 ? 'done' : 'fill';
   }
 
-  private pumpFill(end: number): void {
+  private stepFill(): void {
     const { sources, indices, cursor } = this;
     if (!indices || !cursor) {
       this.phase = 'done';
       return;
     }
-    while (performance.now() < end && this.sourceCursor < sources.length) {
-      const source = sources[this.sourceCursor];
-      if (!source) break;
-      const stop = Math.min(source.count, this.localCursor + 24_000);
-      for (let i = this.localCursor; i < stop; i += 1) {
-        const cell = this.cellOf(source, i);
-        if (cell < 0) continue;
-        const slot = cursor[cell] ?? 0;
-        indices[slot] = source.base + i;
-        cursor[cell] = slot + 1;
-      }
-      this.localCursor = stop;
-      if (this.localCursor >= source.count) {
-        this.sourceCursor += 1;
-        this.localCursor = 0;
-      }
+    const source = sources[this.sourceCursor];
+    if (!source) {
+      this.phase = 'done';
+      return;
+    }
+    const stop = Math.min(source.count, this.localCursor + INDEX_CHUNK);
+    for (let i = this.localCursor; i < stop; i += 1) {
+      const cell = this.cellOf(source, i);
+      if (cell < 0) continue;
+      const slot = cursor[cell] ?? 0;
+      indices[slot] = source.base + i;
+      cursor[cell] = slot + 1;
+    }
+    this.fillDone += stop - this.localCursor;
+    this.localCursor = stop;
+    if (this.localCursor >= source.count) {
+      this.sourceCursor += 1;
+      this.localCursor = 0;
     }
     if (this.sourceCursor >= sources.length) this.phase = 'done';
   }
@@ -369,7 +440,13 @@ function sourceFrom(object: THREE.Object3D): IndexSource | null {
     const extCount = ext ? ext.length / 4 : 0;
     const count = object.numSplats || packedCount || extCount;
     if (ext) {
-      return { count, base: 0, matrix, ext: new Float32Array(ext.buffer, ext.byteOffset, ext.length) };
+      return {
+        count,
+        base: 0,
+        matrix,
+        ext: new Float32Array(ext.buffer, ext.byteOffset, ext.length),
+        extBits: new Uint32Array(ext.buffer, ext.byteOffset, ext.length),
+      };
     }
     if (packed) return { count, base: 0, matrix, packed };
     return null;
@@ -382,11 +459,21 @@ function sourceFrom(object: THREE.Object3D): IndexSource | null {
   return { count: positions.count, base: 0, matrix, positions };
 }
 
-function worldOf(sources: IndexSource[], globalIndex: number): boolean {
+function locate(sources: IndexSource[], globalIndex: number): { source: IndexSource; local: number } | null {
   for (const source of sources) {
-    if (globalIndex < source.base + source.count) return readWorld(source, globalIndex - source.base);
+    if (globalIndex < source.base + source.count) {
+      const local = globalIndex - source.base;
+      if (!readWorld(source, local)) return null;
+      return { source, local };
+    }
   }
-  return false;
+  return null;
+}
+
+function opacityOf(source: IndexSource, local: number): number {
+  if (source.packed) return ((source.packed[local * 4] ?? 0) >>> 24) / 255;
+  if (source.extBits) return HALF[(source.extBits[local * 4 + 3] ?? 0) & 65535] ?? 0;
+  return 1;
 }
 
 function readWorld(source: IndexSource, local: number): boolean {
@@ -474,14 +561,18 @@ function axisCount(size: number, cell: number): number {
   return Math.max(1, Math.min(MAX_AXIS, Math.ceil(Math.max(size, 1e-4) / cell)));
 }
 
-/** `cells ≤ max(4096, count / 8)`, with each axis still clamped to `MAX_AXIS`. */
-function gridFor(size: THREE.Vector3, count: number): { cell: number; nx: number; ny: number; nz: number } {
-  const maxCells = Math.max(4096, count / 8);
+/** `cells ≤ max(4096, count / 8)`, and `n * cell` covers every axis. */
+export function gridFor(
+  size: THREE.Vector3,
+  count: number,
+  maxCells = Math.max(4096, count / 8),
+): { cell: number; nx: number; ny: number; nz: number } {
   const sx = Math.max(size.x, 1e-4);
   const sy = Math.max(size.y, 1e-4);
   const sz = Math.max(size.z, 1e-4);
   let cell = Math.cbrt((sx * sy * sz) / maxCells);
   if (!Number.isFinite(cell) || cell <= 0) cell = Math.max(sx, sy, sz) / MAX_AXIS;
+  cell = Math.max(cell, Math.max(sx, sy, sz) / MAX_AXIS);
   let nx = axisCount(sx, cell);
   let ny = axisCount(sy, cell);
   let nz = axisCount(sz, cell);
@@ -492,6 +583,59 @@ function gridFor(size: THREE.Vector3, count: number): { cell: number; nx: number
     nz = axisCount(sz, cell);
   }
   return { cell, nx, ny, nz };
+}
+
+function resolveSupport(
+  values: Float64Array,
+  near: Uint8Array,
+  n: number,
+  widthAt: (depth: number) => number,
+  minSupport: number,
+): { nearT: number; farT: number } {
+  const order = new Array<number>(n);
+  for (let i = 0; i < n; i += 1) order[i] = i;
+  order.sort((a, b) => (values[a] ?? 0) - (values[b] ?? 0));
+  const depth = new Float64Array(n);
+  const flags = new Uint8Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const src = order[i] ?? 0;
+    depth[i] = values[src] ?? 0;
+    flags[i] = near[src] ?? 0;
+  }
+  let nearT = Infinity;
+  let farT = Infinity;
+  for (let i = 0; i < n; i += 1) {
+    const ti = depth[i] ?? 0;
+    const w = widthAt(ti);
+    const count = upperBound(depth, n, ti + w) - lowerBound(depth, n, ti - w);
+    if (count < minSupport) continue;
+    if (flags[i] === 1 && ti < nearT) nearT = ti;
+    if (ti < farT) farT = ti;
+    if (Number.isFinite(nearT)) break;
+  }
+  return { nearT, farT };
+}
+
+function lowerBound(values: Float64Array, n: number, bound: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((values[mid] ?? 0) < bound) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function upperBound(values: Float64Array, n: number, bound: number): number {
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((values[mid] ?? 0) <= bound) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function clampIndex(value: number, size: number): number {

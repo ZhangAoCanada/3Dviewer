@@ -2,7 +2,9 @@
 
 ## Status
 
-Not started. This plan covers two complaints from the owner's test on desktop Chrome with a 3.3 GB, 14,161,020-splat SH3 drone scan (EPSG:4547, Z-up, flat, about 590 × 490 × 77 m). The planner chose extended SH2 (about 1.07 GB) with no LoD, and the view ran at about 26 fps.
+Batch 1 is done. Batch 2 is not started: it waits for the owner's measurements in `BENCHMARK.md`.
+
+This plan covers two complaints from the owner's test on desktop Chrome with a 3.3 GB, 14,161,020-splat SH3 drone scan (EPSG:4547, Z-up, flat, about 590 × 490 × 77 m). The planner chose extended SH2 (about 1.07 GB) with no LoD, and the view ran at about 26 fps.
 
 1. **Drag "sometimes feels off"**: how the pivot is chosen and how the drag moves the camera.
 2. **Fast drags take about a second to "catch up"**, with visible 3DGS artifacts in the meantime.
@@ -309,16 +311,16 @@ Two further facts the planner must respect:
 
 | Task | Area | Priority | Batch |
 |---|---|---|---|
-| 1.1 Pick grid covers the whole scene | Pivot, pan, and zoom anchors | P0 | 1 |
-| 1.2 Floater-resistant pick | Pivot | P1 | 1 |
-| 1.3 Ground plane on flat scenes, keep pivot on sky | Pivot jumps | P1 | 1 |
-| 1.4 Remove the per-event orbit clamp | Drag tracking at low fps | P1 | 1 |
-| 1.5 Terrain pitch floor | Orbit | P2 | 1 |
-| 1.6 Inertia 7, smoothed wheel, pinch gain | Damping and zoom | P1 | 1 |
-| 1.7 Ground-grab pan on flat scenes | Pan | P1 | 1 |
-| 1.8 Pivot ring feedback | Feedback | P2 | 1 |
-| 1.9 Faster pick-index build | Pick consistency | P2 | 1 |
-| 1.10 Sort timer, LoD overrides, `lodCount` | Measurement (audit 2.2 step 1) | P1 | 1 |
+| [x] 1.1 Pick grid covers the whole scene | Pivot, pan, and zoom anchors | P0 | 1 |
+| [x] 1.2 Floater-resistant pick | Pivot | P1 | 1 |
+| [x] 1.3 Ground plane on flat scenes, keep pivot on sky | Pivot jumps | P1 | 1 |
+| [x] 1.4 Remove the per-event orbit clamp | Drag tracking at low fps | P1 | 1 |
+| [x] 1.5 Terrain pitch floor | Orbit | P2 | 1 |
+| [x] 1.6 Inertia 7, smoothed wheel, pinch gain | Damping and zoom | P1 | 1 |
+| [x] 1.7 Ground-grab pan on flat scenes | Pan | P1 | 1 |
+| [x] 1.8 Pivot ring feedback | Feedback | P2 | 1 |
+| [x] 1.9 Faster pick-index build | Pick consistency | P2 | 1 |
+| [x] 1.10 Sort timer, LoD overrides, `lodCount` | Measurement (audit 2.2 step 1) | P1 | 1 |
 | 2.1 LoD-first planner with the measured factor | Motion artifacts | P1 | 2 |
 | 2.2 Large scenes setting | Motion artifacts | P1 | 2 |
 | 2.3 Motion LoD budget (optional) | Motion artifacts | P2 | 2 |
