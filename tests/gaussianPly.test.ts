@@ -275,7 +275,9 @@ describe('planGaussianDecode', () => {
       hardwareConcurrency: 8,
       maxTouchPoints: 0,
     });
-    const sourceCount = 7_900_000;
+    // 4,000,000 extended SH3 pads to one 2048² layer. Twice that still fits in
+    // cpuBytes * 0.85, which is the check that used to turn LoD on.
+    const sourceCount = 4_000_000;
     const base = {
       sourceCount,
       sourceSh: 3 as const,
@@ -285,7 +287,7 @@ describe('planGaussianDecode', () => {
     const plan = planGaussianDecode(base);
     expect(plan.decodedCount).toBe(sourceCount);
     expect(plan.stride).toBe(1);
-    expect(plan.shDegree).toBeGreaterThanOrEqual(2);
+    expect(plan.shDegree).toBe(3);
     expect(plan.estimatedBytes * 2).toBeLessThanOrEqual(budget.cpuBytes * 0.85);
     expect(plan.lod).toBe(false);
     expect(plan.notes.join(' ')).not.toMatch(/level of detail/i);
@@ -295,6 +297,27 @@ describe('planGaussianDecode', () => {
     expect(forced.decodedCount).toBe(plan.decodedCount);
     expect(forced.shDegree).toBe(plan.shDegree);
     expect(forced.extended).toBe(plan.extended);
+
+    const mid = planGaussianDecode({
+      sourceCount: 7_900_000,
+      sourceSh: 3,
+      budget,
+      preferExtended: true,
+    });
+    expect(mid.decodedCount).toBe(7_900_000);
+    expect(mid.stride).toBe(1);
+    expect(mid.shDegree).toBeGreaterThanOrEqual(2);
+    expect(mid.lod).toBe(false);
+    const midForced = planGaussianDecode({
+      sourceCount: 7_900_000,
+      sourceSh: 3,
+      budget,
+      preferExtended: true,
+      overrides: { forceLod: true },
+    });
+    expect(midForced.lod).toBe(true);
+    expect(midForced.shDegree).toBe(mid.shDegree);
+    expect(midForced.decodedCount).toBe(mid.decodedCount);
 
     const below = planGaussianDecode({
       sourceCount: LOD_ABOVE - 1,
