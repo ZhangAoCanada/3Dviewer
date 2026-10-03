@@ -1,39 +1,72 @@
+import { collectDiagnostics, formatReport, type LoadDiag } from '../core/diagnostics';
 import { presentEpsg } from '../core/epsg';
+import {
+  classifyFailure,
+  crashBreadcrumbFailure,
+  GraphicsUnavailableError,
+  LoadStalledError,
+  type Failure,
+} from '../core/loadFailure';
 import { detectMemoryBudget } from '../core/memoryBudget';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
 import { readProbe, sourceFromFile, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
+  type AssetOrigin,
   type AssetSource,
   type GaussianLoadOverrides,
   type LoadProgress,
+  type MemoryBudget,
+  type Renderable,
   type RenderSettings,
   type ShadingMode,
 } from '../core/types';
 import { createDefaultRegistry } from '../loaders';
 import type { FrameStats } from '../render/SceneHost';
 import { SceneHost } from '../render/SceneHost';
-import type { NavMode } from '../render/Navigation';
+import type { NavMode, NavSnapshot, UpMode } from '../render/Navigation';
 import { isTypingTarget } from '../render/Navigation';
-import { explainLoadError } from '../loaders/gaussian/explainLoadError';
 import { createDemoSlab } from '../render/demoSlab';
 import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
 import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
 import { bindMenu } from '../ui/menu';
+import { renderProblem, supportedFormats } from '../ui/problem';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
+const INFLIGHT_KEY = '3dviewer-inflight';
+const INFLIGHT_MAX_AGE = 24 * 60 * 60 * 1000;
+const LARGE_BYTES = 64 * 1024 * 1024;
+const SOFTWARE_TOAST =
+  'Graphics are running in software mode, so large scenes will be slow. Turn on hardware acceleration in your browser settings.';
+
+interface InflightRecord {
+  name: string;
+  size: number | null;
+  origin: AssetOrigin;
+  url?: string;
+  at: number;
+}
+
+interface ToastAction {
+  label: string;
+  run: () => void;
+}
 
 export class ViewerApp {
-  private readonly host: SceneHost;
+  private host: SceneHost | null = null;
   private readonly registry = createDefaultRegistry();
+  private readonly budget: MemoryBudget;
   private readonly settings: RenderSettings;
   private generation = 0;
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
+  private toastAction: ToastAction | null = null;
   private lastSource: AssetSource | null = null;
   private loadingSource: AssetSource | null = null;
+  private failureSource: AssetSource | null = null;
+  private lastError: unknown = null;
   private loadingStage: LoadProgress['stage'] | null = null;
   private loadingStarted = 0;
   private elapsedTimer = 0;
@@ -44,38 +77,26 @@ export class ViewerApp {
   private readonly menus: { button: HTMLButtonElement; menu: HTMLElement; close: () => void }[] = [];
   /** Captured once from the page URL so later `history.replaceState` calls keep it. */
   private readonly gaussianOverrides = readGaussianOverrides();
+  private savedUp: UpMode | null = null;
+  private savedSensitivity: number | null = null;
+  private graphicsFailure: Failure | null = null;
+  private crashEntry: InflightRecord | null = null;
+  private showingBreadcrumb = false;
+  private reloadGraphics = false;
+  private surface: 'empty' | 'problem' | 'none' = 'none';
+  private bootFinishedWithoutGraphics = false;
+  private pendingLowerMemory = false;
+  private softwareNotified = false;
+  private contextTimer = 0;
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
     if (!canvas) throw new Error('Missing viewport canvas');
-    const budget = detectMemoryBudget();
+    this.budget = detectMemoryBudget();
     this.settings = {
       ...DEFAULT_SETTINGS,
-      shDegree: budget.maxSh,
+      shDegree: this.budget.maxSh,
     };
-    this.host = new SceneHost(canvas, budget);
-    this.host.onContextLost = () => {
-      this.toast('The GPU reset. Reloading the scene…', 'warn');
-    };
-    this.host.onContextRestored = () => {
-      const source = this.lastSource;
-      this.host.clear();
-      this.renderSceneInfo();
-      if (!source || (source.origin === 'url' && source.sizeBytes == null)) {
-        this.setEmpty(true);
-        if (source) {
-          this.toast(
-            'The GPU reset. This scene came from a URL of unknown size, so it was not reloaded. Open it again if you still need it. A multi-gigabyte file can take several minutes.',
-            'warn',
-          );
-        }
-        return;
-      }
-      this.toast('The GPU reset. Reloading the scene… A multi-gigabyte file can take several minutes.', 'warn');
-      void this.load(source);
-    };
-    this.host.setBackground(this.canvasColor());
-    this.host.applySettings(this.settings);
     bindRangeFills(document);
     this.syncControls();
     this.restoreNavPrefs();
@@ -83,14 +104,50 @@ export class ViewerApp {
     this.syncThemeButton();
     this.applyHudPref();
     this.renderSceneInfo();
-    this.renderPerf(this.host.stats());
-    this.host.start((stats) => this.renderPerf(stats));
+    this.crashEntry = readInflight();
+    window.addEventListener('pagehide', () => this.clearInflight());
     // The stylesheet arrives with this module. Arm the drawer-clearance
     // transition only after the first paint, or the toolbar slides in.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => document.body.classList.add('chrome-ready'));
     });
-    void this.boot();
+  }
+
+  private get items(): readonly Renderable[] {
+    return this.host?.items ?? [];
+  }
+
+  /** Create the WebGL scene. The shell is already wired. Returns false when graphics are unavailable. */
+  initGraphics(): boolean {
+    if (this.host) return true;
+    const canvas = document.querySelector<HTMLCanvasElement>('#view');
+    if (!canvas) throw new Error('Missing viewport canvas');
+    try {
+      const host = new SceneHost(canvas, this.budget);
+      host.onContextLost = () => this.onGpuLost();
+      host.onContextRestored = () => this.onGpuRestored();
+      host.setBackground(this.canvasColor());
+      host.applySettings(this.settings);
+      this.applyNavPrefs(host);
+      this.host = host;
+      document.body.classList.remove('no-graphics');
+      host.start((stats) => this.renderPerf(stats));
+      this.renderPerf(host.stats());
+      this.maybeWarnSoftware(host);
+      this.graphicsFailure = null;
+      if (this.crashEntry) this.showBreadcrumb();
+      else if (this.surface === 'problem') this.setSurface('none');
+      if (this.bootFinishedWithoutGraphics) void this.boot();
+      return true;
+    } catch (error) {
+      this.host = null;
+      document.body.classList.add('no-graphics');
+      must('#loading').hidden = true;
+      this.lastError = error;
+      this.graphicsFailure = classifyFailure(error);
+      this.showProblem(this.graphicsFailure);
+      return false;
+    }
   }
 
   private canvasColor(): string {
@@ -99,16 +156,32 @@ export class ViewerApp {
 
   private bind(): void {
     const fileInput = must<HTMLInputElement>('#file-input');
-    const open = () => fileInput.click();
+    const open = () => {
+      if (!this.host) {
+        if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+        return;
+      }
+      this.pendingLowerMemory = false;
+      fileInput.click();
+    };
     must('#open-btn').addEventListener('click', open);
     must('#empty-open').addEventListener('click', open);
     fileInput.addEventListener('change', () => {
       const file = fileInput.files?.[0];
       fileInput.value = '';
-      if (file) {
-        this.setQuery(null);
-        void this.load(sourceFromFile(file));
+      if (!file) return;
+      if (!this.host) {
+        if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+        return;
       }
+      const source = sourceFromFile(file);
+      const lowerMemory = this.pendingLowerMemory;
+      this.pendingLowerMemory = false;
+      this.setQuery(null);
+      void this.load(source, {
+        lowerMemory,
+        restore: lowerMemory ? this.snapshotForRetry(source) : null,
+      });
     });
 
     must('#empty-sample').addEventListener('click', () => {
@@ -141,7 +214,7 @@ export class ViewerApp {
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
     must('#focus-btn').addEventListener('click', () => this.focusCenter());
-    must('#reset-btn').addEventListener('click', () => this.host.resetView());
+    must('#reset-btn').addEventListener('click', () => this.host?.resetView());
     must('#theme-btn').addEventListener('click', () => this.toggleTheme());
     must('#panel-btn').addEventListener('click', () => this.togglePanel());
     must('#panel-close').addEventListener('click', () => {
@@ -206,6 +279,11 @@ export class ViewerApp {
         return;
       }
       if (event.code === 'KeyO') {
+        if (!this.host) {
+          if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+          return;
+        }
+        this.pendingLowerMemory = false;
         must<HTMLInputElement>('#file-input').click();
       } else if (event.code === 'KeyU') {
         this.openUrlDialog();
@@ -216,7 +294,7 @@ export class ViewerApp {
       } else if (event.code === 'KeyT') {
         this.toggleTheme();
       } else if (event.code === 'KeyR') {
-        this.host.resetView();
+        this.host?.resetView();
       } else if (event.code === 'KeyF') {
         this.focusCenter();
       } else if (event.code === 'Digit1') {
@@ -239,55 +317,55 @@ export class ViewerApp {
       this.settings.splatScale = Number(scale.value);
       must('#out-splat-scale').textContent = formatFixed(this.settings.splatScale);
       syncRangeFill(scale);
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     points.addEventListener('input', () => {
       this.settings.pointSize = Number(points.value);
       must('#out-point-size').textContent = formatFixed(this.settings.pointSize);
       syncRangeFill(points);
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     lod.addEventListener('input', () => {
       this.settings.lodSplatScale = Number(lod.value);
       must('#out-lod').textContent = formatFixed(this.settings.lodSplatScale);
       syncRangeFill(lod);
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     must<HTMLSelectElement>('#sh-degree').addEventListener('change', (event) => {
       this.settings.shDegree = Number((event.target as HTMLSelectElement).value) as RenderSettings['shDegree'];
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
       this.syncShDegree();
     });
     must<HTMLSelectElement>('#shading').addEventListener('change', (event) => {
       this.settings.shading = (event.target as HTMLSelectElement).value as ShadingMode;
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     must<HTMLSelectElement>('#pixel-ratio').addEventListener('change', (event) => {
       this.settings.pixelRatio = (event.target as HTMLSelectElement).value as RenderSettings['pixelRatio'];
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     bindCheck('#wireframe', (on) => {
       this.settings.wireframe = on;
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     bindCheck('#gs-2d', (on) => {
       this.settings.enable2DGS = on;
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     bindCheck('#sort-radial', (on) => {
       this.settings.sortRadial = on;
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     bindCheck('#extended', (on) => {
       this.settings.extendedPrecision = on;
     });
     bindCheck('#flip-y', (on) => {
       this.settings.flipY = on;
-      if (this.host.items.length > 0) this.host.setFlip(on);
+      if (this.items.length > 0) this.host?.setFlip(on);
     });
     bindCheck('#grid', (on) => {
       this.settings.showGrid = on;
-      this.host.applySettings(this.settings);
+      this.host?.applySettings(this.settings);
     });
     bindCheck('#hud-switch', (on) => {
       must('#hud').hidden = !on;
@@ -296,14 +374,16 @@ export class ViewerApp {
     must<HTMLSelectElement>('#up-axis').addEventListener('change', (event) => {
       const value = (event.target as HTMLSelectElement).value;
       if (value !== 'auto' && value !== 'y' && value !== 'z') return;
-      this.host.setUpMode(value);
+      this.savedUp = value;
+      this.host?.setUpMode(value);
       writeStorage('3dviewer-up', value);
       this.syncUpLabel();
     });
     const sensitivity = must<HTMLInputElement>('#sensitivity');
     sensitivity.addEventListener('input', () => {
       const value = Number(sensitivity.value);
-      this.host.setSensitivity(value);
+      this.savedSensitivity = value;
+      this.host?.setSensitivity(value);
       must('#out-sensitivity').textContent = formatFixed(value);
       syncRangeFill(sensitivity);
       writeStorage('3dviewer-sensitivity', String(value));
@@ -314,12 +394,12 @@ export class ViewerApp {
     try {
       const up = localStorage.getItem('3dviewer-up');
       if (up === 'auto' || up === 'y' || up === 'z') {
-        this.host.upMode = up;
+        this.savedUp = up;
         must<HTMLSelectElement>('#up-axis').value = up;
       }
       const sensitivity = Number(localStorage.getItem('3dviewer-sensitivity'));
       if (Number.isFinite(sensitivity) && sensitivity >= 0.4 && sensitivity <= 2) {
-        this.host.setSensitivity(sensitivity);
+        this.savedSensitivity = sensitivity;
         must<HTMLInputElement>('#sensitivity').value = String(sensitivity);
         must('#out-sensitivity').textContent = formatFixed(sensitivity);
       }
@@ -329,28 +409,49 @@ export class ViewerApp {
     syncRangeInputs();
   }
 
+  private applyNavPrefs(host: SceneHost): void {
+    if (this.savedUp) host.upMode = this.savedUp;
+    if (this.savedSensitivity != null) host.setSensitivity(this.savedSensitivity);
+    this.syncUpLabel();
+  }
+
   private syncUpLabel(): void {
+    if (!this.host) return;
     must('#up-using').textContent = this.host.upAxis === 'z' ? 'Z-up' : 'Y-up';
   }
 
   private async loadDemoSlab(count?: number): Promise<void> {
+    if (!this.host) {
+      const failure =
+        this.graphicsFailure ??
+        classifyFailure(
+          new GraphicsUnavailableError('no-webgl2', 'WebGL2 is required. This browser cannot create a WebGL2 context.'),
+        );
+      this.graphicsFailure = failure;
+      this.showProblem(failure);
+      this.setLoading(false);
+      return;
+    }
     this.loadingSource = null;
+    this.failureSource = null;
     this.setEmpty(false);
     this.beginLoadingClock();
     this.setLoading(true, 'Building a synthetic drone slab', undefined, undefined, 'detect');
     must('#loading-file').textContent = 'Synthetic drone slab';
+    const host = this.host;
     let loaded = false;
     try {
       const renderable = await createDemoSlab(count);
-      this.host.clear();
-      this.host.add(renderable, this.settings);
-      this.host.setFlip(false);
+      host.clear();
+      host.add(renderable, this.settings);
+      host.setFlip(false);
       this.syncUpLabel();
       this.renderSceneInfo();
       loaded = true;
     } catch (error) {
-      this.toast(explainLoadError(error), 'error');
-      this.setEmpty(this.host.items.length === 0);
+      this.lastError = error;
+      this.showProblem(classifyFailure(error, { stage: this.loadingStage ?? undefined }));
+      this.setEmpty(this.items.length === 0);
     } finally {
       this.setLoading(false);
       if (loaded) this.maybeShowHint();
@@ -482,10 +583,18 @@ export class ViewerApp {
     return narrow && !landscapeDrawer;
   }
 
-  private async boot(): Promise<void> {
+  async boot(): Promise<void> {
     const params = new URLSearchParams(location.search);
     const url = params.get('url');
     const sampleId = params.get('sample');
+    if (!this.host) {
+      if (url) this.loadingSource = sourceFromUrl(url);
+      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+      this.setLoading(false);
+      this.bootFinishedWithoutGraphics = true;
+      return;
+    }
+    this.bootFinishedWithoutGraphics = false;
     if (params.get('demo') === 'slab') {
       const raw = params.get('n');
       const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
@@ -515,7 +624,25 @@ export class ViewerApp {
     await this.load(sourceFromUrl(url, 'sample'));
   }
 
-  private async load(source: AssetSource): Promise<void> {
+  private async load(
+    source: AssetSource,
+    options?: { lowerMemory?: boolean; restore?: NavSnapshot | null },
+  ): Promise<void> {
+    if (!this.host) {
+      this.loadingSource = source;
+      this.failureSource = source;
+      const failure =
+        this.graphicsFailure ??
+        classifyFailure(
+          new GraphicsUnavailableError('no-webgl2', 'WebGL2 is required. This browser cannot create a WebGL2 context.'),
+        );
+      this.graphicsFailure = failure;
+      this.lastError = this.lastError ?? this.graphicsFailure;
+      this.showProblem(failure);
+      this.setLoading(false);
+      return;
+    }
+    const host = this.host;
     const generation = ++this.generation;
     this.loadAbort?.abort();
     const abort = new AbortController();
@@ -523,7 +650,7 @@ export class ViewerApp {
     const stallFor = (stage?: string) => (stage === 'gpu' ? 10 * 60_000 : 90_000);
     let stallMs = stallFor();
     const stall = () => {
-      abort.abort(new Error(stallMessage(stallMs)));
+      abort.abort(new LoadStalledError(stallMessage(stallMs)));
     };
     let watchdog: StallWatchdog = createStallWatchdog(stallMs, stall);
     const arm = (stage?: string) => {
@@ -537,11 +664,20 @@ export class ViewerApp {
       watchdog.kick();
     };
     this.loadingSource = source;
+    this.failureSource = source;
+    this.showingBreadcrumb = false;
     this.setEmpty(false);
     this.beginLoadingClock();
     this.setLoading(true, `Opening ${source.name}`, undefined, undefined, 'detect');
+    this.noteInflight(source);
+    const restore = options?.restore ?? null;
+    const overrides = options?.lowerMemory ? { ...this.gaussianOverrides, maxSh: 0 as const } : this.gaussianOverrides;
     let loaded = false;
     try {
+      if (options?.lowerMemory) {
+        host.clear();
+        this.renderSceneInfo();
+      }
       const header = PROBE_EXTENSIONS.has(source.extension)
         ? await readProbe(source, 65536, abort.signal)
         : new Uint8Array();
@@ -553,17 +689,18 @@ export class ViewerApp {
         );
       }
       const large =
-        (source.sizeBytes ?? Infinity) >= 64 * 1024 * 1024 ||
-        this.host.items.some((item) => (item.getStats().memoryBytes ?? 0) >= 256 * 1024 * 1024);
+        options?.lowerMemory === true ||
+        (source.sizeBytes ?? Infinity) >= LARGE_BYTES ||
+        this.items.some((item) => (item.getStats().memoryBytes ?? 0) >= 256 * 1024 * 1024);
       if (large) {
-        this.host.clear();
+        host.clear();
         this.renderSceneInfo();
       }
       const renderable = await loader.load(source, {
         signal: abort.signal,
         budget: detectMemoryBudget(),
         extendedPrecision: this.settings.extendedPrecision,
-        overrides: this.gaussianOverrides,
+        overrides,
         onProgress: (progress) => {
           arm(progress.stage);
           if (generation !== this.generation) return;
@@ -574,10 +711,14 @@ export class ViewerApp {
         renderable.dispose();
         return;
       }
-      this.host.clear();
-      this.host.add(renderable, this.settings);
+      host.clear();
+      host.add(renderable, this.settings);
       this.lastSource = source;
-      this.host.setFlip(this.settings.flipY);
+      host.setFlip(this.settings.flipY);
+      if (restore) {
+        host.navigation.restore(restore);
+        this.syncModeButtons(restore.mode);
+      }
       this.syncUpLabel();
       this.renderSceneInfo();
       this.setEmpty(false);
@@ -586,12 +727,22 @@ export class ViewerApp {
       loaded = true;
     } catch (error) {
       if (generation !== this.generation) return;
-      this.toast(explainLoadError(error), 'error');
-      this.setEmpty(this.host.items.length === 0);
+      const reason = abort.signal.reason;
+      const surfaced = reason instanceof LoadStalledError ? reason : error;
+      this.lastError = surfaced;
+      const failure = classifyFailure(surfaced, { source, stage: this.loadingStage ?? undefined });
+      if (failure.kind === 'cancelled') {
+        this.toast('Loading cancelled.', 'info');
+        this.setEmpty(this.items.length === 0);
+        return;
+      }
+      this.showProblem(failure);
+      this.setEmpty(this.items.length === 0);
     } finally {
       watchdog.clear();
       if (this.loadAbort === abort) this.loadAbort = null;
       if (generation === this.generation) {
+        this.clearInflight();
         this.setLoading(false);
         if (loaded) this.maybeShowHint();
       }
@@ -599,7 +750,11 @@ export class ViewerApp {
   }
 
   private setMode(mode: NavMode): void {
-    this.host.setMode(mode);
+    this.host?.setMode(mode);
+    this.syncModeButtons(mode);
+  }
+
+  private syncModeButtons(mode: NavMode): void {
     must('#mode-orbit').classList.toggle('is-on', mode === 'orbit');
     must('#mode-fly').classList.toggle('is-on', mode === 'fly');
     must('#mode-orbit').setAttribute('aria-pressed', mode === 'orbit' ? 'true' : 'false');
@@ -607,6 +762,7 @@ export class ViewerApp {
   }
 
   private focusCenter(): void {
+    if (!this.host) return;
     const canvas = must<HTMLCanvasElement>('#view');
     const rect = canvas.getBoundingClientRect();
     const hit = this.host.focusPointer(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -619,7 +775,7 @@ export class ViewerApp {
     writeStorage('3dviewer-theme', next);
     const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (meta) meta.content = next === 'light' ? '#f3f5f8' : '#0c0f14';
-    this.host.setBackground(this.canvasColor());
+    this.host?.setBackground(this.canvasColor());
     this.syncThemeButton();
   }
 
@@ -640,7 +796,7 @@ export class ViewerApp {
   private toggleGrid(): void {
     this.settings.showGrid = !this.settings.showGrid;
     must<HTMLInputElement>('#grid').checked = this.settings.showGrid;
-    this.host.applySettings(this.settings);
+    this.host?.applySettings(this.settings);
   }
 
   private togglePanel(): void {
@@ -677,8 +833,19 @@ export class ViewerApp {
     must<HTMLInputElement>('#hud-switch').checked = on;
   }
 
+  private setSurface(surface: 'empty' | 'problem' | 'none'): void {
+    this.surface = surface;
+    must('#empty').hidden = surface !== 'empty';
+    must('#problem').hidden = surface !== 'problem';
+  }
+
   private setEmpty(empty: boolean): void {
-    must('#empty').hidden = !empty;
+    if (!empty) {
+      if (this.surface !== 'none') this.setSurface('none');
+      return;
+    }
+    if (this.surface === 'problem') return;
+    this.setSurface('empty');
   }
 
   private beginLoadingClock(): void {
@@ -821,7 +988,8 @@ export class ViewerApp {
     this.generation += 1;
     abort.abort(new DOMException('Loading cancelled', 'AbortError'));
     this.setLoading(false);
-    this.setEmpty(this.host.items.length === 0);
+    this.clearInflight();
+    this.setEmpty(this.items.length === 0);
     this.toast('Loading cancelled.', 'info');
   }
 
@@ -841,6 +1009,7 @@ export class ViewerApp {
       toast.hidden = true;
       window.clearTimeout(this.toastTimer);
     });
+    must('#toast-action').addEventListener('click', () => this.toastAction?.run());
   }
 
   private armToast(ms: number): void {
@@ -898,7 +1067,7 @@ export class ViewerApp {
     window.setTimeout(hide, 400);
   }
 
-  private toast(message: string, kind: 'error' | 'warn' | 'info' = 'error'): void {
+  private toast(message: string, kind: 'error' | 'warn' | 'info' = 'error', action?: ToastAction): void {
     const toast = must('#toast');
     const icons = {
       error: '#i-circle-alert',
@@ -909,6 +1078,15 @@ export class ViewerApp {
     toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
     must('#toast-icon').setAttribute('href', icons[kind]);
     must('#toast-msg').textContent = message;
+    const button = must<HTMLButtonElement>('#toast-action');
+    if (action) {
+      button.hidden = false;
+      button.textContent = action.label;
+      this.toastAction = action;
+    } else {
+      button.hidden = true;
+      this.toastAction = null;
+    }
     toast.hidden = false;
     must('#nav-hint').hidden = true;
     this.armToast(Math.min(14_000, 5000 + message.length * 20));
@@ -988,7 +1166,7 @@ export class ViewerApp {
 
   private renderSceneInfo(): void {
     const root = must('#scene-info');
-    const item = this.host.items[0];
+    const item = this.items[0];
     if (!item) {
       fillKv(root, [['Status', 'Nothing loaded']]);
       this.renderGeoref(undefined);
@@ -1033,7 +1211,7 @@ export class ViewerApp {
           rows.push([extraLabels[key] ?? key, String(value)]);
         }
       }
-      const pickLabel = this.host.pickIndexLabel();
+      const pickLabel = this.host?.pickIndexLabel() ?? '';
       if (pickLabel) rows.push(['Pick index', pickLabel]);
       fillKv(root, rows);
       if (pickLabel) {
@@ -1082,7 +1260,7 @@ export class ViewerApp {
   private syncShDegree(): void {
     const select = must<HTMLSelectElement>('#sh-degree');
     let available: number | null = null;
-    for (const item of this.host.items) {
+    for (const item of this.items) {
       if (item.kind !== 'splats') continue;
       const sh = item.getStats().extra?.sh;
       if (sh == null) continue;
@@ -1100,7 +1278,7 @@ export class ViewerApp {
 
   private renderFileChip(): void {
     const chip = must('#file-chip');
-    const item = this.host.items[0];
+    const item = this.items[0];
     if (!item) {
       chip.hidden = true;
       return;
@@ -1120,7 +1298,7 @@ export class ViewerApp {
   }
 
   private syncApplicable(): void {
-    const kinds = new Set<string>(this.host.items.map((item) => item.kind));
+    const kinds = new Set<string>(this.items.map((item) => item.kind));
     for (const el of document.querySelectorAll<HTMLElement>('#panel [data-applies]')) {
       const applies = el.dataset.applies?.split(' ') ?? [];
       el.hidden = kinds.size > 0 && !applies.some((kind) => kinds.has(kind));
@@ -1139,7 +1317,7 @@ export class ViewerApp {
     let splats = 0;
     let points = 0;
     let tris = 0;
-    for (const item of this.host.items) {
+    for (const item of this.items) {
       const itemStats = item.getStats();
       if (item.kind === 'splats') splats += itemStats.primitives;
       if (item.kind === 'points') points += itemStats.primitives;
@@ -1164,7 +1342,7 @@ export class ViewerApp {
             : '—';
     must('#hud-summary-gpu').textContent = formatBytes(stats.gpuMemoryBytes);
     const pickIndex = document.getElementById('pick-index');
-    if (pickIndex) pickIndex.textContent = this.host.pickIndexLabel();
+    if (pickIndex) pickIndex.textContent = this.host?.pickIndexLabel() ?? '';
     const rowValue: Record<string, number> = { splats: shownSplats, points, tris };
     for (const row of hud.querySelectorAll<HTMLElement>('[data-hud-row]')) {
       row.hidden = (rowValue[row.dataset.hudRow ?? ''] ?? 0) === 0;
@@ -1188,6 +1366,195 @@ export class ViewerApp {
         return [dt, dd];
       }),
     );
+  }
+
+  private onGpuLost(): void {
+    this.toast('The GPU reset. Reloading the scene…', 'warn');
+    window.clearTimeout(this.contextTimer);
+    this.contextTimer = window.setTimeout(() => {
+      if (!this.host?.contextLost) return;
+      this.lastError = new GraphicsUnavailableError('renderer-failed', 'The GPU reset and did not recover.');
+      this.reloadGraphics = true;
+      this.showingBreadcrumb = false;
+      const failure = classifyFailure(this.lastError);
+      this.showProblem(failure, { force: true });
+    }, 10_000);
+  }
+
+  private onGpuRestored(): void {
+    window.clearTimeout(this.contextTimer);
+    this.reloadGraphics = false;
+    const host = this.host;
+    if (!host) return;
+    const source = this.lastSource;
+    const snap = source ? host.navigation.snapshot() : null;
+    host.clear();
+    this.renderSceneInfo();
+    if (!source || (source.origin === 'url' && source.sizeBytes == null)) {
+      this.setEmpty(true);
+      if (source) {
+        this.toast(
+          'The GPU reset. This scene came from a URL of unknown size, so it was not reloaded. Open it again if you still need it. A multi-gigabyte file can take several minutes.',
+          'warn',
+        );
+      }
+      return;
+    }
+    this.toast('The GPU reset. Reloading the scene… A multi-gigabyte file can take several minutes.', 'warn');
+    void this.load(source, { restore: snap });
+  }
+
+  private maybeWarnSoftware(host: SceneHost): void {
+    if (this.softwareNotified) return;
+    let software = false;
+    try {
+      software = host.rendererInfo.software;
+    } catch {
+      software = false;
+    }
+    if (!software) return;
+    this.softwareNotified = true;
+    this.toast(SOFTWARE_TOAST, 'warn');
+  }
+
+  private showBreadcrumb(): void {
+    const entry = this.crashEntry;
+    if (!entry) return;
+    this.showingBreadcrumb = true;
+    this.reloadGraphics = false;
+    this.showProblem(crashBreadcrumbFailure(entry), { force: true, breadcrumb: true });
+  }
+
+  private showProblem(failure: Failure, options?: { force?: boolean; breadcrumb?: boolean }): void {
+    this.showingBreadcrumb = options?.breadcrumb === true;
+    if (failure.kind !== 'graphics') this.reloadGraphics = false;
+    const hasScene = this.items.length > 0;
+    const graphicsDead = failure.kind === 'graphics';
+    if (hasScene && !options?.force && !options?.breadcrumb && !graphicsDead) {
+      this.toast(failure.title, 'error', {
+        label: 'Details',
+        run: () => this.paintProblem(failure, true),
+      });
+      return;
+    }
+    const startBehind = !hasScene;
+    this.paintProblem(failure, hasScene || startBehind);
+  }
+
+  private paintProblem(failure: Failure, showBack: boolean): void {
+    const root = must('#problem');
+    renderProblem(root, failure, formatReport(collectDiagnostics(this.host, this.loadDiag())), {
+      retry: () => this.retryLoad(false),
+      retryLowerMemory: () => this.retryLoad(true),
+      chooseFile: () => this.chooseFile(false),
+      openFile: () => this.chooseFile(false),
+      downloadApp: () => this.openDownloadDialog(),
+      reinitGraphics: () => {
+        if (this.reloadGraphics) {
+          location.reload();
+          return;
+        }
+        this.initGraphics();
+      },
+      formats: () => {
+        const desc = must('#problem-desc');
+        const line = supportedFormats();
+        if (!desc.textContent?.includes(line)) desc.textContent = `${desc.textContent ?? ''}\n\n${line}`;
+      },
+      back: () => this.setSurface(this.items.length > 0 ? 'none' : 'empty'),
+      dismiss: () => this.dismissBreadcrumb(),
+      labels: this.reloadGraphics ? { 'reinit-graphics': 'Reload viewer' } : undefined,
+      showBack: showBack && !this.showingBreadcrumb,
+      showDismiss: this.showingBreadcrumb,
+    });
+    this.setSurface('problem');
+    must('#loading').hidden = true;
+    must('#toast').hidden = true;
+  }
+
+  private dismissBreadcrumb(): void {
+    this.clearInflight();
+    this.crashEntry = null;
+    this.showingBreadcrumb = false;
+    this.setSurface(this.items.length > 0 ? 'none' : 'empty');
+  }
+
+  private retryLoad(lowerMemory: boolean): void {
+    if (this.showingBreadcrumb && this.crashEntry) {
+      this.retryBreadcrumb();
+      return;
+    }
+    const source = this.failureSource ?? this.loadingSource ?? this.lastSource;
+    if (!source || (source.origin === 'file' && !source.file)) {
+      this.chooseFile(lowerMemory);
+      return;
+    }
+    void this.load(source, { lowerMemory, restore: this.snapshotForRetry(source) });
+  }
+
+  private retryBreadcrumb(): void {
+    const entry = this.crashEntry;
+    if (!entry) return;
+    if (entry.origin === 'file' || !entry.url) {
+      this.chooseFile(true);
+      return;
+    }
+    const origin: AssetOrigin = entry.origin === 'sample' ? 'sample' : 'url';
+    const source = sourceFromUrl(entry.url, origin);
+    if (entry.size != null) source.sizeBytes = entry.size;
+    void this.load(source, { lowerMemory: true, restore: this.snapshotForRetry(source) });
+  }
+
+  private chooseFile(lowerMemory: boolean): void {
+    if (!this.host) {
+      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+      return;
+    }
+    this.pendingLowerMemory = lowerMemory;
+    must<HTMLInputElement>('#file-input').click();
+  }
+
+  private snapshotForRetry(source: AssetSource): NavSnapshot | null {
+    if (!this.host || !this.lastSource || !sameAsset(this.lastSource, source)) return null;
+    return this.host.navigation.snapshot();
+  }
+
+  private loadDiag(): LoadDiag {
+    const source = this.loadingSource ?? this.failureSource;
+    const params = new URLSearchParams(location.search);
+    const bootUrl = params.get('url');
+    return {
+      name: source?.name,
+      extension: source?.extension,
+      size: source?.sizeBytes,
+      origin: source?.origin,
+      url: source?.url ?? bootUrl ?? undefined,
+      stage: this.loadingStage ?? undefined,
+      elapsedMs: this.loadingStarted > 0 ? performance.now() - this.loadingStarted : undefined,
+      preset: 'automatic',
+      error: this.lastError,
+    };
+  }
+
+  private noteInflight(source: AssetSource): void {
+    const size = source.sizeBytes;
+    if (size != null && size < LARGE_BYTES) return;
+    const record: InflightRecord = {
+      name: source.name,
+      size: size ?? null,
+      origin: source.origin,
+      at: Date.now(),
+    };
+    if (source.url && source.origin !== 'file') record.url = source.url;
+    writeStorage(INFLIGHT_KEY, JSON.stringify(record));
+  }
+
+  private clearInflight(): void {
+    try {
+      localStorage.removeItem(INFLIGHT_KEY);
+    } catch {
+      /* private mode */
+    }
   }
 }
 
@@ -1215,6 +1582,56 @@ function fillKv(root: HTMLElement, rows: [string, string][], mono = false): void
       return [dt, dd];
     }),
   );
+}
+
+function sameAsset(a: AssetSource, b: AssetSource): boolean {
+  return a.name === b.name && a.sizeBytes === b.sizeBytes && a.origin === b.origin;
+}
+
+function readInflight(): InflightRecord | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(INFLIGHT_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    clearStoredInflight();
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    clearStoredInflight();
+    return null;
+  }
+  const entry = parsed as Partial<InflightRecord>;
+  if (typeof entry.name !== 'string' || typeof entry.at !== 'number') {
+    clearStoredInflight();
+    return null;
+  }
+  if (entry.origin !== 'file' && entry.origin !== 'url' && entry.origin !== 'sample') {
+    clearStoredInflight();
+    return null;
+  }
+  if (Date.now() - entry.at > INFLIGHT_MAX_AGE || entry.at > Date.now() + 60_000) {
+    clearStoredInflight();
+    return null;
+  }
+  const size = typeof entry.size === 'number' ? entry.size : null;
+  const record: InflightRecord = { name: entry.name, size, origin: entry.origin, at: entry.at };
+  if (typeof entry.url === 'string') record.url = entry.url;
+  return record;
+}
+
+function clearStoredInflight(): void {
+  try {
+    localStorage.removeItem(INFLIGHT_KEY);
+  } catch {
+    /* private mode */
+  }
 }
 
 function stallMessage(ms: number): string {

@@ -16,6 +16,21 @@ export type NavMode = 'orbit' | 'fly';
 export type UpAxis = 'y' | 'z';
 export type UpMode = 'auto' | UpAxis;
 
+export interface NavSnapshot {
+  position: THREE.Vector3;
+  pivot: THREE.Vector3;
+  up: UpAxis;
+  mode: NavMode;
+}
+
+/** Copy a saved view onto a camera. No animation. */
+export function applySnapshot(camera: THREE.PerspectiveCamera, pivot: THREE.Vector3, snapshot: NavSnapshot): void {
+  camera.position.copy(snapshot.position);
+  pivot.copy(snapshot.pivot);
+  upVector(snapshot.up, camera.up);
+  camera.lookAt(pivot);
+}
+
 export type PickKind = 'surface' | 'ground' | 'none';
 
 export interface PickResult {
@@ -133,6 +148,28 @@ export class NavigationController {
 
   setSensitivity(value: number): void {
     this.sensitivity = THREE.MathUtils.clamp(value, 0.25, 3);
+  }
+
+  snapshot(): NavSnapshot {
+    return {
+      position: this.camera.position.clone(),
+      pivot: this.pivot.clone(),
+      up: this.up,
+      mode: this.mode,
+    };
+  }
+
+  /** Put the camera back. Copies position, pivot, and up, then looks at the pivot. */
+  restore(snapshot: NavSnapshot): void {
+    this.mode = snapshot.mode;
+    this.up = snapshot.up;
+    this.animating = false;
+    this.zoomPending = 0;
+    this.yawVel = 0;
+    this.pitchVel = 0;
+    this.endDrag();
+    upVector(snapshot.up, this.worldUp);
+    applySnapshot(this.camera, this.pivot, snapshot);
   }
 
   /** Instant frame used when a file finishes loading. */

@@ -15,9 +15,42 @@ import {
   wheelNotches,
   zoomToward,
 } from '../src/render/cameraMotion';
-import { chooseOrbitPivot } from '../src/render/Navigation';
+import { applySnapshot, chooseOrbitPivot, type NavSnapshot } from '../src/render/Navigation';
 import { CoarseSurface, halfToFloat, sampleStride } from '../src/render/coarseSurface';
 import { toHalf } from '../src/loaders/gaussian/packSplat';
+
+describe('snapshot', () => {
+  it('round-trips a perspective camera', () => {
+    const camera = new THREE.PerspectiveCamera(55, 1.2, 0.01, 5000);
+    const pivot = new THREE.Vector3(10, -4, 2);
+    camera.position.set(30, 12, -8);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(pivot);
+    const snapshot: NavSnapshot = {
+      position: camera.position.clone(),
+      pivot: pivot.clone(),
+      up: 'z',
+      mode: 'orbit',
+    };
+    const copy = new THREE.PerspectiveCamera(55, 1.2, 0.01, 5000);
+    const copyPivot = new THREE.Vector3();
+    applySnapshot(copy, copyPivot, snapshot);
+    expect(copy.position.distanceTo(camera.position)).toBeLessThan(1e-6);
+    expect(copyPivot.distanceTo(pivot)).toBeLessThan(1e-6);
+    expect(copy.up.distanceTo(camera.up)).toBeLessThan(1e-6);
+
+    const again = new THREE.PerspectiveCamera(55, 1.2, 0.01, 5000);
+    const againPivot = new THREE.Vector3();
+    applySnapshot(again, againPivot, {
+      position: copy.position.clone(),
+      pivot: copyPivot.clone(),
+      up: 'z',
+      mode: 'orbit',
+    });
+    expect(again.position.distanceTo(camera.position)).toBeLessThan(1e-6);
+    expect(againPivot.distanceTo(pivot)).toBeLessThan(1e-6);
+  });
+});
 
 describe('up axis', () => {
   it('treats a flat drone scan as Z-up', () => {

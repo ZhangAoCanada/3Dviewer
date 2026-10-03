@@ -65,7 +65,7 @@ for (const size of sizes) {
       if (!size.full) return;
       test('empty-error', async ({ page }) => {
         await page.goto('?url=missing.ply');
-        await expect(page.locator('#toast')).toBeVisible({ timeout: 60_000 });
+        await expect(page.locator('#problem-title')).toHaveText('Could not download the file', { timeout: 60_000 });
         await shot(page, 'empty-error');
       });
       test('loading', async ({ page }) => {

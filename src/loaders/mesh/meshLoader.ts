@@ -52,7 +52,11 @@ export const meshLoader: FormatLoader = {
     const { url, revoke } = await objectUrl(source);
     try {
       const root = await loadRoot(source.extension, url);
-      if (ctx.signal.aborted) throw new DOMException('Load aborted', 'AbortError');
+      if (ctx.signal.aborted) {
+        const reason = ctx.signal.reason;
+        if (reason instanceof Error && reason.name !== 'AbortError') throw reason;
+        throw new DOMException('Load aborted', 'AbortError');
+      }
       ensureMaterials(root);
       ctx.onProgress({ loaded: 1, total: 1, stage: 'ready', message: source.name });
       return new MeshRenderable(

@@ -2,12 +2,14 @@ import '@fontsource/dm-sans/400.css';
 import '@fontsource/dm-sans/600.css';
 import './styles.css';
 import { registerAppUpdate } from './app/registerUpdate';
+import { collectDiagnostics, formatReport } from './core/diagnostics';
+import { classifyFailure } from './core/loadFailure';
 import { isDesktopApp } from './desktop/runtime';
 import { ViewerApp } from './app/ViewerApp';
+import { renderProblem } from './ui/problem';
 
 registerAppUpdate();
 
-const empty = document.querySelector('#empty');
 const loading = document.querySelector<HTMLElement>('#loading');
 
 // The precache worker fetches the same sample URLs as boot(). On a cold load
@@ -23,16 +25,27 @@ async function waitForServiceWorker(): Promise<void> {
   ]);
 }
 
-void waitForServiceWorker().then(() => {
-  try {
-    new ViewerApp();
-  } catch (error) {
-    if (loading) loading.hidden = true;
-    if (empty) empty.removeAttribute('hidden');
-    const title = document.querySelector('#empty-title');
-    const desc = document.querySelector('#empty-desc');
-    const message = error instanceof Error ? error.message : String(error);
-    if (title) title.textContent = 'The viewer could not start';
-    if (desc) desc.textContent = message;
-  }
-});
+function renderStartupFailure(error: unknown): void {
+  if (loading) loading.hidden = true;
+  const root = document.querySelector<HTMLElement>('#problem');
+  if (!root) return;
+  document.body.classList.add('no-graphics');
+  const failure = classifyFailure(error);
+  renderProblem(root, failure, formatReport(collectDiagnostics(null, { error })), {
+    retry: () => location.reload(),
+    reinitGraphics: () => location.reload(),
+    showBack: false,
+  });
+  root.hidden = false;
+  document.querySelector('#empty')?.setAttribute('hidden', '');
+}
+
+try {
+  const app = new ViewerApp();
+  app.initGraphics();
+  void waitForServiceWorker()
+    .then(() => app.boot())
+    .catch((error: unknown) => renderStartupFailure(error));
+} catch (error) {
+  renderStartupFailure(error);
+}
