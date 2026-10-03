@@ -235,8 +235,16 @@
           </details>
           <details id="sec-display" class="sec" open>
             <summary>Display<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <label class="field-row" data-applies="splats"><span>SH degree</span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
-            <label class="field" data-applies="splats"><span>Splat cutoff <output id="out-splat-scale">1.0</output></span><input id="splat-scale" type="range" min="0.75" max="1.15" step="0.05" value="1" /></label>
+            <div class="field" id="quality-field">
+              <span>Quality</span>
+              <div class="segment" role="radiogroup" aria-label="Quality">
+                <button id="quality-auto" class="seg is-on" type="button" role="radio" aria-checked="true">Automatic</button>
+                <button id="quality-quality" class="seg" type="button" role="radio" aria-checked="false">Better quality</button>
+                <button id="quality-memory" class="seg" type="button" role="radio" aria-checked="false">Lower memory</button>
+              </div>
+              <p id="quality-summary" class="hint"></p>
+              <button id="quality-reopen" class="btn btn-secondary btn-sm" type="button" hidden>Reopen to apply memory changes</button>
+            </div>
             <label class="field" data-applies="points"><span>Point size <output id="out-point-size">1.0</output></span><input id="point-size" type="range" min="0.25" max="4" step="0.05" value="1" /></label>
             <label class="field-row" data-applies="mesh"><span>Shading</span><span class="select"><select id="shading"><option value="lit" selected>Lit</option><option value="flat">Unlit</option><option value="normals">Normals</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="switch-row" data-applies="mesh"><span>Wireframe</span><input id="wireframe" type="checkbox" class="switch" role="switch" /></label>
@@ -250,13 +258,15 @@
           </details>
           <details id="sec-perf" class="sec">
             <summary>Performance<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <label class="field" data-applies="splats"><span>LOD detail <output id="out-lod">1.0</output></span><input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" /></label>
-            <label class="field-row"><span>Pixel ratio</span><span class="select"><select id="pixel-ratio"><option value="auto" selected>Auto</option><option value="1">1</option><option value="1.5">1.5</option><option value="2">2</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="switch-row"><span>Show stats overlay</span><input id="hud-switch" type="checkbox" class="switch" role="switch" /></label>
             <dl id="perf-info" class="kv"></dl>
           </details>
           <details id="sec-advanced" class="sec">
             <summary>Advanced<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <label class="field-row" data-applies="splats"><span>SH degree</span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
+            <label class="field" data-applies="splats"><span>Splat cutoff <output id="out-splat-scale">1.0</output></span><input id="splat-scale" type="range" min="0.75" max="1.15" step="0.05" value="1" /></label>
+            <label class="field" data-applies="splats"><span>LOD detail <output id="out-lod">1.0</output></span><input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" /></label>
+            <label class="field-row"><span>Pixel ratio</span><span class="select"><select id="pixel-ratio"><option value="auto" selected>Auto</option><option value="1">1</option><option value="1.5">1.5</option><option value="2">2</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="switch-row" data-applies="splats"><span>2D Gaussian axes</span><input id="gs-2d" type="checkbox" class="switch" role="switch" checked /></label>
             <label class="switch-row" data-applies="splats"><span>Radial depth sort</span><input id="sort-radial" type="checkbox" class="switch" role="switch" checked /></label>
             <label class="switch-row" data-applies="splats"><span>Extended precision on next load</span><input id="extended" type="checkbox" class="switch" role="switch" /></label>
@@ -264,10 +274,13 @@
               Large Gaussian PLY files are read in chunks and packed outside the WASM heap, so a multi-gigabyte
               file is never one ArrayBuffer. Spherical harmonics drop first, then splats are subsampled, if the
               device budget cannot hold the whole cloud. Sorting still runs in a WASM worker.
-              Level of detail is off for every file. Add <code>?lod=force</code> to the address to build a tree
-              for a cloud of at least 400,000 splats.
-              A paged <code>.rad</code> is the format that loads instantly next time; baking one is a Spark
-              <code>build-lod</code> step, not a download from this page.
+              Level of detail is off unless the address includes <code>?lod=force</code>, and only for a cloud of at
+              least 400,000 splats. Lower memory never builds that tree.
+              Compressed formats (<code>.spz</code>, <code>.sog</code>, <code>.splat</code>, <code>.ksplat</code>,
+              <code>.rad</code>) only follow the rendered harmonics, the pixel ratio, and whether the previous scene
+              is cleared, because Spark decodes them itself.
+              A paged <code>.rad</code> is the bounded-memory route, and the format that loads instantly next time;
+              baking one is a Spark <code>build-lod</code> step, not a download from this page.
             </p>
           </details>
           <details id="sec-about" class="sec">

@@ -36,30 +36,37 @@ function writeGaussian() {
   const rings = 100;
   const tube = 48;
   const count = rings * tube;
+  // Degree-3 harmonics (45 f_rest floats). Coefficients stay 0 so the picture matches
+  // the previous SH0 sample, and Lower memory can show "1 of 3".
+  const restCount = 45;
+  const props = [
+    'x',
+    'y',
+    'z',
+    'nx',
+    'ny',
+    'nz',
+    'f_dc_0',
+    'f_dc_1',
+    'f_dc_2',
+    'opacity',
+    'scale_0',
+    'scale_1',
+    'scale_2',
+    'rot_0',
+    'rot_1',
+    'rot_2',
+    'rot_3',
+    ...Array.from({ length: restCount }, (_, index) => `f_rest_${index}`),
+  ];
   const header = [
     'ply',
     'format binary_little_endian 1.0',
     `element vertex ${count}`,
-    'property float x',
-    'property float y',
-    'property float z',
-    'property float nx',
-    'property float ny',
-    'property float nz',
-    'property float f_dc_0',
-    'property float f_dc_1',
-    'property float f_dc_2',
-    'property float opacity',
-    'property float scale_0',
-    'property float scale_1',
-    'property float scale_2',
-    'property float rot_0',
-    'property float rot_1',
-    'property float rot_2',
-    'property float rot_3',
+    ...props.map((name) => `property float ${name}`),
     'end_header\n',
   ].join('\n');
-  const body = Buffer.alloc(count * 17 * 4);
+  const body = Buffer.alloc(count * props.length * 4);
   const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
   const splat = Buffer.alloc(count * 32);
   const splatView = new DataView(splat.buffer, splat.byteOffset, splat.byteLength);
@@ -80,7 +87,26 @@ function writeGaussian() {
       const opacity = Math.log(0.9 / 0.1);
       const spacing = (2 * Math.PI * minor) / tube;
       const scale = Math.log(spacing * 1.35);
-      const values = [x, y, z, 0, 1, 0, (r - 0.5) / SH_C0, (g - 0.5) / SH_C0, (b - 0.5) / SH_C0, opacity, scale, scale, scale, 1, 0, 0, 0];
+      const values = [
+        x,
+        y,
+        z,
+        0,
+        1,
+        0,
+        (r - 0.5) / SH_C0,
+        (g - 0.5) / SH_C0,
+        (b - 0.5) / SH_C0,
+        opacity,
+        scale,
+        scale,
+        scale,
+        1,
+        0,
+        0,
+        0,
+        ...Array.from({ length: restCount }, () => 0),
+      ];
       for (const value of values) {
         view.setFloat32(o, value, true);
         o += 4;

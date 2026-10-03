@@ -58,7 +58,11 @@ export interface LoadContext {
 
 export type ShadingMode = 'lit' | 'flat' | 'normals';
 
+/** Persisted view quality. `auto` is today's device budget with no extra caps. */
+export type QualityPreset = 'auto' | 'quality' | 'memory';
+
 export interface RenderSettings {
+  quality: QualityPreset;
   splatScale: number;
   shDegree: 0 | 1 | 2 | 3;
   pointSize: number;
@@ -128,6 +132,7 @@ export interface FormatLoader {
 }
 
 export const DEFAULT_SETTINGS: RenderSettings = {
+  quality: 'auto',
   splatScale: 1,
   shDegree: 3,
   pointSize: 1,

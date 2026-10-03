@@ -279,11 +279,16 @@ html.is-desktop #download-menu-item { display: none !important; }
   background: var(--color-hover);
 }
 .seg.is-on,
-.seg[aria-pressed='true'] {
+.seg[aria-pressed='true'],
+.seg[aria-checked='true'] {
   background: var(--color-surface-solid);
   box-shadow: var(--shadow-sm);
   color: var(--color-text);
 }
+.panel .segment { width: 100%; }
+.panel .seg { flex: 1; min-width: 0; padding-inline: 4px; font-size: var(--text-sm); }
+#quality-summary { margin: 0; }
+#quality-reopen { width: 100%; }
 .seg.is-on .icon { color: var(--color-accent-text); }
 
 #viewport { position: absolute; inset: 0; }
