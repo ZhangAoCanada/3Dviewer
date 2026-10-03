@@ -1,3 +1,13 @@
+/**
+ * True when the event target is inside one of the roots.
+ * A non-node target is not treated as outside, so a stray event does not dismiss.
+ */
+export function pointerInside(event: Event, roots: readonly Node[]): boolean {
+  const target = event.target;
+  if (!(target instanceof Node)) return true;
+  return roots.some((root) => root.contains(target));
+}
+
 /** Button-controlled menu: click, arrows, Home/End, Escape, and outside pointer. */
 export function bindMenu(button: HTMLButtonElement, menu: HTMLElement): { close(): void } {
   const items = () => [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
@@ -45,8 +55,8 @@ export function bindMenu(button: HTMLButtonElement, menu: HTMLElement): { close(
   });
 
   document.addEventListener('pointerdown', (event) => {
-    if (!(event.target instanceof Node)) return;
-    if (!button.contains(event.target) && !menu.contains(event.target)) close();
+    if (pointerInside(event, [button, menu])) return;
+    close();
   });
 
   return { close };

@@ -26,6 +26,61 @@ test('quarter turns undo, survive a reload, and reset', async ({ page }) => {
   await expect(page.locator('#scene-info')).not.toContainText('Turned 90°');
 });
 
+test('outside pointer closes Make upright after an axis turn', async ({ page }) => {
+  await page.goto('/?sample=torus-ply');
+  await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector('#view');
+    if (!canvas) throw new Error('missing view');
+    let count = 0;
+    canvas.addEventListener('pointerdown', () => {
+      count += 1;
+    });
+    Object.defineProperty(window, '__viewPointerDowns', { configurable: true, get: () => count });
+  });
+
+  const panel = page.locator('#upright');
+  await page.click('#upright-btn');
+  await expect(panel).toBeVisible();
+
+  // Axis controls are inside the panel, so the turn must not dismiss it.
+  await page.click('#upright-x-cw');
+  await expect(panel).toBeVisible();
+  await expect(page.locator('#upright-status')).toContainText('Turned 90°');
+
+  const view = page.locator('#view');
+  const box = await view.boundingBox();
+  expect(box).not.toBeNull();
+  const point = { x: box!.width / 2, y: box!.height * 0.25 };
+  await view.click({ position: point });
+  await expect(panel).toBeHidden();
+  await expect(page.locator('#upright-btn')).toHaveAttribute('aria-expanded', 'false');
+  expect(await page.evaluate(() => (window as unknown as { __viewPointerDowns: number }).__viewPointerDowns)).toBeGreaterThan(0);
+
+  // A drag on the canvas still orbits, and the closed panel stays closed.
+  const x = box!.x + point.x;
+  const y = box!.y + point.y;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 56, y + 36, { steps: 6 });
+  await page.mouse.up();
+  await expect(panel).toBeHidden();
+
+  await page.click('#upright-btn');
+  await expect(panel).toBeVisible();
+  await page.click('#upright-y-cw');
+  await expect(panel).toBeVisible();
+  await page.touchscreen.tap(x, y);
+  await expect(panel).toBeHidden();
+
+  await page.click('#upright-btn');
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(page.locator('#upright-btn')).toBeFocused();
+});
+
 test('clicking the ground of a level slab reports already level', async ({ page }) => {
   await page.goto('/?demo=slab&n=50000');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
