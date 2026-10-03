@@ -26,6 +26,13 @@ export interface LoadProgress {
   total?: number;
   stage: 'detect' | 'download' | 'parse' | 'gpu' | 'ready';
   message?: string;
+  /**
+   * Reading the file, or preparing the scene.
+   * Without this, `detect` and `download` are reading, and `parse` and `gpu` are preparing.
+   */
+  phase?: 'reading' | 'preparing';
+  /** Bytes of the file seen so far. `total` is omitted when the length is unknown. */
+  bytes?: { loaded: number; total?: number };
 }
 
 export interface MemoryBudget {

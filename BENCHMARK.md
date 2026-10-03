@@ -90,6 +90,8 @@ The cold figure is the one the bench records (`iterations: 1`, no warmup). The s
 
 Not measured here: Flip Y long tasks on a 14M scene, a 1 GB `?url=` load on a range-capable host, Chrome Task Manager for the LoD peak, and the stats-panel drop at 8M points. There is no drone PLY in the repo, so `lodCount / count` was not recorded and task 2.2 was skipped.
 
+URL downloads fold each 32 MB of chunks into one Blob (`new Blob([blob, ...chunks])`) so the peak can stay near `res.blob()`. This environment has no Chrome Task Manager and no 1 GB `?url=` file, so that peak was not compared. The 32 MB fold is what shipped.
+
 ## Batch 3 frame loop
 
 Mobile Spark options `lodRenderScale: 1.5` and `minSortIntervalMs: 33` are set when the budget profile is `mobile`, and they are not in the UI. This environment has no mid-range Android device or iPhone, and no drone `.rad`, so the plan's "revert unless orbit fps rises by 10%" check was not run. The settings were left as specified.

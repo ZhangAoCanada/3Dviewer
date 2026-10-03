@@ -25,13 +25,14 @@ import {
   type ShadingMode,
 } from '../core/types';
 import { createDefaultRegistry } from '../loaders';
-import type { FrameStats } from '../render/SceneHost';
+import type { FrameStats, Refinement } from '../render/SceneHost';
 import { SceneHost } from '../render/SceneHost';
 import type { NavMode, NavSnapshot, UpMode } from '../render/Navigation';
 import { isTypingTarget } from '../render/Navigation';
 import { createDemoSlab } from '../render/demoSlab';
 import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
+import { phaseOf, progressLine, stallHint } from '../ui/loadPhase';
 import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
 import { bindMenu } from '../ui/menu';
 import { renderProblem, supportedFormats } from '../ui/problem';
@@ -41,6 +42,8 @@ const INFLIGHT_KEY = '3dviewer-inflight';
 const QUALITY_KEY = '3dviewer-quality';
 const INFLIGHT_MAX_AGE = 24 * 60 * 60 * 1000;
 const LARGE_BYTES = 64 * 1024 * 1024;
+/** Below this, the pick index and first sort finish with the loading card. No badge. */
+const REFINE_BADGE_ABOVE = 100_000;
 const SOFTWARE_TOAST =
   'Graphics are running in software mode, so large scenes will be slow. Turn on hardware acceleration in your browser settings.';
 
@@ -73,7 +76,14 @@ export class ViewerApp {
   private loadingStage: LoadProgress['stage'] | null = null;
   private loadingStarted = 0;
   private elapsedTimer = 0;
-  private stageStarted = 0;
+  private lastProgressAt = 0;
+  private lastLoaded: number | undefined;
+  private lastByteLoaded: number | undefined;
+  private lastProgress: LoadProgress | null = null;
+  private detailLine = '';
+  private shownStep: 'reading' | 'preparing' | 'ready' | null = null;
+  private qualityMode: 'off' | 'preview' | 'full' = 'off';
+  private qualityTimer = 0;
   private geoCopy = '';
   private hintHeld = false;
   private hintCleanup: (() => void) | null = null;
@@ -436,16 +446,24 @@ export class ViewerApp {
       this.setLoading(false);
       return;
     }
+    const host = this.host;
+    const generation = ++this.generation;
+    this.loadAbort?.abort();
+    const abort = new AbortController();
+    this.loadAbort = abort;
     this.loadingSource = null;
     this.failureSource = null;
     this.setEmpty(false);
     this.beginLoadingClock();
-    this.setLoading(true, 'Building a synthetic drone slab', undefined, undefined, 'detect');
+    this.setLoading(true, { loaded: 0, stage: 'detect', message: 'Building a synthetic drone slab' });
     must('#loading-file').textContent = 'Synthetic drone slab';
-    const host = this.host;
     let loaded = false;
     try {
       const renderable = await createDemoSlab(count);
+      if (generation !== this.generation || abort.signal.aborted) {
+        renderable.dispose();
+        return;
+      }
       host.clear();
       host.add(renderable, this.settings);
       host.setFlip(false);
@@ -453,12 +471,16 @@ export class ViewerApp {
       this.renderSceneInfo();
       loaded = true;
     } catch (error) {
+      if (generation !== this.generation) return;
       this.lastError = error;
       this.showProblem(classifyFailure(error, { stage: this.loadingStage ?? undefined }));
       this.setEmpty(this.items.length === 0);
     } finally {
-      this.setLoading(false);
-      if (loaded) this.maybeShowHint();
+      if (this.loadAbort === abort) this.loadAbort = null;
+      if (generation === this.generation) {
+        this.setLoading(false);
+        if (loaded) this.maybeShowHint();
+      }
     }
   }
 
@@ -717,7 +739,7 @@ export class ViewerApp {
     this.showingBreadcrumb = false;
     this.setEmpty(false);
     this.beginLoadingClock();
-    this.setLoading(true, `Opening ${source.name}`, undefined, undefined, 'detect');
+    this.setLoading(true, { loaded: 0, stage: 'detect', message: `Opening ${source.name}` });
     this.noteInflight(source);
     const restore = options?.restore ?? null;
     const detected = detectMemoryBudget();
@@ -753,7 +775,8 @@ export class ViewerApp {
         onProgress: (progress) => {
           arm(progress.stage);
           if (generation !== this.generation) return;
-          this.setLoading(true, progress.message ?? 'Loading', progress.loaded, progress.total, progress.stage);
+          this.noteProgress(progress);
+          this.setLoading(true, progress);
         },
       });
       if (generation !== this.generation) {
@@ -900,11 +923,26 @@ export class ViewerApp {
 
   private beginLoadingClock(): void {
     this.loadingStarted = performance.now();
-    this.stageStarted = this.loadingStarted;
+    this.lastProgressAt = this.loadingStarted;
+    this.lastLoaded = undefined;
+    this.lastByteLoaded = undefined;
+    this.lastProgress = null;
+    this.detailLine = '';
+    this.shownStep = null;
     this.loadingStage = null;
+    this.resetQuality();
     must('#loading-elapsed').textContent = '';
     window.clearInterval(this.elapsedTimer);
     this.elapsedTimer = window.setInterval(() => this.renderElapsed(), 1000);
+  }
+
+  private noteProgress(progress: LoadProgress): void {
+    const bytes = progress.bytes?.loaded;
+    if (progress.loaded !== this.lastLoaded || bytes !== this.lastByteLoaded) {
+      this.lastLoaded = progress.loaded;
+      this.lastByteLoaded = bytes;
+      this.lastProgressAt = performance.now();
+    }
   }
 
   private renderElapsed(): void {
@@ -918,21 +956,10 @@ export class ViewerApp {
       const seconds = totalSec % 60;
       node.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
     }
-    if (this.loadingStage === 'gpu' && performance.now() - this.stageStarted > 20_000) {
-      const detail = must('#loading-detail');
-      if (detail.childElementCount === 0 && detail.textContent === '') {
-        detail.textContent = 'Large scenes can take a few minutes on the GPU.';
-      }
-    }
+    this.writeLoadingDetail();
   }
 
-  private setLoading(
-    active: boolean,
-    message = '',
-    loaded?: number,
-    total?: number,
-    stage?: LoadProgress['stage'],
-  ): void {
+  private setLoading(active: boolean, progress: LoadProgress | null = null): void {
     const overlay = must('#loading');
     const hint = must('#nav-hint');
     overlay.hidden = !active;
@@ -950,85 +977,141 @@ export class ViewerApp {
     if (!active) {
       window.clearInterval(this.elapsedTimer);
       this.elapsedTimer = 0;
+      this.detailLine = '';
       must('#loading-track').hidden = true;
       must('#loading-detail').textContent = '';
       must('#loading-elapsed').textContent = '';
       must('#loading-sr').textContent = '';
       return;
     }
-    if (message) must('#loading-text').textContent = message;
+    const current = progress ?? { loaded: 0, stage: 'detect' as const };
+    this.lastProgress = current;
+    if (current.message) must('#loading-text').textContent = current.message;
     const source = this.loadingSource;
     if (source) {
       const size = source.sizeBytes != null ? ` · ${formatBytes(source.sizeBytes)}` : '';
       must('#loading-file').textContent = `${source.name}${size}`;
-      must('#step-download-label').textContent = source.origin === 'file' ? 'Read' : 'Download';
     }
-    this.renderLoadingSteps(stage);
+    this.renderLoadingSteps(current);
     const track = must('#loading-track');
     const bar = must<HTMLElement>('#loading-bar');
+    const { loaded, total, stage } = current;
     const known = total !== undefined && total > 0 && loaded !== undefined && Number.isFinite(loaded);
     const determinate = known && stage !== 'gpu';
     track.hidden = false;
-    if (determinate && loaded !== undefined && total !== undefined) {
+    if (determinate && total !== undefined) {
       const ratio = Math.max(0, Math.min(1, loaded / total));
       const pct = Math.round(ratio * 100);
       track.classList.remove('is-indet');
       bar.style.width = `${(ratio * 100).toFixed(1)}%`;
       track.setAttribute('aria-valuenow', String(pct));
-      const byteLine =
-        stage === 'download' || total === source?.sizeBytes
-          ? `${formatBytes(loaded)} of ${formatBytes(total)}`
-          : '';
-      this.setLoadingDetail(byteLine, `${pct}%`);
     } else {
       track.classList.add('is-indet');
       bar.style.width = '';
       track.removeAttribute('aria-valuenow');
-      const gpuNote =
-        stage === 'gpu' && performance.now() - this.stageStarted > 20_000
-          ? 'Large scenes can take a few minutes on the GPU.'
-          : '';
-      this.setLoadingDetail(gpuNote, '');
     }
+    this.detailLine = progressLine(current, source);
+    this.writeLoadingDetail();
   }
 
-  private setLoadingDetail(left: string, right: string): void {
-    const detail = must('#loading-detail');
-    detail.replaceChildren();
-    if (left) {
-      const span = document.createElement('span');
-      span.textContent = left;
-      detail.append(span);
-    }
-    if (right) {
-      const span = document.createElement('span');
-      span.textContent = right;
-      if (!left) span.style.marginLeft = 'auto';
-      detail.append(span);
-    }
-  }
-
-  private renderLoadingSteps(stage?: LoadProgress['stage']): void {
-    const order = ['download', 'parse', 'gpu'] as const;
-    const index = stage == null || stage === 'detect' ? -1 : stage === 'ready' ? order.length : order.indexOf(stage);
-    const source = this.loadingSource;
-    const labels = [
-      source?.origin === 'file' ? 'Read' : 'Download',
-      'Decode',
-      'GPU upload',
-    ];
-    const items = must('#loading-steps').querySelectorAll('li');
-    items.forEach((item, i) => {
-      item.classList.toggle('is-done', i < index);
-      item.classList.toggle('is-active', i === index);
+  private currentStallHint(): string | null {
+    const progress = this.lastProgress;
+    const stage = progress?.stage ?? this.loadingStage ?? 'detect';
+    return stallHint({
+      phase: progress ? phaseOf(progress) : 'reading',
+      stage,
+      origin: this.loadingSource?.origin,
+      host: remoteHost(this.loadingSource),
+      idleMs: performance.now() - this.lastProgressAt,
+      splats: stage === 'gpu' ? progress?.loaded : undefined,
     });
-    if (stage && stage !== this.loadingStage) {
-      this.loadingStage = stage;
-      this.stageStarted = performance.now();
-      if (index >= 0 && index < order.length) {
-        must('#loading-sr').textContent = `${labels[index]}, step ${index + 1} of 3`;
-      }
+  }
+
+  private writeLoadingDetail(): void {
+    const hint = this.currentStallHint();
+    const detail = must('#loading-detail');
+    detail.textContent = hint ?? this.detailLine;
+  }
+
+  private renderLoadingSteps(progress: LoadProgress): void {
+    const stage = progress.stage;
+    const phase = phaseOf(progress);
+    const reading = readingLabel(this.loadingSource?.origin);
+    must('#step-download-label').textContent = reading;
+    const items = must('#loading-steps').querySelectorAll('li');
+    const activeIndex = stage === 'ready' ? items.length : phase === 'preparing' ? 1 : 0;
+    items.forEach((item, index) => {
+      const done = stage === 'ready' || index < activeIndex;
+      item.classList.toggle('is-done', done);
+      item.classList.toggle('is-active', stage !== 'ready' && index === activeIndex);
+    });
+    const step = stage === 'ready' ? 'ready' : phase;
+    if (step !== this.shownStep) {
+      this.shownStep = step;
+      if (step === 'reading') must('#loading-sr').textContent = `${reading}, step 1 of 2`;
+      else if (step === 'preparing') must('#loading-sr').textContent = 'Preparing scene, step 2 of 2';
     }
+    if (stage !== this.loadingStage) this.loadingStage = stage;
+  }
+
+  private resetQuality(): void {
+    window.clearTimeout(this.qualityTimer);
+    this.qualityTimer = 0;
+    this.qualityMode = 'off';
+    const badge = document.getElementById('file-quality');
+    if (!badge) return;
+    badge.hidden = true;
+    badge.removeAttribute('title');
+  }
+
+  private renderQuality(): void {
+    const badge = must('#file-quality');
+    if (must('#file-chip').hidden || !this.host) {
+      if (this.qualityMode !== 'off') this.resetQuality();
+      return;
+    }
+    const info = this.host.refinement();
+    const refining = info.pending && this.primitiveCount() >= REFINE_BADGE_ABOVE;
+    if (refining) {
+      window.clearTimeout(this.qualityTimer);
+      this.qualityTimer = 0;
+      this.qualityMode = 'preview';
+      badge.hidden = false;
+      must('#file-quality-icon').hidden = true;
+      must('#file-quality-label').textContent = 'Interactive preview';
+      const title = qualityTitle(info, this.splatCount());
+      if (title) badge.title = title;
+      else badge.removeAttribute('title');
+      return;
+    }
+    if (this.qualityMode !== 'preview') return;
+    this.qualityMode = 'full';
+    badge.hidden = false;
+    must('#file-quality-icon').hidden = false;
+    must('#file-quality-label').textContent = 'Full quality';
+    badge.removeAttribute('title');
+    window.clearTimeout(this.qualityTimer);
+    this.qualityTimer = window.setTimeout(() => {
+      badge.hidden = true;
+      this.qualityMode = 'off';
+    }, 2000);
+  }
+
+  private splatCount(): number {
+    let splats = 0;
+    for (const item of this.items) {
+      if (item.kind === 'splats') splats += item.getStats().primitives;
+    }
+    return splats;
+  }
+
+  private primitiveCount(): number {
+    let count = 0;
+    for (const item of this.items) {
+      const stats = item.getStats();
+      count += stats.primitives;
+    }
+    return count;
   }
 
   private cancelLoad(): void {
@@ -1275,6 +1358,7 @@ export class ViewerApp {
     this.syncShDegree();
     this.syncApplicable();
     this.syncReopen();
+    this.renderQuality();
   }
 
   private renderGeoref(extra: Record<string, string | number> | undefined): void {
@@ -1332,6 +1416,7 @@ export class ViewerApp {
     const item = this.items[0];
     if (!item) {
       chip.hidden = true;
+      this.resetQuality();
       return;
     }
     const labels: Record<string, string> = {
@@ -1394,6 +1479,7 @@ export class ViewerApp {
     must('#hud-summary-gpu').textContent = formatBytes(stats.gpuMemoryBytes);
     const pickIndex = document.getElementById('pick-index');
     if (pickIndex) pickIndex.textContent = this.host?.pickIndexLabel() ?? '';
+    this.renderQuality();
     const rowValue: Record<string, number> = { splats: shownSplats, points, tris };
     for (const row of hud.querySelectorAll<HTMLElement>('[data-hud-row]')) {
       row.hidden = (rowValue[row.dataset.hudRow ?? ''] ?? 0) === 0;
@@ -1692,6 +1778,30 @@ function clearStoredInflight(): void {
   } catch {
     /* private mode */
   }
+}
+
+function readingLabel(origin: AssetOrigin | undefined): string {
+  return origin === 'url' || origin === 'sample' ? 'Downloading' : 'Reading file';
+}
+
+function remoteHost(source: AssetSource | null): string | undefined {
+  const url = source?.url;
+  if (!url) return undefined;
+  try {
+    return new URL(url, window.location.href).host;
+  } catch {
+    return undefined;
+  }
+}
+
+function qualityTitle(info: Refinement, splats: number): string {
+  const parts: string[] = [];
+  if (info.index != null) {
+    parts.push(`Building pick index ${Math.min(99, Math.round(info.index * 100))}%`);
+  }
+  if (info.sorting) parts.push(splats > 0 ? `sorting ${formatCompact(splats)} splats` : 'sorting');
+  if (info.paging) parts.push('paging');
+  return parts.join(' · ');
 }
 
 function stallMessage(ms: number): string {

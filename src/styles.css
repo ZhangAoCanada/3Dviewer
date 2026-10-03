@@ -382,6 +382,7 @@ html.is-desktop #download-menu-item { display: none !important; }
   font-size: var(--text-xs);
   font-weight: 600;
 }
+#file-quality { flex: none; white-space: nowrap; }
 .badge-geo { border: 0; cursor: pointer; }
 .badge-geo:hover { background: var(--color-active); }
 .top-actions { flex: none; }
@@ -1001,7 +1002,9 @@ body.is-dragging .drop-overlay { opacity: 1; }
 .steps li.is-done .icon { opacity: 1; }
 .loading-detail {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
+  gap: 4px 12px;
   margin: 0;
   font-size: var(--text-sm);
   color: var(--color-text-muted);
