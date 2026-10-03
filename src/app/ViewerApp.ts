@@ -12,11 +12,12 @@ import { detectMemoryBudget } from '../core/memoryBudget';
 import { mergePresetOverrides, parseQualityPreset, resolvePreset, type PresetPlan } from '../core/qualityPreset';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
-import { readProbe, sourceFromFile, sourceFromUrl } from '../core/sniff';
+import { readProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
   type AssetOrigin,
   type AssetSource,
+  type CompanionFile,
   type GaussianLoadOverrides,
   type LoadProgress,
   type MemoryBudget,
@@ -50,6 +51,7 @@ import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/form
 import { phaseOf, progressLine, stallHint } from '../ui/loadPhase';
 import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
 import { bindMenu, pointerInside } from '../ui/menu';
+import { collectDropped, toDropEntry, type DropEntry } from '../ui/dropEntries';
 import { renderProblem, supportedFormats } from '../ui/problem';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
@@ -123,8 +125,11 @@ export class ViewerApp {
   private leveling = false;
   private levelPointer: { x: number; y: number; t: number } | null = null;
   private uprightStatus = 'As in file';
+  /** Loader promises still running. A loader that never settles stays counted. */
+  private inflight = 0;
 
   constructor() {
+    document.body.dataset.loads = '0';
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
     if (!canvas) throw new Error('Missing viewport canvas');
     this.budget = detectMemoryBudget();
@@ -200,17 +205,29 @@ export class ViewerApp {
     };
     must('#open-btn').addEventListener('click', open);
     must('#empty-open').addEventListener('click', open);
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files?.[0];
-      fileInput.value = '';
-      if (!file) return;
+    const folderInput = must<HTMLInputElement>('#folder-input');
+    const chooseFolder = () => {
       if (!this.host) {
         if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
         return;
       }
-      const source = sourceFromFile(file);
-      this.setQuery(null);
-      void this.load(source);
+      folderInput.click();
+    };
+    must('#empty-folder').addEventListener('click', chooseFolder);
+    fileInput.addEventListener('change', () => {
+      const files = [...(fileInput.files ?? [])];
+      fileInput.value = '';
+      if (files.length === 0) return;
+      this.openFiles(files.map((file) => ({ path: file.name, file })));
+    });
+    folderInput.addEventListener('change', () => {
+      const files = [...(folderInput.files ?? [])].map((file) => ({
+        path: file.webkitRelativePath || file.name,
+        file,
+      }));
+      folderInput.value = '';
+      if (files.length === 0) return;
+      this.openFiles(files);
     });
 
     must('#empty-sample').addEventListener('click', () => {
@@ -315,10 +332,23 @@ export class ViewerApp {
     window.addEventListener('drop', (event) => {
       event.preventDefault();
       document.body.classList.remove('is-dragging');
-      const file = event.dataTransfer?.files?.[0];
-      if (file) {
-        this.setQuery(null);
-        void this.load(sourceFromFile(file));
+      const entries: DropEntry[] = [];
+      const items = event.dataTransfer?.items;
+      if (items) {
+        for (let index = 0; index < items.length; index += 1) {
+          const entry = items[index]?.webkitGetAsEntry?.();
+          if (entry) entries.push(toDropEntry(entry));
+        }
+      }
+      if (entries.length > 0) {
+        void collectDropped(entries)
+          .then((files) => this.openFiles(files))
+          .catch(() => this.toast('Could not read that folder.', 'warn'));
+        return;
+      }
+      const files = event.dataTransfer?.files;
+      if (files && files.length > 0) {
+        this.openFiles([...files].map((file) => ({ path: file.name, file })));
       }
     });
 
@@ -838,7 +868,9 @@ export class ViewerApp {
         host.clear();
         this.renderSceneInfo();
       }
-      const renderable = await loader.load(source, {
+      this.inflight += 1;
+      document.body.dataset.loads = String(this.inflight);
+      const pending = loader.load(source, {
         signal: abort.signal,
         budget: plan.budget,
         extendedPrecision,
@@ -850,6 +882,15 @@ export class ViewerApp {
           this.setLoading(true, progress);
         },
       });
+      // `finally` returns a new promise that rejects with the same error.
+      // Catch that copy so a cancelled load is not an unhandled rejection.
+      void pending
+        .finally(() => {
+          this.inflight = Math.max(0, this.inflight - 1);
+          document.body.dataset.loads = String(this.inflight);
+        })
+        .catch(() => undefined);
+      const renderable = await pending;
       if (generation !== this.generation) {
         renderable.dispose();
         return;
@@ -1603,6 +1644,7 @@ export class ViewerApp {
         header: 'Header count',
         body: 'Body count',
         lodSplats: 'LoD splats',
+        materials: 'Materials',
       };
       if (stats.extra) {
         for (const [key, value] of Object.entries(stats.extra)) {
@@ -1752,6 +1794,7 @@ export class ViewerApp {
     }
     if (must('#panel').classList.contains('is-collapsed')) return;
     const perf = must('#perf-info');
+    const gpu = this.host?.gpuObjects();
     const rows: [string, string][] = [
       ['Backend', stats.webgpuAvailable ? 'WebGL2 (WebGPU present)' : 'WebGL2'],
       ['FPS', stats.idle ? 'idle' : formatFixed(stats.fps, 0)],
@@ -1759,6 +1802,7 @@ export class ViewerApp {
       ['Sort', stats.sortMs == null ? '—' : `${formatFixed(stats.sortMs, 0)} ms`],
       ['Active splats', formatCount(shownSplats)],
       ['GPU est.', formatBytes(stats.gpuMemoryBytes)],
+      ['GPU objects', gpu ? `${gpu.geometries} geometries · ${gpu.textures} textures` : '—'],
     ];
     perf.replaceChildren(
       ...rows.flatMap(([key, value]) => {
@@ -1850,6 +1894,7 @@ export class ViewerApp {
       retry: () => this.retryLoad(),
       retryLowerMemory: () => this.retryLowerMemory(),
       chooseFile: () => this.chooseFile(),
+      chooseFolder: () => this.chooseFolder(),
       openFile: () => this.chooseFile(),
       downloadApp: () => this.openDownloadDialog(),
       reinitGraphics: () => {
@@ -1924,6 +1969,36 @@ export class ViewerApp {
       return;
     }
     must<HTMLInputElement>('#file-input').click();
+  }
+
+  private chooseFolder(): void {
+    if (!this.host) {
+      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+      return;
+    }
+    must<HTMLInputElement>('#folder-input').click();
+  }
+
+  private openFiles(list: readonly CompanionFile[]): void {
+    if (!this.host) {
+      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+      return;
+    }
+    const picked = sourceFromFiles(list);
+    if (!picked) {
+      this.toast('No supported scene file in that selection.', 'info');
+      return;
+    }
+    if (picked.ignored.length > 0) {
+      const count = picked.ignored.length;
+      const noun = count === 1 ? 'file' : 'files';
+      this.toast(
+        `Opened ${picked.source.name}. Ignored ${count} other scene ${noun}: ${picked.ignored.join(', ')}.`,
+        'info',
+      );
+    }
+    this.setQuery(null);
+    void this.load(picked.source);
   }
 
   private snapshotForRetry(source: AssetSource): NavSnapshot | null {

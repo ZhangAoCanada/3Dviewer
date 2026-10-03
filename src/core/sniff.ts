@@ -1,4 +1,5 @@
-import type { AssetSource } from './types';
+import { pickPrimary } from './fileSet';
+import type { AssetSource, CompanionFile } from './types';
 
 export type PlyKind = 'gaussian' | 'points' | 'not-ply';
 
@@ -121,6 +122,24 @@ export function sourceFromFile(file: File, origin: AssetSource['origin'] = 'file
     origin,
     file,
     sizeBytes: file.size,
+  };
+}
+
+/** Pick the scene file in a multi-file or folder selection. `sourceFromFile` is unchanged. */
+export function sourceFromFiles(files: readonly CompanionFile[]): { source: AssetSource; ignored: string[] } | null {
+  const picked = pickPrimary(files);
+  if (!picked) return null;
+  const file = picked.primary.file;
+  return {
+    source: {
+      name: file.name,
+      extension: extensionOf(file.name),
+      origin: 'file',
+      file,
+      sizeBytes: file.size,
+      companions: [picked.primary, ...picked.companions],
+    },
+    ignored: picked.ignored,
   };
 }
 

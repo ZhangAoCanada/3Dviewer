@@ -12,6 +12,7 @@ import {
   type DecodeProgress,
 } from './decodeGaussianPly';
 import { LOD_ABOVE } from './gaussianPlan';
+import { abortReason, raceAbort } from '../../core/abortable';
 import { disposeIfAborted, throwIfAborted } from './disposeIfAborted';
 import { explainLoadError } from './explainLoadError';
 
@@ -94,12 +95,7 @@ function decodeInWorker(
       else if (data) resolve(data);
     };
     const onAbort = () => {
-      const reason = ctx.signal.reason;
-      const error =
-        reason instanceof Error && reason.name !== 'AbortError'
-          ? reason
-          : new DOMException('Load aborted', 'AbortError');
-      finish(error);
+      finish(abortReason(ctx.signal));
     };
     if (ctx.signal.aborted) {
       onAbort();
@@ -485,7 +481,7 @@ async function loadViaSpark(
       options.stream = stream.readable;
       options.streamLength = source.file.size;
     } else {
-      options.fileBytes = new Uint8Array(await source.file.arrayBuffer());
+      options.fileBytes = new Uint8Array(await raceAbort(source.file.arrayBuffer(), ctx.signal, () => {}));
     }
   } else if (source.bytes) {
     options.fileBytes = new Uint8Array(source.bytes);
@@ -513,8 +509,7 @@ async function loadViaSpark(
   const onAbort = () => release();
   ctx.signal.addEventListener('abort', onAbort);
   try {
-    await mesh.initialized;
-    disposeIfAborted({ dispose: release }, ctx.signal);
+    await raceAbort(mesh.initialized, ctx.signal, release);
     const count = splatCount(mesh);
     ctx.onProgress({
       loaded: count,

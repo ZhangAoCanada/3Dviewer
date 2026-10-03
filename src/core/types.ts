@@ -5,6 +5,13 @@ export type RepresentationKind = 'splats' | 'mesh' | 'points' | 'voxels';
 
 export type AssetOrigin = 'file' | 'url' | 'sample';
 
+/** A neighbor of the opened model: its `.bin`, `.mtl`, or an image. */
+export interface CompanionFile {
+  /** `webkitRelativePath`, a drop entry path without the leading slash, or the file name. */
+  path: string;
+  file: File;
+}
+
 /**
  * A file the user picked, dropped, or named by URL.
  * Loaders must not assume the bytes are already in memory.
@@ -19,6 +26,8 @@ export interface AssetSource {
   url?: string;
   bytes?: ArrayBuffer;
   sizeBytes?: number;
+  /** Other files selected with this one. Includes the primary so its folder is known. */
+  companions?: readonly CompanionFile[];
 }
 
 export interface LoadProgress {

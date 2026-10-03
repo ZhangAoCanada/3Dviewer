@@ -1,15 +1,12 @@
 import * as THREE from 'three';
 import type { Renderable, RenderableMeta, RenderableStats, RenderSettings } from '../core/types';
+import { disposeObject3D } from './disposeObject';
 import { nextId } from './ids';
 
 interface MeshSlot {
   mesh: THREE.Mesh;
   original: THREE.Material[];
   generated: THREE.Material[];
-}
-
-function isTexture(value: unknown): value is THREE.Texture {
-  return Boolean(value) && (value as THREE.Texture).isTexture === true;
 }
 
 function asMaterials(material: THREE.Material | THREE.Material[]): THREE.Material[] {
@@ -49,6 +46,7 @@ export class MeshRenderable implements Renderable {
     readonly name: string,
     readonly meta: RenderableMeta,
     root: THREE.Object3D,
+    private readonly facts?: { materials?: string; note?: string },
   ) {
     this.object = root;
     this.object.name = name;
@@ -121,6 +119,9 @@ export class MeshRenderable implements Renderable {
       }
       if (geo.index) memory += geo.index.array.byteLength;
     });
+    const extra: Record<string, string | number> = {};
+    if (this.facts?.materials) extra.materials = this.facts.materials;
+    if (this.facts?.note) extra.note = this.facts.note;
     return {
       kind: 'mesh',
       label: this.name,
@@ -128,6 +129,7 @@ export class MeshRenderable implements Renderable {
       triangles: this.triangleCount,
       vertices: this.vertexCount,
       memoryBytes: memory,
+      ...(Object.keys(extra).length > 0 ? { extra } : {}),
     };
   }
 
@@ -138,19 +140,11 @@ export class MeshRenderable implements Renderable {
   }
 
   dispose(): void {
-    const textures = new Set<THREE.Texture>();
     for (const slot of this.slots) {
       this.disposeGenerated(slot);
-      for (const material of slot.original) {
-        for (const value of Object.values(material)) {
-          if (isTexture(value)) textures.add(value);
-        }
-        material.dispose();
-      }
-      slot.mesh.geometry.dispose();
+      slot.mesh.material = slot.original.length === 1 ? (slot.original[0] as THREE.Material) : slot.original;
     }
-    for (const texture of textures) texture.dispose();
-    this.object.removeFromParent();
+    disposeObject3D(this.object);
   }
 
   private disposeGenerated(slot: MeshSlot): void {
