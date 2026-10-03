@@ -9,8 +9,11 @@ import { buildCoarse, collectCoarsePoints, disableSplatRaycast, isSplatObject, p
 import type { CoarseSurface } from './coarseSurface';
 import { SortIntervalTracker } from './sortTimer';
 import { collectIndexSources, SplatIndex, SplatIndexJob } from './splatIndex';
+import { FLIP_Y, isIdentityOrientation, robustBox, snapOrientation } from './upright';
 
 const DEFAULT_STD_DEV = Math.sqrt(8);
+/** Several quick turns rebuild the pick index once, after the user stops. */
+const INDEX_AFTER_MS = 600;
 
 export interface FrameStats {
   fps: number;
@@ -73,6 +76,12 @@ export class SceneHost {
   private readonly wheelMeshes: THREE.Object3D[] = [];
   private indexStamp = '';
   private flipVersion = 0;
+  private readonly identityCenter = new THREE.Vector3();
+  private hasIdentityCenter = false;
+  private pinnedUp: 'y' | 'z' | null = null;
+  private deferIndex = false;
+  private indexAfter = 0;
+  private pendingIndexBox: THREE.Box3 | null = null;
   private flat = false;
   private groundLevel = 0;
   private readonly sortTimer = new SortIntervalTracker();
@@ -214,6 +223,14 @@ export class SceneHost {
     for (const item of this.renderables) item.dispose();
     this.renderables.length = 0;
     this.content.clear();
+    this.content.quaternion.identity();
+    this.content.position.set(0, 0, 0);
+    this.content.updateMatrixWorld(true);
+    this.hasIdentityCenter = false;
+    this.pinnedUp = null;
+    this.deferIndex = false;
+    this.indexAfter = 0;
+    this.pendingIndexBox = null;
     this.index = null;
     this.indexJob = null;
     this.indexStamp = '';
@@ -250,18 +267,38 @@ export class SceneHost {
     this.viewDirty = true;
   }
 
-  setFlip(flip: boolean): void {
-    for (const item of this.renderables) {
-      if (flip) item.object.quaternion.set(1, 0, 0, 0);
-      else item.object.quaternion.identity();
-      item.object.updateMatrixWorld(true);
-    }
+  /** World rotation of the content group, relative to the file axes. */
+  get orientation(): THREE.Quaternion {
+    return this.content.quaternion.clone();
+  }
+
+  /**
+   * Rotate the whole scene about its unrotated bounds center.
+   * `up` is pinned while the rotation is not the identity, so a leveled scan
+   * keeps the axis the user was using instead of re-detecting a tilted box.
+   */
+  setOrientation(q: THREE.Quaternion, up: UpMode): void {
+    if (!this.hasIdentityCenter) this.captureIdentityCenter();
+    const snapped = snapOrientation(q);
+    const rotated = this.identityCenter.clone().applyQuaternion(snapped);
+    this.content.quaternion.copy(snapped);
+    this.content.position.copy(this.identityCenter).sub(rotated);
+    this.content.updateMatrixWorld(true);
+    this.pinnedUp = !isIdentityOrientation(snapped) && (up === 'y' || up === 'z') ? up : null;
     this.flipVersion += 1;
+    this.deferIndex = true;
     this.frameAll();
+    this.deferIndex = false;
+    this.viewDirty = true;
+  }
+
+  setFlip(flip: boolean): void {
+    this.setOrientation(flip ? FLIP_Y.clone() : new THREE.Quaternion(), this.upMode);
   }
 
   setUpMode(mode: UpMode): void {
     this.upMode = mode;
+    if (!isIdentityOrientation(this.content.quaternion)) this.pinnedUp = mode === 'y' || mode === 'z' ? mode : null;
     this.frameAll();
   }
 
@@ -283,23 +320,56 @@ export class SceneHost {
       any = true;
     }
     if (!any) return;
-    this.bounds.copy(box);
+    const oriented = !isIdentityOrientation(this.content.quaternion);
+    let measured = box;
+    if (oriented) {
+      const points = collectCoarsePoints(this.content);
+      if (points) {
+        const robust = robustBox(points);
+        if (!robust.isEmpty()) measured = robust;
+      }
+    }
+    this.bounds.copy(measured);
     this.hasBounds = true;
-    const size = box.getSize(new THREE.Vector3());
-    this.navigation.up = this.upMode === 'auto' ? detectUpAxis(size) : this.upMode;
+    const size = measured.getSize(new THREE.Vector3());
+    if (oriented && this.pinnedUp) this.navigation.up = this.pinnedUp;
+    else this.navigation.up = this.upMode === 'auto' ? detectUpAxis(size) : this.upMode;
     this.flat = isFlatScene(size, this.navigation.up);
     this.rebuildCoarse();
-    this.navigation.frame(box, this.flat ? this.groundLevel : undefined);
-    this.placeGrid(box, size);
+    this.navigation.frame(measured, this.flat ? this.groundLevel : undefined);
+    this.placeGrid(measured, size);
     this.viewDirty = true;
     const stamp = this.indexKey();
-    if (stamp === this.indexStamp && (this.index || this.indexJob)) return;
+    if (stamp === this.indexStamp && (this.index || this.indexJob || this.indexAfter > 0)) return;
     this.indexStamp = stamp;
+    if (this.deferIndex) {
+      this.index = null;
+      this.indexJob = null;
+      this.indexAfter = performance.now() + INDEX_AFTER_MS;
+      this.pendingIndexBox = box.clone();
+      return;
+    }
+    this.indexAfter = 0;
+    this.pendingIndexBox = null;
     this.startIndex(box);
   }
 
   resetView(): void {
     this.navigation.reset(true);
+  }
+
+  /** About 25 surface hits on a 5×5 grid inside a 32 px window. Points are copied. */
+  sampleGround(clientX: number, clientY: number): Float32Array {
+    const coords: number[] = [];
+    const step = 32 / 4;
+    for (let row = 0; row < 5; row += 1) {
+      for (let col = 0; col < 5; col += 1) {
+        const hit = this.pick(clientX + (col - 2) * step, clientY + (row - 2) * step);
+        if (hit?.kind !== 'surface') continue;
+        coords.push(hit.point.x, hit.point.y, hit.point.z);
+      }
+    }
+    return Float32Array.from(coords);
   }
 
   focusPointer(clientX: number, clientY: number): boolean {
@@ -435,6 +505,12 @@ export class SceneHost {
       for (const item of this.renderables) item.update(dt);
       const draw = this.needsDraw();
       this.sortTimer.sample((this.spark as unknown as { lastSortTime?: number }).lastSortTime, time);
+      if (this.indexAfter > 0 && this.pendingIndexBox && time >= this.indexAfter) {
+        this.indexAfter = 0;
+        const pending = this.pendingIndexBox;
+        this.pendingIndexBox = null;
+        this.startIndex(pending);
+      }
       if (this.indexJob) {
         const done = this.indexJob.pump(draw ? 2 : 6);
         if (done) {
@@ -603,6 +679,31 @@ export class SceneHost {
       if (triangleCount(mesh) <= 500_000) this.wheelMeshes.push(mesh);
     }
     return this.wheelMeshes;
+  }
+
+  private captureIdentityCenter(): void {
+    const savedQ = this.content.quaternion.clone();
+    const savedP = this.content.position.clone();
+    this.content.quaternion.identity();
+    this.content.position.set(0, 0, 0);
+    this.content.updateMatrixWorld(true);
+    try {
+      const box = new THREE.Box3();
+      let any = false;
+      for (const item of this.renderables) {
+        const bounds = item.getBounds();
+        if (!bounds || bounds.isEmpty()) continue;
+        box.union(bounds);
+        any = true;
+      }
+      if (!any) return;
+      box.getCenter(this.identityCenter);
+      this.hasIdentityCenter = true;
+    } finally {
+      this.content.quaternion.copy(savedQ);
+      this.content.position.copy(savedP);
+      this.content.updateMatrixWorld(true);
+    }
   }
 
   private indexKey(): string {

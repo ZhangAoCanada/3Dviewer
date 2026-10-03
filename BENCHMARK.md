@@ -105,6 +105,7 @@ These cells are for the owner to fill on the real file, in desktop Chrome. This 
 3. LoD splats, when a level-of-detail tree was built, are the **LoD splats** row under **Scene**. The figure in parentheses is `lodCount / count`. **Pick index** in that same section should read **ready** before you record a run.
 4. Memory is Chrome Task Manager: the tab plus the GPU process. Note the peak while the file is still loading, then the steady value after the view has settled.
 5. Open the viewer with the query string already in the address bar, then choose the drone file (or put the file on a URL and use `?url=`). Do not remove the query before the first load of that run. Record one row per address:
+6. Make upright: with the drone scan open, press **Make upright**, turn 90° about X once, and time how long until the splats look settled. That is "turn to settled". One burst of turns should rebuild the pick index once, after you stop pressing.
 
 | Run | Decoded SH | LoD | lodCount / count | Peak memory | Steady memory | Orbit fps | Sort ms | Catch-up |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -113,5 +114,9 @@ These cells are for the owner to fill on the real file, in desktop Chrome. This 
 | `?lod=force&sh=0` | | | | | | | | |
 | `torus.ply` sample | | | | | | | | |
 | `?demo=slab&n=1500000` | | | | | | | | |
+
+| Turn to settled (14,161,020 splats) | |
+| --- | --- |
+| | |
 
 For the torus sample and the slab demo, only `lodCount / count` is required. If `?lod=force&sh=1` crashes the tab, write "crashed" in that row. `?sh=2` and `?sh=3` are the same kind of cap if you want an extra row; the three runs above are the ones this batch asks for.

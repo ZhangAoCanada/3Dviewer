@@ -69,6 +69,7 @@
 <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" /><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" /><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></symbol>
 <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01" /><path d="M12 12h.01" /><path d="M14 8h.01" /><path d="M16 12h.01" /><path d="M18 8h.01" /><path d="M6 8h.01" /><path d="M7 16h10" /><path d="M8 12h.01" /><rect width="20" height="16" x="2" y="4" rx="2" /></symbol>
 <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /></symbol>
+<symbol id="i-axis-3d" viewBox="0 0 24 24"><path d="M4 4v16h16" /><path d="m4 20 7-7" /></symbol>
     </svg>
     <div id="app">
       <header class="topbar">
@@ -170,6 +171,9 @@
         <button id="reset-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Reset view" title="Reset view (R)">
           <svg class="icon" aria-hidden="true"><use href="#i-house"/></svg>
         </button>
+        <button id="upright-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Make upright" title="Make upright" aria-expanded="false" aria-controls="upright">
+          <svg class="icon" aria-hidden="true"><use href="#i-axis-3d"/></svg>
+        </button>
         <button id="fullscreen-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Enter full screen" title="Full screen" hidden>
           <svg class="icon when-windowed" aria-hidden="true"><use href="#i-maximize"/></svg>
           <svg class="icon when-fullscreen" aria-hidden="true"><use href="#i-minimize"/></svg>
@@ -252,8 +256,9 @@
           </details>
           <details id="sec-view" class="sec">
             <summary>View and navigation<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <label class="field-row"><span>Up axis <output id="up-using">Auto</output></span><span class="select"><select id="up-axis"><option value="auto" selected>Auto (flat scans use Z-up)</option><option value="y">Y-up</option><option value="z">Z-up</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
-            <label class="switch-row"><span>Flip Y (OpenCV / COLMAP)</span><input id="flip-y" type="checkbox" class="switch" role="switch" /></label>
+            <div class="field">
+              <button id="upright-open" class="btn btn-secondary btn-sm" type="button">Make upright…</button>
+            </div>
             <label class="field"><span>Sensitivity <output id="out-sensitivity">1.0</output></span><input id="sensitivity" type="range" min="0.4" max="2" step="0.05" value="1" /></label>
           </details>
           <details id="sec-perf" class="sec">
@@ -263,6 +268,8 @@
           </details>
           <details id="sec-advanced" class="sec">
             <summary>Advanced<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <label class="field-row"><span>Up axis <output id="up-using">Auto</output></span><span class="select"><select id="up-axis"><option value="auto" selected>Auto (flat scans use Z-up)</option><option value="y">Y-up</option><option value="z">Z-up</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
+            <label class="switch-row"><span>Flip Y (OpenCV / COLMAP)</span><input id="flip-y" type="checkbox" class="switch" role="switch" /></label>
             <label class="field-row" data-applies="splats"><span>SH degree</span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="field" data-applies="splats"><span>Splat cutoff <output id="out-splat-scale">1.0</output></span><input id="splat-scale" type="range" min="0.75" max="1.15" step="0.05" value="1" /></label>
             <label class="field" data-applies="splats"><span>LOD detail <output id="out-lod">1.0</output></span><input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" /></label>
@@ -316,6 +323,40 @@
         </div>
       </div>
       <div class="toast-stack">
+        <section id="upright" class="upright island" hidden aria-label="Make upright">
+          <div class="upright-head">
+            <h2>Make upright</h2>
+            <button id="upright-done" class="btn btn-ghost btn-sm" type="button">Done</button>
+          </div>
+          <div class="upright-turns" role="group" aria-label="Turn 90 degrees">
+            <p class="upright-kicker">Turn 90°</p>
+            <div class="upright-row">
+              <span class="axis-dot" data-axis="x" aria-hidden="true"></span>
+              <span class="upright-axis">X</span>
+              <button id="upright-x-ccw" class="btn btn-ghost btn-icon btn-sm upright-turn" type="button" aria-label="Turn X counterclockwise">↺</button>
+              <button id="upright-x-cw" class="btn btn-ghost btn-icon btn-sm upright-turn" type="button" aria-label="Turn X clockwise">↻</button>
+            </div>
+            <div class="upright-row">
+              <span class="axis-dot" data-axis="y" aria-hidden="true"></span>
+              <span class="upright-axis">Y</span>
+              <button id="upright-y-ccw" class="btn btn-ghost btn-icon btn-sm upright-turn" type="button" aria-label="Turn Y counterclockwise">↺</button>
+              <button id="upright-y-cw" class="btn btn-ghost btn-icon btn-sm upright-turn" type="button" aria-label="Turn Y clockwise">↻</button>
+            </div>
+            <div class="upright-row">
+              <span class="axis-dot" data-axis="z" aria-hidden="true"></span>
+              <span class="upright-axis">Z</span>
+              <button id="upright-z-ccw" class="btn btn-ghost btn-icon btn-sm upright-turn" type="button" aria-label="Turn Z counterclockwise">↺</button>
+              <button id="upright-z-cw" class="btn btn-ghost btn-icon btn-sm upright-turn" type="button" aria-label="Turn Z clockwise">↻</button>
+            </div>
+          </div>
+          <button id="upright-level" class="btn btn-secondary btn-sm" type="button" aria-pressed="false">Level from ground</button>
+          <p class="hint">Click the ground to level it.</p>
+          <p id="upright-status" class="upright-status">As in file</p>
+          <div class="upright-actions">
+            <button id="upright-undo" class="btn btn-ghost btn-sm" type="button">Undo</button>
+            <button id="upright-reset" class="btn btn-ghost btn-sm" type="button">Reset</button>
+          </div>
+        </section>
         <div id="toast" class="toast" role="status" data-kind="error" hidden>
           <svg class="icon toast-icon" aria-hidden="true"><use id="toast-icon" href="#i-circle-alert"/></svg>
           <p id="toast-msg" class="toast-msg"></p>
@@ -361,6 +402,7 @@
                 <dt>Pan</dt><dd>Right-drag, middle-drag, or Shift/Ctrl + drag</dd>
                 <dt>Zoom</dt><dd>Scroll (toward the cursor)</dd>
                 <dt>Fly to a point</dt><dd>Double-click</dd>
+                <dt>Make upright</dt><dd>Toolbar → turn or click the ground</dd>
               </dl>
             </section>
             <section>
