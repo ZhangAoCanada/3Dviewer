@@ -9,7 +9,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:4173/3Dviewer/',
     launchOptions: {
-      args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+      args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
     },
   },
   webServer: {

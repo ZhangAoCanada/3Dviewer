@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { chromium, expect, test, type Page } from '@playwright/test';
 
 const origin = 'http://127.0.0.1:4173/3Dviewer/';
 
@@ -108,11 +108,22 @@ test('cancel during preparing hides the card and leaves the chip empty', async (
   expect(Date.now() - cancelledAt).toBeLessThan(500);
   await expect(page.locator('#file-chip')).toBeHidden();
   expect(errors).toEqual([]);
+  await page.goto('about:blank');
 });
 
-test('slab badge reaches full quality and then hides', async ({ page }) => {
-  await page.goto('/?demo=slab&n=300000');
-  const badge = page.locator('#file-quality');
-  await expect(badge).toHaveText('Full quality', { timeout: 45_000 });
-  await expect(badge).toBeHidden({ timeout: 10_000 });
+test('slab badge reaches full quality and then hides', async () => {
+  // Own browser: a 300k sort in the shared browser wedges SwiftShader for the next test.
+  const browser = await chromium.launch({
+    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
+  });
+  const page = await browser.newPage({ baseURL: origin });
+  try {
+    await page.goto('/?demo=slab&n=300000');
+    const badge = page.locator('#file-quality');
+    await expect(badge).toHaveText('Full quality', { timeout: 45_000 });
+    await expect(badge).toBeHidden({ timeout: 10_000 });
+    await page.goto('about:blank');
+  } finally {
+    await browser.close();
+  }
 });
