@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { collectDiagnostics, formatReport, type LoadDiag } from '../core/diagnostics';
 import { presentEpsg } from '../core/epsg';
 import {
@@ -30,6 +31,20 @@ import { SceneHost } from '../render/SceneHost';
 import type { NavMode, NavSnapshot, UpMode } from '../render/Navigation';
 import { isTypingTarget } from '../render/Navigation';
 import { createDemoSlab } from '../render/demoSlab';
+import {
+  FLIP_Y,
+  fitPlane,
+  isIdentityOrientation,
+  levelRotation,
+  orientationLabel,
+  patchRadius,
+  quarterTurn,
+  readUpright,
+  rotationAngle,
+  snapOrientation,
+  uprightKey,
+  writeUpright,
+} from '../render/upright';
 import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
 import { phaseOf, progressLine, stallHint } from '../ui/loadPhase';
@@ -46,6 +61,8 @@ const LARGE_BYTES = 64 * 1024 * 1024;
 const REFINE_BADGE_ABOVE = 100_000;
 const SOFTWARE_TOAST =
   'Graphics are running in software mode, so large scenes will be slow. Turn on hardware acceleration in your browser settings.';
+const LEVEL_ALREADY_RADIANS = (0.5 * Math.PI) / 180;
+const UPRIGHT_HISTORY = 20;
 
 interface InflightRecord {
   name: string;
@@ -101,6 +118,11 @@ export class ViewerApp {
   private loadedPreset: QualityPreset | null = null;
   private softwareNotified = false;
   private contextTimer = 0;
+  private uprightHistory: { q: THREE.Quaternion; up: 'y' | 'z' }[] = [];
+  private levelUp: 'y' | 'z' = 'y';
+  private leveling = false;
+  private levelPointer: { x: number; y: number; t: number } | null = null;
+  private uprightStatus = 'As in file';
 
   constructor() {
     const canvas = document.querySelector<HTMLCanvasElement>('#view');
@@ -222,6 +244,31 @@ export class ViewerApp {
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
     must('#focus-btn').addEventListener('click', () => this.focusCenter());
     must('#reset-btn').addEventListener('click', () => this.host?.resetView());
+    must('#upright-btn').addEventListener('click', () => this.toggleUpright());
+    must('#upright-open').addEventListener('click', () => this.openUpright());
+    must('#upright-done').addEventListener('click', () => this.closeUpright());
+    must('#upright-undo').addEventListener('click', () => this.undoUpright());
+    must('#upright-reset').addEventListener('click', () => this.resetUpright());
+    must('#upright-level').addEventListener('click', () => this.setLeveling(!this.leveling));
+    for (const axis of ['x', 'y', 'z'] as const) {
+      must(`#upright-${axis}-ccw`).addEventListener('click', () => this.turn(axis, -1));
+      must(`#upright-${axis}-cw`).addEventListener('click', () => this.turn(axis, 1));
+    }
+    const canvas = must<HTMLCanvasElement>('#view');
+    canvas.addEventListener('pointerdown', (event) => {
+      if (!this.leveling || event.button !== 0) return;
+      this.levelPointer = { x: event.clientX, y: event.clientY, t: performance.now() };
+    });
+    canvas.addEventListener('pointerup', (event) => {
+      const start = this.levelPointer;
+      this.levelPointer = null;
+      if (!this.leveling || !start || event.button !== 0) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (dx * dx + dy * dy >= 16) return;
+      if (performance.now() - start.t >= 400) return;
+      this.levelAt(event.clientX, event.clientY);
+    });
     must('#theme-btn').addEventListener('click', () => this.toggleTheme());
     must('#panel-btn').addEventListener('click', () => this.togglePanel());
     must('#panel-close').addEventListener('click', () => {
@@ -277,6 +324,13 @@ export class ViewerApp {
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') {
         this.onEscape(event);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ' && !event.shiftKey && !event.altKey) {
+        if (!isTypingTarget(event.target) && !must('#upright').hidden) {
+          event.preventDefault();
+          this.undoUpright();
+        }
         return;
       }
       if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -376,6 +430,12 @@ export class ViewerApp {
     bindCheck('#flip-y', (on) => {
       this.settings.flipY = on;
       if (this.items.length > 0) this.host?.setFlip(on);
+      this.uprightHistory = [];
+      this.uprightStatus = this.orientationText();
+      this.syncUprightStatus();
+      this.persistUpright();
+      this.renderSceneInfo();
+      this.syncUpLabel();
     });
     bindCheck('#grid', (on) => {
       this.settings.showGrid = on;
@@ -467,6 +527,9 @@ export class ViewerApp {
       host.clear();
       host.add(renderable, this.settings);
       host.setFlip(false);
+      this.uprightHistory = [];
+      this.uprightStatus = this.orientationText();
+      this.syncUprightStatus();
       this.syncUpLabel();
       this.renderSceneInfo();
       loaded = true;
@@ -640,6 +703,12 @@ export class ViewerApp {
       this.cancelLoad();
       return;
     }
+    if (!must('#upright').hidden) {
+      event.preventDefault();
+      this.closeUpright();
+      must('#upright-btn').focus();
+      return;
+    }
     const panel = must('#panel');
     if (panel.classList.contains('is-collapsed')) return;
     const focusInside = panel.contains(document.activeElement);
@@ -663,7 +732,8 @@ export class ViewerApp {
     const sampleId = params.get('sample');
     if (!this.host) {
       if (url) this.loadingSource = sourceFromUrl(url);
-      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+      // Boot can finish after Back. Leave the empty state the user already chose.
+      if (this.graphicsFailure && this.surface !== 'empty') this.showProblem(this.graphicsFailure);
       this.setLoading(false);
       this.bootFinishedWithoutGraphics = true;
       return;
@@ -787,7 +857,7 @@ export class ViewerApp {
       host.add(renderable, this.settings);
       this.lastSource = source;
       this.loadedPreset = presetAtLoad;
-      host.setFlip(this.settings.flipY);
+      const restored = this.applyStoredOrientation(host, source);
       if (restore) {
         host.navigation.restore(restore);
         this.syncModeButtons(restore.mode);
@@ -797,6 +867,12 @@ export class ViewerApp {
       this.setEmpty(false);
       const note = renderable.getStats().extra?.note;
       if (typeof note === 'string' && note.length > 0) this.toast(note, 'warn');
+      if (restored) {
+        this.toast('Restored your upright setting for this file.', 'info', {
+          label: 'Reset',
+          run: () => this.resetUpright(),
+        });
+      }
       loaded = true;
     } catch (error) {
       if (generation !== this.generation) return;
@@ -832,6 +908,172 @@ export class ViewerApp {
     must('#mode-fly').classList.toggle('is-on', mode === 'fly');
     must('#mode-orbit').setAttribute('aria-pressed', mode === 'orbit' ? 'true' : 'false');
     must('#mode-fly').setAttribute('aria-pressed', mode === 'fly' ? 'true' : 'false');
+  }
+
+  private toggleUpright(): void {
+    if (must('#upright').hidden) this.openUpright();
+    else this.closeUpright();
+  }
+
+  private openUpright(): void {
+    const panel = must('#upright');
+    const opening = panel.hidden;
+    panel.hidden = false;
+    must('#upright-btn').setAttribute('aria-expanded', 'true');
+    if (opening && this.host) this.levelUp = this.host.upAxis;
+    this.syncUprightStatus();
+  }
+
+  private closeUpright(): void {
+    must('#upright').hidden = true;
+    must('#upright-btn').setAttribute('aria-expanded', 'false');
+    this.setLeveling(false);
+  }
+
+  private setLeveling(on: boolean): void {
+    this.leveling = on;
+    if (!on) this.levelPointer = null;
+    must('#upright-level').setAttribute('aria-pressed', on ? 'true' : 'false');
+    document.body.classList.toggle('is-leveling', on);
+  }
+
+  private turn(axis: 'x' | 'y' | 'z', sign: 1 | -1): void {
+    const host = this.host;
+    if (!host || this.items.length === 0) return;
+    this.rememberUpright();
+    const next = snapOrientation(quarterTurn(axis, sign).multiply(host.orientation));
+    host.setOrientation(next, host.upAxis);
+    this.uprightStatus = this.orientationText();
+    this.syncUprightStatus();
+    this.persistUpright();
+    this.renderSceneInfo();
+    this.syncUpLabel();
+  }
+
+  private levelAt(clientX: number, clientY: number): void {
+    const host = this.host;
+    if (!host || this.items.length === 0) return;
+    const points = host.sampleGround(clientX, clientY);
+    const fit = fitPlane(points);
+    const radius = patchRadius(points);
+    if (!fit || (radius > 0 && fit.rms > 0.15 * radius)) {
+      this.toast('That spot is not flat enough. Try a road, floor, or field.', 'info');
+      return;
+    }
+    let cx = 0;
+    let cy = 0;
+    let cz = 0;
+    for (let i = 0; i < fit.count; i += 1) {
+      cx += points[i * 3] ?? 0;
+      cy += points[i * 3 + 1] ?? 0;
+      cz += points[i * 3 + 2] ?? 0;
+    }
+    const toward = host.camera.position.clone().sub(new THREE.Vector3(cx / fit.count, cy / fit.count, cz / fit.count));
+    const up = this.levelUp === 'z' ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+    const level = levelRotation(fit.normal, toward, up);
+    const tilt = rotationAngle(level);
+    if (tilt < LEVEL_ALREADY_RADIANS) {
+      this.toast('Already level.', 'info');
+      return;
+    }
+    this.rememberUpright();
+    const next = snapOrientation(level.multiply(host.orientation));
+    host.setOrientation(next, this.levelUp);
+    this.uprightStatus = `Leveled, ${((tilt * 180) / Math.PI).toFixed(1)}° tilt removed`;
+    this.syncUprightStatus();
+    this.persistUpright();
+    this.renderSceneInfo();
+    this.syncUpLabel();
+  }
+
+  private undoUpright(): void {
+    const host = this.host;
+    const previous = this.uprightHistory.pop();
+    if (!host || !previous) return;
+    host.setOrientation(previous.q, previous.up);
+    this.uprightStatus = this.orientationText();
+    this.syncUprightStatus();
+    this.persistUpright();
+    this.renderSceneInfo();
+    this.syncUpLabel();
+  }
+
+  private resetUpright(): void {
+    const host = this.host;
+    if (!host || this.items.length === 0) return;
+    this.rememberUpright();
+    host.setOrientation(this.fileQuaternion(), host.upMode);
+    this.uprightStatus = 'As in file';
+    this.syncUprightStatus();
+    this.persistUpright();
+    this.renderSceneInfo();
+    this.syncUpLabel();
+  }
+
+  private rememberUpright(): void {
+    const host = this.host;
+    if (!host) return;
+    this.uprightHistory.push({ q: host.orientation, up: host.upAxis });
+    if (this.uprightHistory.length > UPRIGHT_HISTORY) this.uprightHistory.shift();
+  }
+
+  private applyStoredOrientation(host: SceneHost, source: AssetSource): boolean {
+    this.uprightHistory = [];
+    const stored = this.storedUpright(source);
+    if (!stored) {
+      host.setFlip(this.settings.flipY);
+      this.uprightStatus = this.orientationText();
+      this.syncUprightStatus();
+      return false;
+    }
+    host.setOrientation(new THREE.Quaternion(stored.q[0], stored.q[1], stored.q[2], stored.q[3]), stored.up);
+    this.uprightStatus = this.orientationText();
+    this.syncUprightStatus();
+    if (!must('#upright').hidden) this.levelUp = host.upAxis;
+    return true;
+  }
+
+  private storedUpright(source: AssetSource) {
+    try {
+      return readUpright(localStorage)[uprightKey(source)] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private persistUpright(): void {
+    const source = this.lastSource;
+    const host = this.host;
+    if (!source || !host) return;
+    const relative = host.orientation.multiply(this.fileQuaternion().invert());
+    const current = host.orientation;
+    const entry = isIdentityOrientation(relative)
+      ? null
+      : {
+          q: [current.x, current.y, current.z, current.w] as [number, number, number, number],
+          up: host.upAxis,
+          at: Date.now(),
+        };
+    try {
+      writeUpright(localStorage, uprightKey(source), entry);
+    } catch {
+      /* quota or private mode */
+    }
+  }
+
+  private fileQuaternion(): THREE.Quaternion {
+    return this.settings.flipY ? FLIP_Y.clone() : new THREE.Quaternion();
+  }
+
+  private orientationText(): string {
+    const host = this.host;
+    if (!host || this.items.length === 0) return 'As in file';
+    return orientationLabel(host.orientation.multiply(this.fileQuaternion().invert()));
+  }
+
+  private syncUprightStatus(): void {
+    const node = document.querySelector('#upright-status');
+    if (node) node.textContent = this.uprightStatus;
   }
 
   private focusCenter(): void {
@@ -1331,6 +1573,7 @@ export class ViewerApp {
       if (stats.triangles) rows.push(['Triangles', formatCount(stats.triangles)]);
       const ms = item.meta.loadMs;
       rows.push(['Load time', ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`]);
+      rows.push(['Orientation', this.orientationText()]);
       const skip = new Set(['epsg', 'offset', 'bounds', 'note']);
       const extraLabels: Record<string, string> = {
         stride: 'Sample stride',

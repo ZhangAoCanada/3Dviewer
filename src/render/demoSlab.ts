@@ -12,7 +12,7 @@ export async function createDemoSlab(count = 48_000): Promise<GaussianRenderable
     const row = Math.floor(i / columns);
     const x = (col / (columns - 1)) * 590;
     const y = (row / Math.max(1, rows - 1)) * 490;
-    const z = 12 + 22 * Math.sin(x * 0.018) * Math.cos(y * 0.014) + ((i * 13) % 9);
+    const z = 12 + ((i * 13) % 9);
     const shade = 0.28 + (z / 70) * 0.55;
     writePackedSplat(packed, i, x, y, z, 1.15, 1.15, 0.55, 0, 0, 0, 1, 0.92, 0.42 + shade * 0.2, shade, 0.32);
   }

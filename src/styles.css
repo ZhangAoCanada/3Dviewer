@@ -799,6 +799,70 @@ input[type='range']::-moz-range-thumb {
 
 body.no-graphics #toolbar,
 body.no-graphics #hud { display: none; }
+body.is-leveling #view { cursor: crosshair; }
+
+#upright {
+  align-self: center;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: min(280px, 100%);
+  height: auto;
+  min-height: 0;
+  /* Stay in the lower half so a click on the canvas center still hits the ground. */
+  max-height: calc(50vh - var(--safe-bottom) - var(--inset) - var(--island-h) - var(--space-3) - 16px);
+  overflow: auto;
+  padding: var(--space-3);
+  pointer-events: auto;
+}
+#upright-open { width: 100%; }
+.upright-head,
+.upright-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.upright-head h2 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.upright-turns { display: grid; gap: var(--space-1); }
+.upright-kicker {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.upright-row {
+  display: grid;
+  grid-template-columns: 8px 1.4em auto auto;
+  align-items: center;
+  justify-content: start;
+  gap: var(--space-2);
+}
+.upright-axis { font-size: var(--text-sm); }
+.upright-turn { font-size: var(--text-md); }
+.upright-status {
+  margin: 0;
+  min-height: var(--leading-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.upright-actions { justify-content: flex-end; }
+#upright-level { width: 100%; }
+.axis-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+}
+.axis-dot[data-axis='x'] { background: #e5484d; }
+.axis-dot[data-axis='y'] { background: #46a758; }
+.axis-dot[data-axis='z'] { background: #3e8ed0; }
+@media (max-width: 640px) {
+  #upright { width: 100%; }
+}
 
 .empty {
   position: absolute;
