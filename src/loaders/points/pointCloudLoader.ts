@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { blobSource } from '../../core/byteSource';
+import { fetchBlobWithProgress } from '../../core/fetchProgress';
 import type { AssetSource, FormatLoader, LoadContext } from '../../core/types';
 import { sniffPoints } from '../../core/sniff';
 import { detectUpAxis } from '../../render/cameraMotion';
@@ -10,10 +11,21 @@ async function blobOf(source: AssetSource, ctx: LoadContext): Promise<Blob> {
   if (source.file) return source.file;
   if (source.bytes) return new Blob([source.bytes]);
   if (!source.url) throw new Error(`No data for ${source.name}`);
-  ctx.onProgress({ loaded: 0, stage: 'download', message: `Downloading ${source.name}` });
-  const res = await fetch(source.url, { signal: ctx.signal });
-  if (!res.ok) throw new Error(`Could not download ${source.name} (${res.status})`);
-  return res.blob();
+  const message = `Downloading ${source.name}`;
+  const report = (bytes: { loaded: number; total?: number }) => {
+    ctx.onProgress({ loaded: bytes.loaded, total: bytes.total, stage: 'download', message, bytes });
+  };
+  report({ loaded: 0, total: source.sizeBytes });
+  try {
+    return await fetchBlobWithProgress(source.url, ctx.signal, report);
+  } catch (error) {
+    if (ctx.signal.aborted) throw error;
+    if (error instanceof Error && /^Could not download \(/.test(error.message)) {
+      const status = error.message.slice('Could not download ('.length, -1);
+      throw new Error(`Could not download ${source.name} (${status})`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 function parseInWorker(

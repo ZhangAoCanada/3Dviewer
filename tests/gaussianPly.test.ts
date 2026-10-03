@@ -227,7 +227,16 @@ describe('decodeGaussianPly', () => {
         return blob.slice(start, endByte).arrayBuffer();
       },
     };
-    await decodeGaussianPly(source, { budget: desktop, preferExtended: false, chunkBytes: 500 });
+    const reports: number[] = [];
+    await decodeGaussianPly(source, {
+      budget: desktop,
+      preferExtended: false,
+      chunkBytes: 500,
+      onProgress: (progress) => {
+        if (progress.bytes != null) reports.push(progress.bytes);
+      },
+    });
+    expect(reports[reports.length - 1]).toBe(headerBytes + 5 * 248);
     const body = calls.filter(([start]) => start >= headerBytes);
     expect(body.length).toBeGreaterThan(0);
     let cursor = headerBytes;

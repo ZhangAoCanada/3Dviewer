@@ -80,6 +80,10 @@
             <span id="file-kind" class="badge">Splats</span>
             <span id="file-name" class="file-name"></span>
             <span id="file-size" class="file-size"></span>
+            <span id="file-quality" class="badge" hidden>
+              <svg id="file-quality-icon" class="icon icon-sm" aria-hidden="true" hidden><use href="#i-check"/></svg>
+              <span id="file-quality-label"></span>
+            </span>
             <button id="geo-badge" class="badge badge-geo" type="button" hidden aria-label="Show georeference">
               <svg class="icon icon-sm" aria-hidden="true"><use href="#i-map-pin"/></svg><span id="geo-badge-text"></span>
             </button>
@@ -304,9 +308,8 @@
             <button id="loading-cancel" class="btn btn-ghost btn-sm" type="button" hidden>Cancel</button>
           </div>
           <ol id="loading-steps" class="steps" aria-hidden="true">
-            <li data-step="download"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span><span id="step-download-label">Read</span></li>
-            <li data-step="parse"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span>Decode</li>
-            <li data-step="gpu"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span>GPU upload</li>
+            <li data-step="reading"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span><span id="step-download-label">Reading file</span></li>
+            <li data-step="preparing"><span class="step-dot"><svg class="icon"><use href="#i-check"/></svg></span>Preparing scene</li>
           </ol>
           <div id="loading-track" class="load-track" role="progressbar" aria-labelledby="loading-text" aria-valuemin="0" aria-valuemax="100" hidden>
             <div id="loading-bar" class="load-bar"></div>

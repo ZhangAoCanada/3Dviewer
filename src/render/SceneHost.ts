@@ -12,6 +12,15 @@ import { collectIndexSources, SplatIndex, SplatIndexJob } from './splatIndex';
 
 const DEFAULT_STD_DEV = Math.sqrt(8);
 
+/** What is still refining after the loading card closes. */
+export interface Refinement {
+  pending: boolean;
+  /** Pick-index build fraction, or null when no index job is running. */
+  index: number | null;
+  paging: boolean;
+  sorting: boolean;
+}
+
 export interface FrameStats {
   fps: number;
   frameMs: number;
@@ -55,6 +64,9 @@ export class SceneHost {
   private coarse: CoarseSurface | null = null;
   private index: SplatIndex | null = null;
   private indexJob: SplatIndexJob | null = null;
+  /** `lastSortTime` captured when a splat scene was added, before its first sort. */
+  private sortMark = 0;
+  private awaitingSort = false;
   private readonly bounds = new THREE.Box3();
   private hasBounds = false;
   private viewDirty = true;
@@ -217,6 +229,8 @@ export class SceneHost {
     this.index = null;
     this.indexJob = null;
     this.indexStamp = '';
+    this.awaitingSort = false;
+    this.sortMark = 0;
     this.coarse = null;
     this.flat = false;
     this.groundLevel = 0;
@@ -234,6 +248,40 @@ export class SceneHost {
     this.applyEnvironment(settings);
     this.rebuildPickMeshes();
     this.viewDirty = true;
+    if (renderable.kind === 'splats') this.armSortWatch();
+  }
+
+  /**
+   * Pick index, LOD paging, and the first Spark sort after `add`.
+   * Meshes and clouds that finish before the next stats sample report nothing pending.
+   */
+  refinement(): Refinement {
+    const index = this.indexJob ? this.indexJob.progress : null;
+    const paging = this.pagerPending();
+    const sorting = this.sortingPending();
+    return { pending: index != null || paging || sorting, index, paging, sorting };
+  }
+
+  private armSortWatch(): void {
+    const spark = this.spark as unknown as { lastSortTime?: number };
+    this.sortMark = spark.lastSortTime ?? 0;
+    this.awaitingSort = true;
+  }
+
+  /** True until the first sort after `add` finishes. A missing `sorting` field means not sorting. */
+  private sortingPending(): boolean {
+    if (!this.awaitingSort) return false;
+    const spark = this.spark as unknown as { lastSortTime?: number; sorting?: boolean };
+    if (typeof spark.sorting !== 'boolean') {
+      this.awaitingSort = false;
+      return false;
+    }
+    const changed = spark.lastSortTime !== this.sortMark;
+    if (changed && spark.sorting === false) {
+      this.awaitingSort = false;
+      return false;
+    }
+    return true;
   }
 
   applySettings(settings: RenderSettings): void {

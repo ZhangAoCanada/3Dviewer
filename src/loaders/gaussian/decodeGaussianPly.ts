@@ -149,6 +149,8 @@ export interface DecodeProgress {
   loaded: number;
   total: number;
   message: string;
+  /** File offset reached: header bytes plus splats scanned times the vertex stride. */
+  bytes?: number;
 }
 
 export interface GaussianBounds {
@@ -338,10 +340,12 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     const now = performance.now();
     if (!force && now - lastReport < 150) return;
     lastReport = now;
+    const bytesRead = header.byteLength + scanned * header.stride;
     options.onProgress?.({
       loaded: scanned,
       total: resolved.count,
       message: `Decoding ${scanned.toLocaleString()} / ${resolved.count.toLocaleString()} splats`,
+      bytes: bytesRead,
     });
   };
   report(0, true);

@@ -1,9 +1,16 @@
 import { ExtSplats, PackedSplats, SplatFileType, SplatMesh, type SplatMeshOptions } from '@sparkjsdev/spark';
 import { blobSource, rangeSource, type ByteSource } from '../../core/byteSource';
-import type { AssetSource, FormatLoader, LoadContext, MemoryBudget } from '../../core/types';
+import { fetchBlobWithProgress } from '../../core/fetchProgress';
+import type { AssetSource, FormatLoader, LoadContext, LoadProgress, MemoryBudget } from '../../core/types';
 import { sniffGaussian } from '../../core/sniff';
 import { GaussianRenderable, splatCount, type GaussianSceneInfo } from '../../renderables/gaussianRenderable';
-import { decodeGaussianPly, GaussianPlyUnsupported, inspectGaussianPly, type DecodedGaussian } from './decodeGaussianPly';
+import {
+  decodeGaussianPly,
+  GaussianPlyUnsupported,
+  inspectGaussianPly,
+  type DecodedGaussian,
+  type DecodeProgress,
+} from './decodeGaussianPly';
 import { LOD_ABOVE } from './gaussianPlan';
 import { disposeIfAborted, throwIfAborted } from './disposeIfAborted';
 import { explainLoadError } from './explainLoadError';
@@ -44,17 +51,37 @@ async function blobOf(source: AssetSource, ctx: LoadContext): Promise<Blob> {
   if (source.file) return source.file;
   if (source.bytes) return new Blob([source.bytes]);
   if (!source.url) throw new Error(`No data for ${source.name}`);
-  ctx.onProgress({ loaded: 0, stage: 'download', message: `Downloading ${source.name}` });
-  const res = await fetch(source.url, { signal: ctx.signal });
-  if (!res.ok) throw new Error(`Could not download ${source.name} (${res.status})`);
-  return res.blob();
+  const message = `Downloading ${source.name}`;
+  const report = (bytes: { loaded: number; total?: number }) => {
+    ctx.onProgress({ loaded: bytes.loaded, total: bytes.total, stage: 'download', message, bytes });
+  };
+  report({ loaded: 0, total: source.sizeBytes });
+  try {
+    return await fetchBlobWithProgress(source.url, ctx.signal, report);
+  } catch (error) {
+    if (ctx.signal.aborted) throw error;
+    throw renameDownloadError(source.name, error);
+  }
+}
+
+function renameDownloadError(name: string, error: unknown): unknown {
+  if (error instanceof Error && /^Could not download \(/.test(error.message)) {
+    const status = error.message.slice('Could not download ('.length, -1);
+    return new Error(`Could not download ${name} (${status})`, { cause: error });
+  }
+  return error;
 }
 
 type DecodeRequest =
   | { blob: Blob; budget: MemoryBudget; preferExtended: boolean; overrides?: LoadContext['overrides'] }
   | { url: string; size: number; budget: MemoryBudget; preferExtended: boolean; overrides?: LoadContext['overrides'] };
 
-function decodeInWorker(request: DecodeRequest, ctx: LoadContext): Promise<DecodedGaussian> {
+function decodeInWorker(
+  request: DecodeRequest,
+  ctx: LoadContext,
+  reading: boolean,
+  byteTotal: number | undefined,
+): Promise<DecodedGaussian> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../../workers/gaussianPly.worker.ts', import.meta.url), { type: 'module' });
     let settled = false;
@@ -79,15 +106,12 @@ function decodeInWorker(request: DecodeRequest, ctx: LoadContext): Promise<Decod
       return;
     }
     ctx.signal.addEventListener('abort', onAbort, { once: true });
-    worker.onmessage = (event: MessageEvent<{ type: string; progress?: { loaded: number; total: number; message: string }; data?: DecodedGaussian; message?: string; name?: string }>) => {
+    worker.onmessage = (
+      event: MessageEvent<{ type: string; progress?: DecodeProgress; data?: DecodedGaussian; message?: string; name?: string }>,
+    ) => {
       const payload = event.data;
       if (payload.type === 'progress' && payload.progress) {
-        ctx.onProgress({
-          loaded: payload.progress.loaded,
-          total: payload.progress.total,
-          stage: 'parse',
-          message: payload.progress.message,
-        });
+        emitDecodeProgress(ctx, payload.progress, reading, byteTotal);
         return;
       }
       if (payload.type === 'result' && payload.data) {
@@ -235,6 +259,28 @@ async function meshFromDecoded(
 
 type StandardPlyInput = { kind: 'blob'; blob: Blob } | { kind: 'range'; url: string; size: number };
 
+/** A local file or a range URL is still being read while it is decoded. */
+function readingWhileDecoding(source: AssetSource, input: StandardPlyInput): boolean {
+  return input.kind === 'range' || source.file != null;
+}
+
+function emitDecodeProgress(
+  ctx: LoadContext,
+  progress: DecodeProgress,
+  reading: boolean,
+  byteTotal: number | undefined,
+): void {
+  const update: LoadProgress = {
+    loaded: progress.loaded,
+    total: progress.total,
+    stage: 'parse',
+    message: progress.message,
+    phase: reading ? 'reading' : 'preparing',
+  };
+  if (progress.bytes != null) update.bytes = { loaded: progress.bytes, total: byteTotal };
+  ctx.onProgress(update);
+}
+
 function standardSource(input: StandardPlyInput, signal: AbortSignal): ByteSource {
   return input.kind === 'blob' ? blobSource(input.blob) : rangeSource(input.url, input.size, signal);
 }
@@ -247,6 +293,8 @@ async function loadStandardPly(
 ): Promise<GaussianRenderable> {
   const size = source.sizeBytes ?? (input.kind === 'blob' ? input.blob.size : input.size);
   const preferExtended = ctx.extendedPrecision || size >= EXTENDED_BYTES;
+  const reading = readingWhileDecoding(source, input);
+  const byteTotal = input.kind === 'blob' ? input.blob.size : input.size;
   let decoded: DecodedGaussian;
   try {
     decoded = await decodeInWorker(
@@ -254,6 +302,8 @@ async function loadStandardPly(
         ? { blob: input.blob, budget: ctx.budget, preferExtended, overrides: ctx.overrides }
         : { url: input.url, size: input.size, budget: ctx.budget, preferExtended, overrides: ctx.overrides },
       ctx,
+      reading,
+      byteTotal,
     );
   } catch (error) {
     if (ctx.signal.aborted) throw error;
@@ -266,7 +316,7 @@ async function loadStandardPly(
       overrides: ctx.overrides,
       signal: ctx.signal,
       onProgress: (progress) => {
-        ctx.onProgress({ ...progress, stage: 'parse' });
+        emitDecodeProgress(ctx, progress, reading, byteTotal);
       },
     });
   }
@@ -342,6 +392,65 @@ export const gaussianLoader: FormatLoader = {
   },
 };
 
+/** Fetch a non-paged URL into a stream Spark can abort, and count the bytes. */
+async function streamRemote(
+  url: string,
+  size: number,
+  name: string,
+  ctx: LoadContext,
+): Promise<{ stream: ReadableStream<Uint8Array>; length: number }> {
+  const res = await fetch(url, { signal: ctx.signal });
+  if (!res.ok) throw new Error(`Could not download ${name} (${res.status})`);
+  if (!res.body) throw new Error(`Could not download ${name} (network)`);
+  const header = Number(res.headers.get('content-length'));
+  const total = Number.isFinite(header) && header > 0 ? header : size;
+  let loaded = 0;
+  const reader = res.body.getReader();
+  const stop = () => {
+    void reader.cancel(ctx.signal.reason).catch(() => undefined);
+  };
+  if (ctx.signal.aborted) {
+    stop();
+    throw new DOMException('Load aborted', 'AbortError');
+  }
+  ctx.signal.addEventListener('abort', stop, { once: true });
+  ctx.onProgress({
+    loaded: 0,
+    total,
+    stage: 'download',
+    message: `Downloading ${name}`,
+    bytes: { loaded: 0, total },
+  });
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done || !value) {
+          ctx.signal.removeEventListener('abort', stop);
+          controller.close();
+          return;
+        }
+        loaded += value.byteLength;
+        ctx.onProgress({
+          loaded,
+          total,
+          stage: 'download',
+          message: `Downloading ${name}`,
+          bytes: { loaded, total },
+        });
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      ctx.signal.removeEventListener('abort', stop);
+      return reader.cancel(reason);
+    },
+  });
+  return { stream, length: total };
+}
+
 async function loadViaSpark(
   source: AssetSource,
   ctx: LoadContext,
@@ -380,6 +489,10 @@ async function loadViaSpark(
     }
   } else if (source.bytes) {
     options.fileBytes = new Uint8Array(source.bytes);
+  } else if (source.url && source.extension !== 'rad' && size !== undefined && size > 0) {
+    const downloaded = await streamRemote(source.url, size, source.name, ctx);
+    options.stream = downloaded.stream;
+    options.streamLength = downloaded.length;
   } else if (source.url) {
     options.url = source.url;
   } else {
