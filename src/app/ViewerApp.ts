@@ -710,7 +710,8 @@ export class ViewerApp {
     const sampleId = params.get('sample');
     if (!this.host) {
       if (url) this.loadingSource = sourceFromUrl(url);
-      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+      // Boot can finish after Back. Leave the empty state the user already chose.
+      if (this.graphicsFailure && this.surface !== 'empty') this.showProblem(this.graphicsFailure);
       this.setLoading(false);
       this.bootFinishedWithoutGraphics = true;
       return;
