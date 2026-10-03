@@ -18,8 +18,8 @@ export function raceAbort<T>(work: Promise<T>, signal: AbortSignal, onLate: (val
     );
     return Promise.reject(abortReason(signal));
   }
-  return new Promise((resolve, reject) => {
-    let settled = false;
+  let settled = false;
+  return new Promise<T>((resolve, reject) => {
     const fail = () => {
       if (settled) return;
       settled = true;

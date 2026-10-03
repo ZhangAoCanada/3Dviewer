@@ -882,10 +882,14 @@ export class ViewerApp {
           this.setLoading(true, progress);
         },
       });
-      void pending.finally(() => {
-        this.inflight = Math.max(0, this.inflight - 1);
-        document.body.dataset.loads = String(this.inflight);
-      });
+      // `finally` returns a new promise that rejects with the same error.
+      // Catch that copy so a cancelled load is not an unhandled rejection.
+      void pending
+        .finally(() => {
+          this.inflight = Math.max(0, this.inflight - 1);
+          document.body.dataset.loads = String(this.inflight);
+        })
+        .catch(() => undefined);
       const renderable = await pending;
       if (generation !== this.generation) {
         renderable.dispose();

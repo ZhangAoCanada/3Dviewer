@@ -35,8 +35,18 @@ function hangingGltf(): string {
   });
 }
 
+function requestPath(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
+/** Match the asset path only. A page URL whose query ends in the file name is not a hang. */
 function isHung(url: string): boolean {
-  return /hang\.(glb|gltf|obj|splat)$/.test(url) || /gaussian\.ply$/.test(url) || /points\.ply$/.test(url) || url.endsWith('/scene.bin');
+  const path = requestPath(url);
+  return /\/hang\.(glb|gltf|obj|splat)$/.test(path) || /\/(?:gaussian|points)\.ply$/.test(path) || path.endsWith('/scene.bin');
 }
 
 async function armHang(
@@ -73,7 +83,7 @@ async function armHang(
         }),
       );
     }
-    if (gltf && request.url().endsWith('.gltf')) {
+    if (gltf && requestPath(request.url()).endsWith('/hang.gltf')) {
       return route.fulfill({
         status: 200,
         contentType: 'model/gltf+json',
@@ -83,7 +93,11 @@ async function armHang(
     return undefined;
   });
   const count = (kind: 'get' | 'bin') =>
-    [...pending].filter((item) => (kind === 'bin' ? item.includes('GET ') && item.endsWith('/scene.bin') : item.startsWith('GET '))).length;
+    [...pending].filter((item) => {
+      if (!item.startsWith('GET ')) return false;
+      const path = requestPath(item.slice(4));
+      return kind === 'bin' ? path.endsWith('/scene.bin') : isHung(item.slice(4));
+    }).length;
   return { pendingGets: () => count('get'), pendingBin: () => count('bin'), failed: () => failed };
 }
 
@@ -120,6 +134,10 @@ async function gpuObjects(page: Page): Promise<string> {
   const panel = page.locator('#panel');
   if (await panel.evaluate((node) => node.classList.contains('is-collapsed'))) {
     await page.click('#panel-btn');
+  }
+  const section = page.locator('#sec-perf');
+  if (!(await section.evaluate((node) => (node as HTMLDetailsElement).open))) {
+    await section.locator('summary').click();
   }
   const row = page.locator('#perf-info dt', { hasText: 'GPU objects' });
   await expect(row).toBeVisible();
