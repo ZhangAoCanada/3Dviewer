@@ -138,6 +138,7 @@ function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean, lodCount = 0): G
     sourceSh: decoded.sourceSh,
     sampleStride: decoded.stride,
     extended: decoded.extended,
+    precisionReduced: decoded.precisionReduced,
     lod: lodBuilt,
     lodCount,
     mismatch: decoded.mismatch,

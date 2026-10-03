@@ -42,6 +42,7 @@ export async function createDemoSlab(count = 48_000): Promise<GaussianRenderable
     sourceSh: 0,
     sampleStride: 1,
     extended: false,
+    precisionReduced: false,
     lod: false,
     lodCount: 0,
     mismatch: false,
