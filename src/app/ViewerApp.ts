@@ -776,8 +776,8 @@ export class ViewerApp {
       img.height = 72;
       img.loading = 'lazy';
       img.decoding = 'async';
-      img.src = assetUrl(sample.thumb);
       img.addEventListener('error', () => img.remove());
+      img.src = assetUrl(sample.thumb);
       thumb.append(img);
     }
     const name = document.createElement('span');

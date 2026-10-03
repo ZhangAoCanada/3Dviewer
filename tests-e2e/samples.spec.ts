@@ -26,29 +26,34 @@ test('start screen sample cards show a type, a size, and a thumbnail', async ({ 
   await expect(page.locator('#file-name')).toHaveText('torus.ply');
 });
 
-test('a missing thumbnail keeps the icon and the card size', async ({ page }) => {
-  await page.route('**/*.webp', (route) => route.abort());
-  await page.goto('/');
-  await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
-  await expect(page.locator('.sample-card')).toHaveCount(6);
-  const thumbs = await page.locator('.sample-thumb').evaluateAll((nodes) =>
-    nodes.map((node) => {
-      const box = node.getBoundingClientRect();
-      return {
-        width: box.width,
-        height: box.height,
-        icon: node.querySelector('svg') != null,
-        image: node.querySelector('img') != null,
-      };
-    }),
-  );
-  expect(thumbs).toHaveLength(6);
-  for (const thumb of thumbs) {
-    expect(thumb.icon).toBe(true);
-    expect(thumb.image).toBe(false);
-    expect(thumb.height).toBeGreaterThanOrEqual(70);
-    expect(thumb.height).toBeLessThanOrEqual(74);
-  }
+test.describe('missing thumbnail', () => {
+  test.use({ serviceWorkers: 'block' });
+
+  test('a missing thumbnail keeps the icon and the card size', async ({ page }) => {
+    await page.route('**/*.webp', (route) => route.abort());
+    await page.goto('/');
+    await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
+    await expect(page.locator('.sample-card')).toHaveCount(6);
+    await expect.poll(() => page.locator('.sample-card img').count()).toBe(0);
+    const thumbs = await page.locator('.sample-thumb').evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect();
+        return {
+          width: box.width,
+          height: box.height,
+          icon: node.querySelector('svg') != null,
+          image: node.querySelector('img') != null,
+        };
+      }),
+    );
+    expect(thumbs).toHaveLength(6);
+    for (const thumb of thumbs) {
+      expect(thumb.icon).toBe(true);
+      expect(thumb.image).toBe(false);
+      expect(thumb.height).toBeGreaterThanOrEqual(70);
+      expect(thumb.height).toBeLessThanOrEqual(74);
+    }
+  });
 });
 
 test('phone width fits three sample cards on the first row', async ({ page }) => {
