@@ -74,6 +74,25 @@ test('cancel during reading aborts the remote request', async ({ page }) => {
 
 test('cancel during preparing hides the card and leaves the chip empty', async ({ page }) => {
   const errors = await failOnPageError(page);
+  let cancelledAt = 0;
+  await page.exposeFunction('__cancelled', () => {
+    cancelledAt = Date.now();
+  });
+  // Decode of this file finishes in one frame on a fast host, so click in the same turn Preparing appears.
+  await page.addInitScript(() => {
+    const watch = () => {
+      const step = document.querySelector('[data-step="preparing"].is-active');
+      const loading = document.querySelector<HTMLElement>('#loading');
+      const button = document.querySelector<HTMLButtonElement>('#loading-cancel');
+      if (step && loading && !loading.hidden && button && !button.hidden) {
+        void (window as unknown as { __cancelled?: () => void }).__cancelled?.();
+        button.click();
+        return;
+      }
+      requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+  });
   const body = sh0Ply(200_000);
   await page.route('**/prep.ply', (route) => {
     const headers = { 'content-type': 'application/octet-stream', 'content-length': String(body.length) };
@@ -83,10 +102,10 @@ test('cancel during preparing hides the card and leaves the chip empty', async (
     return route.fulfill({ status: 200, headers, body });
   });
   const url = new URL('prep.ply', origin).href;
-  await page.goto(`/?url=${encodeURIComponent(url)}`);
-  await expect(page.locator('[data-step="preparing"].is-active')).toBeVisible({ timeout: 30_000 });
-  await page.click('#loading-cancel');
-  await expect(page.locator('#loading')).toBeHidden({ timeout: 500 });
+  await page.goto(`/?url=${encodeURIComponent(url)}`, { waitUntil: 'commit' });
+  await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
+  expect(cancelledAt).toBeGreaterThan(0);
+  expect(Date.now() - cancelledAt).toBeLessThan(500);
   await expect(page.locator('#file-chip')).toBeHidden();
   expect(errors).toEqual([]);
 });
