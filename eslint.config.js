@@ -11,7 +11,7 @@ export default tseslint.config(
   {
     files: ['**/*.{ts,tsx,js,mjs}'],
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node, __APP_BUILD__: 'readonly' },
+      globals: { ...globals.browser, ...globals.node, __APP_BUILD__: 'readonly', __APP_VERSION__: 'readonly' },
     },
     rules: {
       '@typescript-eslint/no-unused-vars': [

@@ -49,10 +49,20 @@ import {
 import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
 import { phaseOf, progressLine, stallHint } from '../ui/loadPhase';
+import { isDesktopApp } from '../desktop/runtime';
 import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
 import { bindMenu, pointerInside } from '../ui/menu';
 import { collectDropped, toDropEntry, type DropEntry } from '../ui/dropEntries';
-import { renderProblem, supportedFormats } from '../ui/problem';
+import { copyText, renderProblem, supportedFormats } from '../ui/problem';
+import { presetConsequence, type PresetSceneDetail } from '../ui/presetConsequence';
+import {
+  chooseVersion,
+  displayVersion,
+  readCachedRelease,
+  refreshRelease,
+  writeCachedRelease,
+} from '../ui/releaseVersion';
+import type { LoadTimings } from '../bench/benchStats';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
 const INFLIGHT_KEY = '3dviewer-inflight';
@@ -127,6 +137,15 @@ export class ViewerApp {
   private uprightStatus = 'As in file';
   /** Loader promises still running. A loader that never settles stays counted. */
   private inflight = 0;
+  private loadTimings: LoadTimings = { start: 0, added: null, firstDraw: null, ready: null };
+  private drawsAtAdd = 0;
+  private loadSucceeded = false;
+  /** `null` is not the slab demo. `undefined` is the demo at its default count. */
+  private benchDemo: number | undefined | null = null;
+  private benchAbort: AbortController | null = null;
+  private benchRunning = false;
+  private benchJson = '';
+  private benchMarkdown = '';
 
   constructor() {
     document.body.dataset.loads = '0';
@@ -151,6 +170,7 @@ export class ViewerApp {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => document.body.classList.add('chrome-ready'));
     });
+    this.syncDesktopVersion();
   }
 
   private get items(): readonly Renderable[] {
@@ -239,6 +259,23 @@ export class ViewerApp {
     must('#url-btn').addEventListener('click', () => this.openUrlDialog());
     must('#empty-url').addEventListener('click', () => this.openUrlDialog());
     must('#help-btn').addEventListener('click', () => this.openHelp());
+    must('#bench-run').addEventListener('click', () => {
+      const help = must<HTMLDialogElement>('#help-dialog');
+      if (help.open) help.close();
+      this.openBenchmark();
+    });
+    must('#bench-cancel').addEventListener('click', () => this.benchAbort?.abort());
+    must('#bench-close').addEventListener('click', () => must<HTMLDialogElement>('#bench-dialog').close());
+    must('#bench-close-x').addEventListener('click', () => must<HTMLDialogElement>('#bench-dialog').close());
+    must<HTMLDialogElement>('#bench-dialog').addEventListener('close', () => this.benchAbort?.abort());
+    must('#bench-copy-md').addEventListener('click', () => {
+      if (!this.benchMarkdown) return;
+      void copyText(this.benchMarkdown, must('#bench-copy-md'), must('#bench-report'));
+    });
+    must('#bench-copy-json').addEventListener('click', () => {
+      if (!this.benchJson) return;
+      void copyText(this.benchJson, must('#bench-copy-json'), must('#bench-report'));
+    });
     must('#download-btn').addEventListener('click', () => this.openDownloadDialog());
     must('#loading-cancel').addEventListener('click', () => this.cancelLoad());
     must('#geo-badge').addEventListener('click', () => this.showGeoref());
@@ -544,6 +581,7 @@ export class ViewerApp {
     this.loadAbort = abort;
     this.loadingSource = null;
     this.failureSource = null;
+    this.benchDemo = count;
     this.setEmpty(false);
     this.beginLoadingClock();
     this.setLoading(true, { loaded: 0, stage: 'detect', message: 'Building a synthetic drone slab' });
@@ -557,6 +595,8 @@ export class ViewerApp {
       }
       host.clear();
       host.add(renderable, this.settings);
+      this.markSceneAdded();
+      this.loadedPreset = this.settings.quality;
       host.setFlip(false);
       this.uprightHistory = [];
       this.uprightStatus = this.orientationText();
@@ -564,6 +604,7 @@ export class ViewerApp {
       this.syncUpLabel();
       this.renderSceneInfo();
       loaded = true;
+      this.loadSucceeded = true;
     } catch (error) {
       if (generation !== this.generation) return;
       this.lastError = error;
@@ -608,6 +649,44 @@ export class ViewerApp {
       button.setAttribute('aria-checked', on ? 'true' : 'false');
     }
     must('#quality-summary').textContent = plan.summary;
+    must('#quality-details-text').textContent = plan.details;
+    const consequence = must('#quality-consequence');
+    const text = this.consequenceLine();
+    consequence.hidden = text == null;
+    consequence.textContent = text ?? '';
+  }
+
+  private consequenceLine(): string | null {
+    const item = this.items[0];
+    if (!item) return null;
+    const stats = item.getStats();
+    return presetConsequence({
+      preset: this.settings.quality,
+      loadedPreset: this.loadedPreset,
+      kind: item.kind,
+      detail: detailForConsequence(stats),
+      bytes: item.meta.bytes,
+      budget: detectMemoryBudget(),
+    });
+  }
+
+  private markSceneAdded(): void {
+    const host = this.host;
+    if (!host) return;
+    this.loadTimings.added = performance.now();
+    this.drawsAtAdd = host.drawStamp.count;
+  }
+
+  private noteFrameMarks(): void {
+    const host = this.host;
+    const marks = this.loadTimings;
+    if (!host || marks.added == null) return;
+    if (marks.firstDraw == null && host.drawStamp.count > this.drawsAtAdd) {
+      marks.firstDraw = host.drawStamp.at;
+    }
+    if (marks.ready == null && !host.refinement().pending) {
+      marks.ready = performance.now();
+    }
   }
 
   private syncReopen(): void {
@@ -645,20 +724,21 @@ export class ViewerApp {
     const button = must<HTMLButtonElement>('#samples-btn');
     const samplesRoot = must('#empty-samples');
     const moreSamples = must('#more-samples');
+    const first = SAMPLES[0];
+    if (first) this.fillSampleCard(must('#empty-sample'), first);
     for (const sample of SAMPLES) {
       menu.append(this.sampleItem(sample));
       moreSamples.append(this.sampleItem(sample));
     }
     for (const sample of SAMPLES.slice(1)) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip';
-      chip.textContent = sample.label;
-      chip.addEventListener('click', () => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      this.fillSampleCard(card, sample);
+      card.addEventListener('click', () => {
         this.setQuery({ sample: sample.id });
         void this.loadSample(sample);
       });
-      samplesRoot.append(chip);
+      samplesRoot.append(card);
     }
     this.trackMenu(button, menu);
     const moreButton = must<HTMLButtonElement>('#more-btn');
@@ -671,8 +751,46 @@ export class ViewerApp {
       else if (action === 'theme') this.toggleTheme();
       else if (action === 'help') this.openHelp();
       else if (action === 'download') this.openDownloadDialog();
+      else if (action === 'bench') this.openBenchmark();
     });
     this.trackMenu(moreButton, moreMenu);
+  }
+
+  private fillSampleCard(button: HTMLButtonElement, sample: SampleAsset): void {
+    button.className = 'sample-card';
+    button.replaceChildren();
+    const thumb = document.createElement('span');
+    thumb.className = 'sample-thumb';
+    thumb.dataset.kind = sample.kind;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('class', 'icon icon-xl');
+    icon.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#i-shapes');
+    icon.append(use);
+    thumb.append(icon);
+    if (sample.thumb) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.width = 96;
+      img.height = 72;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.src = assetUrl(sample.thumb);
+      img.addEventListener('error', () => img.remove());
+      thumb.append(img);
+    }
+    const name = document.createElement('span');
+    name.className = 'sample-name';
+    name.textContent = sample.title;
+    const meta = document.createElement('span');
+    meta.className = 'sample-meta';
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = sampleKindLabel(sample.kind);
+    const size = sample.remote || sample.bytes == null ? 'Remote' : formatBytes(sample.bytes);
+    meta.append(badge, document.createTextNode(` ${sampleExtension(sample.href)} · ${size}`));
+    button.append(thumb, name, meta);
   }
 
   private sampleItem(sample: SampleAsset): HTMLButtonElement {
@@ -758,38 +876,42 @@ export class ViewerApp {
   }
 
   async boot(): Promise<void> {
-    const params = new URLSearchParams(location.search);
-    const url = params.get('url');
-    const sampleId = params.get('sample');
-    if (!this.host) {
-      if (url) this.loadingSource = sourceFromUrl(url);
-      // Boot can finish after Back. Leave the empty state the user already chose.
-      if (this.graphicsFailure && this.surface !== 'empty') this.showProblem(this.graphicsFailure);
-      this.setLoading(false);
-      this.bootFinishedWithoutGraphics = true;
-      return;
-    }
-    this.bootFinishedWithoutGraphics = false;
-    if (params.get('demo') === 'slab') {
-      const raw = params.get('n');
-      const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
-      const count = Number.isFinite(requested) ? Math.min(Math.max(Math.round(requested), 1000), 1_500_000) : undefined;
-      await this.loadDemoSlab(count);
-      return;
-    }
-    if (url) {
-      await this.load(sourceFromUrl(url));
-      return;
-    }
-    if (sampleId) {
-      const sample = SAMPLES.find((item) => item.id === sampleId || item.href.endsWith(sampleId));
-      if (sample) {
-        await this.loadSample(sample);
+    try {
+      const params = new URLSearchParams(location.search);
+      const url = params.get('url');
+      const sampleId = params.get('sample');
+      if (!this.host) {
+        if (url) this.loadingSource = sourceFromUrl(url);
+        // Boot can finish after Back. Leave the empty state the user already chose.
+        if (this.graphicsFailure && this.surface !== 'empty') this.showProblem(this.graphicsFailure);
+        this.setLoading(false);
+        this.bootFinishedWithoutGraphics = true;
         return;
       }
+      this.bootFinishedWithoutGraphics = false;
+      if (params.get('demo') === 'slab') {
+        const raw = params.get('n');
+        const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
+        const count = Number.isFinite(requested) ? Math.min(Math.max(Math.round(requested), 1000), 1_500_000) : undefined;
+        await this.loadDemoSlab(count);
+        return;
+      }
+      if (url) {
+        await this.load(sourceFromUrl(url));
+        return;
+      }
+      if (sampleId) {
+        const sample = SAMPLES.find((item) => item.id === sampleId || item.href.endsWith(sampleId));
+        if (sample) {
+          await this.loadSample(sample);
+          return;
+        }
+      }
+      this.setLoading(false);
+      this.setEmpty(true);
+    } finally {
+      if (new URLSearchParams(location.search).get('bench') === '1') this.openBenchmark();
     }
-    this.setLoading(false);
-    this.setEmpty(true);
   }
 
   private async loadSample(sample: SampleAsset): Promise<void> {
@@ -837,6 +959,7 @@ export class ViewerApp {
     };
     this.loadingSource = source;
     this.failureSource = source;
+    this.benchDemo = null;
     this.showingBreadcrumb = false;
     this.setEmpty(false);
     this.beginLoadingClock();
@@ -897,6 +1020,7 @@ export class ViewerApp {
       }
       host.clear();
       host.add(renderable, this.settings);
+      this.markSceneAdded();
       this.lastSource = source;
       this.loadedPreset = presetAtLoad;
       const restored = this.applyStoredOrientation(host, source);
@@ -916,6 +1040,7 @@ export class ViewerApp {
         });
       }
       loaded = true;
+      this.loadSucceeded = true;
     } catch (error) {
       if (generation !== this.generation) return;
       const reason = abort.signal.reason;
@@ -1229,6 +1354,8 @@ export class ViewerApp {
 
   private beginLoadingClock(): void {
     this.loadingStarted = performance.now();
+    this.loadTimings = { start: this.loadingStarted, added: null, firstDraw: null, ready: null };
+    this.loadSucceeded = false;
     this.lastProgressAt = this.loadingStarted;
     this.lastLoaded = undefined;
     this.lastByteLoaded = undefined;
@@ -1371,6 +1498,7 @@ export class ViewerApp {
   }
 
   private renderQuality(): void {
+    this.noteFrameMarks();
     const badge = must('#file-quality');
     if (must('#file-chip').hidden || !this.host) {
       if (this.qualityMode !== 'off') this.resetQuality();
@@ -1574,6 +1702,131 @@ export class ViewerApp {
     if (!dialog.open) dialog.showModal();
   }
 
+  private openBenchmark(): void {
+    const dialog = must<HTMLDialogElement>('#bench-dialog');
+    if (!dialog.open) dialog.showModal();
+    if (!this.host || this.items.length === 0) {
+      must('#bench-status').textContent = 'Open a scene first, then run the benchmark.';
+      must('#bench-report').textContent = '';
+      this.benchJson = '';
+      this.benchMarkdown = '';
+      return;
+    }
+    void this.startBenchmark();
+  }
+
+  private async startBenchmark(): Promise<void> {
+    if (this.benchRunning || !this.host) return;
+    this.benchRunning = true;
+    this.benchAbort?.abort();
+    const abort = new AbortController();
+    this.benchAbort = abort;
+    this.benchJson = '';
+    this.benchMarkdown = '';
+    must('#bench-report').textContent = '';
+    must('#bench-status').textContent = 'Starting…';
+    const host = this.host;
+    try {
+      const { runBench, formatBenchMarkdown } = await import('../bench/runBench');
+      if (abort.signal.aborted || this.host !== host) return;
+      const report = await runBench(
+        {
+          onStatus: (text) => {
+            must('#bench-status').textContent = text;
+          },
+          timings: () => {
+            this.noteFrameMarks();
+            return { ...this.loadTimings };
+          },
+          reload: () => this.reloadForBench(),
+          scene: () => benchScene(this.items[0]),
+          environment: () => this.benchEnvironment(),
+        },
+        host,
+        abort.signal,
+      );
+      this.benchJson = JSON.stringify(report, null, 2);
+      this.benchMarkdown = formatBenchMarkdown(report);
+      must('#bench-report').textContent = this.benchMarkdown;
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        must('#bench-status').textContent = 'The benchmark stopped.';
+        must('#bench-report').textContent = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      this.benchRunning = false;
+    }
+  }
+
+  private async reloadForBench(): Promise<boolean> {
+    if (this.benchDemo !== null) await this.loadDemoSlab(this.benchDemo);
+    else if (this.lastSource) await this.load(this.lastSource);
+    else return false;
+    return this.loadSucceeded;
+  }
+
+  private benchEnvironment(): {
+    build: string;
+    userAgent: string;
+    platform: string;
+    deviceMemory?: number;
+    cores?: number;
+    dpr: number;
+    viewport: string;
+    renderer?: string;
+    software: boolean;
+    preset: string;
+  } {
+    const diag = collectDiagnostics(this.host, { preset: this.settings.quality });
+    const info = this.host?.rendererInfo;
+    return {
+      build: diag.build,
+      userAgent: diag.userAgent,
+      platform: diag.platform,
+      deviceMemory: diag.deviceMemory,
+      cores: diag.hardwareConcurrency,
+      dpr: window.devicePixelRatio || 1,
+      viewport: `${window.innerWidth}×${window.innerHeight}`,
+      renderer: info?.renderer ?? diag.renderer,
+      software: info?.software ?? diag.software,
+      preset: this.settings.quality,
+    };
+  }
+
+  private syncDesktopVersion(): void {
+    const chosen = chooseVersion({
+      cached: readCachedRelease(safeStorage()),
+      now: Date.now(),
+      build: __APP_VERSION__,
+    });
+    this.renderDesktopVersion(chosen.version);
+    if (!chosen.stale || isDesktopApp()) return;
+    const run = () => {
+      void this.fetchDesktopVersion();
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
+    else window.setTimeout(run, 3000);
+  }
+
+  private async fetchDesktopVersion(): Promise<void> {
+    try {
+      const tag = await refreshRelease();
+      if (!tag) return;
+      const at = Date.now();
+      writeCachedRelease({ setItem: (key, value) => writeStorage(key, value) }, tag, at);
+      this.renderDesktopVersion(displayVersion(tag));
+    } catch {
+      /* offline, the rate limit, or CORS */
+    }
+  }
+
+  private renderDesktopVersion(version: string): void {
+    for (const id of ['download-version', 'download-menu-version', 'download-dialog-version']) {
+      const node = document.getElementById(id);
+      if (node) node.textContent = version;
+    }
+  }
+
   private openDownloadDialog(): void {
     const os = detectDesktopOs();
     for (const row of document.querySelectorAll<HTMLElement>('#download-dialog [data-os]')) {
@@ -1666,6 +1919,7 @@ export class ViewerApp {
     this.syncShDegree();
     this.syncApplicable();
     this.syncReopen();
+    this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget()));
     this.renderQuality();
   }
 
@@ -2043,6 +2297,95 @@ export class ViewerApp {
       /* private mode */
     }
   }
+}
+
+function detailForConsequence(stats: {
+  kind: string;
+  primitives: number;
+  sourcePrimitives?: number;
+  extra?: Record<string, string | number>;
+}): PresetSceneDetail | null {
+  if (stats.kind === 'points') {
+    return {
+      sourceCount: stats.sourcePrimitives ?? stats.primitives,
+      retainedCount: stats.primitives,
+    };
+  }
+  if (stats.kind !== 'splats' || stats.sourcePrimitives == null) return null;
+  const sh = parseShText(stats.extra?.sh);
+  const detail: PresetSceneDetail = {
+    sourceCount: stats.sourcePrimitives,
+    retainedCount: stats.primitives,
+  };
+  if (sh.sourceSh != null) detail.sourceSh = sh.sourceSh;
+  if (sh.loadedSh != null) detail.loadedSh = sh.loadedSh;
+  return detail;
+}
+
+function parseShText(value: string | number | undefined): { sourceSh?: number; loadedSh?: number } {
+  const text = value == null ? '' : String(value);
+  const of = /^(\d+)\s+of\s+(\d+)/.exec(text);
+  if (of?.[1] && of[2]) return { loadedSh: Number(of[1]), sourceSh: Number(of[2]) };
+  const single = /^(\d+)$/.exec(text.trim());
+  if (single?.[1]) {
+    const degree = Number(single[1]);
+    return { loadedSh: degree, sourceSh: degree };
+  }
+  return {};
+}
+
+function benchScene(item: Renderable | undefined): {
+  name: string;
+  kind: string;
+  bytes?: number;
+  count: number;
+  sourceCount?: number;
+  sh?: string;
+} | null {
+  if (!item) return null;
+  const stats = item.getStats();
+  const sh = stats.extra?.sh;
+  return {
+    name: item.meta.fileName,
+    kind: item.kind,
+    count: stats.primitives,
+    ...(item.meta.bytes != null ? { bytes: item.meta.bytes } : {}),
+    ...(stats.sourcePrimitives != null ? { sourceCount: stats.sourcePrimitives } : {}),
+    ...(sh != null ? { sh: String(sh) } : {}),
+  };
+}
+
+function assetUrl(path: string): string {
+  const base = import.meta.env.BASE_URL;
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  return `${prefix}${path}`;
+}
+
+function sampleExtension(href: string): string {
+  const clean = href.split('?')[0]?.split('#')[0] ?? href;
+  const base = clean.split('/').pop() ?? clean;
+  const dot = base.lastIndexOf('.');
+  return dot >= 0 ? base.slice(dot) : '';
+}
+
+function sampleKindLabel(kind: string): string {
+  if (kind === 'splats') return 'Splats';
+  if (kind === 'points') return 'Points';
+  if (kind === 'mesh') return 'Mesh';
+  if (kind === 'voxels') return 'Voxels';
+  return kind;
+}
+
+function safeStorage(): { getItem(key: string): string | null } {
+  return {
+    getItem(key: string) {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    },
+  };
 }
 
 function readGaussianOverrides(): GaussianLoadOverrides | undefined {

@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { blobSource } from '../src/core/byteSource';
-import { classifyPly, headerText, isGlbMagic } from '../src/core/sniff';
+import { SAMPLES } from '../src/core/samples';
+import { classifyPly, extensionOf, headerText, isGlbMagic, sniffGaussian, sniffMesh, sniffPoints } from '../src/core/sniff';
+import type { AssetSource } from '../src/core/types';
 import { parsePlyPoints } from '../src/loaders/points/parsePly';
 
 const samples = join(process.cwd(), 'public', 'samples');
@@ -24,5 +26,33 @@ describe('bundled samples', () => {
     expect(parsed.sourceCount).toBe(24000);
     expect(parsed.count).toBeLessThanOrEqual(5000);
     expect(parsed.colors?.[0]).toBeGreaterThan(0);
+  });
+
+  it('records the real file size, a small thumbnail, and the sniffed kind', () => {
+    const root = join(process.cwd(), 'public');
+    for (const sample of SAMPLES) {
+      expect(sample.title.length).toBeGreaterThan(0);
+      if (sample.remote) {
+        expect(sample.bytes).toBeUndefined();
+        expect(sample.thumb).toBeUndefined();
+        expect(sample.kind).toBe('splats');
+        continue;
+      }
+      const file = join(root, sample.href);
+      expect(sample.bytes).toBe(statSync(file).size);
+      expect(sample.thumb).toBeTruthy();
+      const thumb = join(root, sample.thumb ?? '');
+      expect(statSync(thumb).size).toBeLessThan(16 * 1024);
+      const header = new Uint8Array(readFileSync(file).subarray(0, 65536));
+      const source: AssetSource = { name: sample.href, extension: extensionOf(sample.href), origin: 'sample' };
+      const sniffed = sniffGaussian(source, header)
+        ? 'splats'
+        : sniffPoints(source, header)
+          ? 'points'
+          : sniffMesh(source, header)
+            ? 'mesh'
+            : null;
+      expect(sample.kind).toBe(sniffed);
+    }
   });
 });

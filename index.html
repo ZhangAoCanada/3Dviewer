@@ -115,7 +115,7 @@
             <svg class="icon" aria-hidden="true"><use href="#i-circle-help"/></svg>
           </button>
           <button id="download-btn" class="btn btn-ghost hide-phone" type="button" aria-haspopup="dialog" aria-label="Download desktop app" title="Download desktop app">
-            <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span class="btn-label">Download desktop app</span>
+            <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span class="btn-label">Download desktop app</span><span id="download-version" class="btn-meta"></span>
           </button>
           <button id="panel-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Settings" title="Settings (H)" aria-expanded="false" aria-controls="panel">
             <svg class="icon" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>
@@ -126,7 +126,8 @@
               <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="url"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>Open from URL</button>
               <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="theme"><svg class="icon only-dark" aria-hidden="true"><use href="#i-sun"/></svg><svg class="icon only-light" aria-hidden="true"><use href="#i-moon"/></svg><span class="theme-label">Light theme</span></button>
               <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="help"><svg class="icon" aria-hidden="true"><use href="#i-circle-help"/></svg>Controls</button>
-              <button id="download-menu-item" type="button" role="menuitem" class="menu-item menu-item-row" data-action="download"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download desktop app</button>
+              <button type="button" role="menuitem" class="menu-item menu-item-row" data-action="bench"><svg class="icon" aria-hidden="true"><use href="#i-activity"/></svg>Run benchmark</button>
+              <button id="download-menu-item" type="button" role="menuitem" class="menu-item menu-item-row" data-action="download"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span>Download desktop app</span><span id="download-menu-version" class="btn-meta"></span></button>
               <div class="menu-heading" role="presentation">Samples</div>
               <div id="more-samples" role="none"></div>
             </div>
@@ -213,8 +214,8 @@
           <p class="empty-formats">Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb, .gltf with its .bin and textures, .obj (materials need its .mtl) · Points: .ply</p>
           <p id="empty-multi" class="hint">For a .gltf or .obj with separate files, select them all, drop the folder, or <button id="empty-folder" class="btn btn-ghost btn-sm" type="button">choose a folder</button>. A single .glb is easiest.</p>
           <div class="empty-samples" id="empty-samples">
-            <span>Try a sample</span>
-            <button id="empty-sample" class="chip" type="button">3DGS torus</button>
+            <h2 class="empty-samples-title">Try a sample</h2>
+            <button id="empty-sample" class="sample-card" type="button">Torus</button>
           </div>
         </div>
       </section>
@@ -253,6 +254,8 @@
                 <button id="quality-memory" class="seg" type="button" role="radio" aria-checked="false">Lower memory</button>
               </div>
               <p id="quality-summary" class="hint"></p>
+              <p id="quality-consequence" class="hint" hidden></p>
+              <details id="quality-details" class="sec-details"><summary>Details</summary><p id="quality-details-text" class="hint"></p></details>
               <button id="quality-reopen" class="btn btn-secondary btn-sm" type="button" hidden>Reopen to apply memory changes</button>
             </div>
             <label class="field" data-applies="points"><span>Point size <output id="out-point-size">1.0</output></span><input id="point-size" type="range" min="0.25" max="4" step="0.05" value="1" /></label>
@@ -442,12 +445,15 @@
               <p>Mesh with textures: use .glb, or select the .gltf or .obj together with its .bin, .mtl, and images (or a folder)</p>
             </section>
           </div>
+          <div class="help-foot">
+            <button id="bench-run" class="btn btn-secondary" type="button">Run benchmark on this scene</button>
+          </div>
         </form>
       </dialog>
       <dialog id="download-dialog" class="dialog" aria-labelledby="download-title">
         <form method="dialog">
           <div class="dialog-head">
-            <h2 id="download-title">Download Omniview</h2>
+            <h2 id="download-title">Download Omniview <span id="download-dialog-version"></span></h2>
             <button class="btn btn-ghost btn-icon btn-sm" value="cancel" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
           </div>
           <p class="hint">The Omniview desktop app uses the system WebView and opens large local files on this computer. Installers are on the latest GitHub release.</p>
@@ -462,6 +468,20 @@
             <a class="btn btn-primary" href="https://github.com/ZhangAoCanada/3Dviewer/releases/latest" target="_blank" rel="noopener">Latest release</a>
           </div>
         </form>
+      </dialog>
+      <dialog id="bench-dialog" class="dialog dialog-wide" aria-labelledby="bench-title">
+        <div class="dialog-head">
+          <h2 id="bench-title">Benchmark</h2>
+          <button id="bench-close-x" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+        <p id="bench-status" class="hint"></p>
+        <pre id="bench-report" class="kv-mono"></pre>
+        <div class="dialog-actions">
+          <button id="bench-copy-md" class="btn btn-secondary btn-sm" type="button">Copy markdown</button>
+          <button id="bench-copy-json" class="btn btn-secondary btn-sm" type="button">Copy JSON</button>
+          <button id="bench-cancel" class="btn btn-secondary btn-sm" type="button">Cancel</button>
+          <button id="bench-close" class="btn btn-primary btn-sm" type="button">Close</button>
+        </div>
       </dialog>
     </div>
     <script type="module" src="/src/main.ts"></script>

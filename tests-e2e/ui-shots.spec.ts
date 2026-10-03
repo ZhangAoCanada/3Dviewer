@@ -55,6 +55,11 @@ for (const size of sizes) {
         await settle(page);
         await shot(page, 'loaded');
       });
+      test('empty', async ({ page }) => {
+        await page.goto('/');
+        await settle(page);
+        await shot(page, 'empty');
+      });
       test('panel', async ({ page }) => {
         await page.goto('?sample=torus-ply');
         await settle(page);

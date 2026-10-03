@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "generate:assets": "node scripts/generate-assets.mjs",
+    "thumbs": "node scripts/render-thumbs.mjs",
     "build:icons": "node scripts/build-icons.mjs",
     "desktop": "tauri dev",
     "desktop:build": "tauri build"

@@ -61,6 +61,10 @@ export class SceneHost {
   private frameMs = 0;
   private fps = 0;
   private renderMs = 0;
+  /** Last `renderer.render` duration, before the moving average. */
+  lastRenderMs = 0;
+  /** Frames that called `renderer.render`. Updated next to the first-draw flag. */
+  readonly drawStamp = { count: 0, at: 0 };
   private renderEmaReady = false;
   private idle = false;
   upMode: UpMode = 'auto';
@@ -283,6 +287,12 @@ export class SceneHost {
     const spark = this.spark as unknown as { lastSortTime?: number };
     this.sortMark = spark.lastSortTime ?? 0;
     this.awaitingSort = true;
+  }
+
+  /** Spark's sort flag and the timestamp of the sort that most recently started. */
+  sortState(): { sorting?: boolean; lastSortTime?: number } {
+    const spark = this.spark as unknown as { lastSortTime?: number; sorting?: boolean };
+    return { sorting: spark.sorting, lastSortTime: spark.lastSortTime };
   }
 
   /** True until the first sort after `add` finishes. A missing `sorting` field means not sorting. */
@@ -570,12 +580,15 @@ export class SceneHost {
         const t0 = performance.now();
         this.renderer.render(this.scene, this.camera);
         const sample = performance.now() - t0;
+        this.lastRenderMs = sample;
         this.renderMs = this.renderEmaReady ? this.renderMs + (sample - this.renderMs) * 0.2 : sample;
         this.renderEmaReady = true;
         this.stillPos.copy(this.camera.position);
         this.stillQuat.copy(this.camera.quaternion);
         this.viewDirty = false;
         this.drewOnce = true;
+        this.drawStamp.count += 1;
+        this.drawStamp.at = performance.now();
         this.fpsFrames += 1;
       }
       this.fpsElapsed += elapsed;

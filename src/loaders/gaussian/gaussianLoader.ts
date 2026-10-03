@@ -29,7 +29,7 @@ const FILE_TYPES: Record<string, SplatFileType> = {
 /** Above this, hand Spark a stream instead of one contiguous byte array. */
 const STREAM_BYTES = 16 * 1024 * 1024;
 /** Float32 centers when the decoded scene can afford them. Drone PLYs are far past this. */
-const EXTENDED_BYTES = 80 * 1024 * 1024;
+export const EXTENDED_BYTES = 80 * 1024 * 1024;
 
 interface HeadProbe {
   size?: number;

@@ -131,13 +131,14 @@ function revealFormats(button: HTMLButtonElement): void {
   desc.textContent = `${desc.textContent ?? ''}\n\n${FORMATS}`;
 }
 
-async function copyReport(report: string, button: HTMLButtonElement, pre: Element | null): Promise<void> {
+export async function copyText(text: string, button: HTMLButtonElement, pre: Element | null): Promise<void> {
   try {
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-    await navigator.clipboard.writeText(report);
+    await navigator.clipboard.writeText(text);
     button.textContent = 'Copied';
   } catch {
     if (pre) {
+      if (pre.textContent !== text) pre.textContent = text;
       const selection = window.getSelection();
       const range = document.createRange();
       range.selectNodeContents(pre);
@@ -146,4 +147,8 @@ async function copyReport(report: string, button: HTMLButtonElement, pre: Elemen
     }
     button.textContent = 'Press Ctrl+C to copy';
   }
+}
+
+async function copyReport(report: string, button: HTMLButtonElement, pre: Element | null): Promise<void> {
+  await copyText(report, button, pre);
 }
