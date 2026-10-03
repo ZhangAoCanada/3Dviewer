@@ -259,7 +259,7 @@ async function loadStandardPly(
     if (ctx.signal.aborted) throw error;
     const name = error instanceof Error ? error.name : '';
     if (name === 'GaussianPlyError' || name === 'GaussianPlyUnsupported') throw error;
-    if (size > 64 * 1024 * 1024) throw new Error(explainLoadError(error));
+    if (size > 64 * 1024 * 1024) throw new Error(explainLoadError(error), { cause: error });
     decoded = await decodeGaussianPly(standardSource(input, ctx.signal), {
       budget: ctx.budget,
       preferExtended,
@@ -316,7 +316,7 @@ export const gaussianLoader: FormatLoader = {
             if (error instanceof GaussianPlyUnsupported) {
               /* Compressed or unusual PLY still goes through Spark. */
             } else {
-              throw new Error(explainLoadError(error));
+              throw new Error(explainLoadError(error), { cause: error });
             }
           }
         }
@@ -331,7 +331,7 @@ export const gaussianLoader: FormatLoader = {
             if (error instanceof GaussianPlyUnsupported) {
               /* Compressed or unusual PLY still goes through Spark. */
             } else {
-              throw new Error(explainLoadError(error));
+              throw new Error(explainLoadError(error), { cause: error });
             }
           }
         }
@@ -421,7 +421,7 @@ async function loadViaSpark(
     );
   } catch (error) {
     release();
-    throw new Error(explainLoadError(error));
+    throw new Error(explainLoadError(error), { cause: error });
   } finally {
     ctx.signal.removeEventListener('abort', onAbort);
   }

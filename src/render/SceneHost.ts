@@ -1,5 +1,6 @@
 import { SparkRenderer } from '@sparkjsdev/spark';
 import * as THREE from 'three';
+import { GraphicsUnavailableError } from '../core/loadFailure';
 import type { MemoryBudget, Renderable, RenderSettings } from '../core/types';
 import { detectUpAxis, groundPlaneHit, isFlatScene, upVector } from './cameraMotion';
 import { lodParams } from './lodParams';
@@ -80,6 +81,7 @@ export class SceneHost {
   private readonly budget: MemoryBudget;
   webgpuAvailable = false;
   contextLost = false;
+  private creationStatus = '';
   onContextLost?: () => void;
   onContextRestored?: () => void;
 
@@ -89,12 +91,53 @@ export class SceneHost {
   ) {
     this.budget = budget;
     this.webgpuAvailable = typeof navigator !== 'undefined' && 'gpu' in navigator;
-    const gl = canvas.getContext('webgl2', {
-      antialias: false,
-      alpha: false,
-      powerPreference: 'high-performance',
+    const gl = requireWebGL2(canvas, (status) => {
+      this.creationStatus = status;
     });
-    if (!gl) throw new Error('WebGL2 is required. This browser cannot create a WebGL2 context.');
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        context: gl,
+        antialias: false,
+        alpha: false,
+        powerPreference: 'high-performance',
+      });
+    } catch (error) {
+      throw new GraphicsUnavailableError(
+        'renderer-failed',
+        'The 3D renderer could not start.',
+        this.creationStatus || undefined,
+        { cause: error },
+      );
+    }
+    this.renderer = renderer;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    this.renderer.setClearColor(0x10141b, 1);
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.01, 500);
+    this.camera.position.set(1.6, 1.1, 2.8);
+    const mobile = budget.profile === 'mobile';
+    try {
+      this.spark = new SparkRenderer({
+        renderer: this.renderer,
+        maxStdDev: DEFAULT_STD_DEV,
+        enable2DGS: true,
+        sortRadial: true,
+        enableLod: true,
+        lodSplatCount: budget.maxSplatsResident,
+        lodSplatScale: 1,
+        ...(mobile ? { lodRenderScale: 1.5, minSortIntervalMs: 33 } : {}),
+      });
+    } catch (error) {
+      this.renderer.dispose();
+      throw new GraphicsUnavailableError(
+        'renderer-failed',
+        'The splat renderer could not start.',
+        this.creationStatus || undefined,
+        { cause: error },
+      );
+    }
     canvas.addEventListener('webglcontextlost', (event) => {
       event.preventDefault();
       this.contextLost = true;
@@ -103,29 +146,6 @@ export class SceneHost {
     canvas.addEventListener('webglcontextrestored', () => {
       this.contextLost = false;
       this.onContextRestored?.();
-    });
-    this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      context: gl,
-      antialias: false,
-      alpha: false,
-      powerPreference: 'high-performance',
-    });
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.NoToneMapping;
-    this.renderer.setClearColor(0x10141b, 1);
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.01, 500);
-    this.camera.position.set(1.6, 1.1, 2.8);
-    const mobile = budget.profile === 'mobile';
-    this.spark = new SparkRenderer({
-      renderer: this.renderer,
-      maxStdDev: DEFAULT_STD_DEV,
-      enable2DGS: true,
-      sortRadial: true,
-      enableLod: true,
-      lodSplatCount: budget.maxSplatsResident,
-      lodSplatScale: 1,
-      ...(mobile ? { lodRenderScale: 1.5, minSortIntervalMs: 33 } : {}),
     });
     this.scene.add(this.spark);
     this.scene.add(this.content);
@@ -159,6 +179,26 @@ export class SceneHost {
 
   get items(): readonly Renderable[] {
     return this.renderables;
+  }
+
+  get contextStatusMessage(): string {
+    return this.creationStatus;
+  }
+
+  get rendererInfo(): { renderer?: string; vendor?: string; maxTextureSize: number; software: boolean } {
+    const gl = this.renderer.getContext();
+    const debug = gl.getExtension('WEBGL_debug_renderer_info');
+    let renderer: string | undefined;
+    let vendor: string | undefined;
+    if (debug) {
+      const rawRenderer = gl.getParameter(debug.UNMASKED_RENDERER_WEBGL);
+      const rawVendor = gl.getParameter(debug.UNMASKED_VENDOR_WEBGL);
+      if (typeof rawRenderer === 'string') renderer = rawRenderer;
+      if (typeof rawVendor === 'string') vendor = rawVendor;
+    }
+    const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const software = renderer != null && /SwiftShader|llvmpipe|Software|Basic Render/i.test(renderer);
+    return { renderer, vendor, maxTextureSize: typeof max === 'number' ? max : 0, software };
   }
 
   setBackground(color: string): void {
@@ -576,6 +616,34 @@ export class SceneHost {
     }
     return key;
   }
+}
+
+function requireWebGL2(canvas: HTMLCanvasElement, onStatus: (status: string) => void): WebGL2RenderingContext {
+  let status = '';
+  const onFail = (event: Event) => {
+    const message = (event as WebGLContextEvent).statusMessage;
+    if (message) status = message;
+  };
+  canvas.addEventListener('webglcontextcreationerror', onFail);
+  let gl: WebGL2RenderingContext | null = null;
+  try {
+    gl = canvas.getContext('webgl2', {
+      antialias: false,
+      alpha: false,
+      powerPreference: 'high-performance',
+    });
+  } finally {
+    canvas.removeEventListener('webglcontextcreationerror', onFail);
+  }
+  if (status) onStatus(status);
+  if (!gl) {
+    throw new GraphicsUnavailableError(
+      'no-webgl2',
+      'WebGL2 is required. This browser cannot create a WebGL2 context.',
+      status || undefined,
+    );
+  }
+  return gl;
 }
 
 function disposeMeshResources(object: THREE.Object3D): void {

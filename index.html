@@ -177,6 +177,20 @@
       </nav>
 
 
+      <section id="problem" class="empty problem" hidden role="alert" aria-labelledby="problem-title">
+        <div class="empty-card">
+          <svg class="icon icon-xl problem-icon" aria-hidden="true"><use id="problem-icon" href="#i-circle-alert"/></svg>
+          <h1 id="problem-title"></h1>
+          <p id="problem-desc"></p>
+          <div id="problem-actions" class="empty-actions"></div>
+          <details id="problem-details">
+            <summary>Diagnostics</summary>
+            <pre id="problem-report" class="kv-mono"></pre>
+            <button id="problem-copy" class="btn btn-secondary btn-sm" type="button">Copy report</button>
+          </details>
+          <button id="problem-close" class="btn btn-ghost btn-sm" type="button" hidden>Back</button>
+        </div>
+      </section>
       <section id="empty" class="empty" hidden aria-labelledby="empty-title">
         <div class="empty-card">
           <img class="empty-logo" src="/logo.svg" alt="" />
@@ -292,6 +306,7 @@
         <div id="toast" class="toast" role="status" data-kind="error" hidden>
           <svg class="icon toast-icon" aria-hidden="true"><use id="toast-icon" href="#i-circle-alert"/></svg>
           <p id="toast-msg" class="toast-msg"></p>
+          <button id="toast-action" class="btn btn-ghost btn-sm" type="button" hidden>Details</button>
           <button id="toast-close" class="btn btn-ghost btn-icon btn-sm" type="button" aria-label="Dismiss" title="Dismiss"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
         </div>
         <div id="update-toast" class="toast toast-update" role="status" hidden>

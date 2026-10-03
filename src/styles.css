@@ -791,6 +791,9 @@ input[type='range']::-moz-range-thumb {
   margin-top: var(--space-3);
 }
 
+body.no-graphics #toolbar,
+body.no-graphics #hud { display: none; }
+
 .empty {
   position: absolute;
   inset: 0;
@@ -799,6 +802,30 @@ input[type='range']::-moz-range-thumb {
   z-index: 2;
   pointer-events: none;
 }
+.problem .empty-card { text-align: left; }
+.problem-icon { color: var(--color-danger); margin-bottom: var(--space-3); }
+#problem-desc {
+  color: var(--color-text-muted);
+  margin: 0;
+  white-space: pre-wrap;
+}
+.problem .empty-actions { justify-content: flex-start; }
+#problem-details {
+  margin-top: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+#problem-details summary { cursor: pointer; }
+#problem-report {
+  max-height: 180px;
+  overflow: auto;
+  margin: var(--space-2) 0;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#problem-close { margin-top: var(--space-3); }
+#toast-action { align-self: center; flex: none; }
 .empty-card {
   pointer-events: auto;
   width: min(480px, calc(100% - 2 * var(--inset)));
