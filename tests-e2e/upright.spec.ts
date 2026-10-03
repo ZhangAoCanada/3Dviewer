@@ -69,16 +69,31 @@ test('outside pointer closes Make upright after an axis turn', async ({ page }) 
 
   await page.click('#upright-btn');
   await expect(panel).toBeVisible();
-  await page.click('#upright-y-cw');
-  await expect(panel).toBeVisible();
-  await page.touchscreen.tap(x, y);
-  await expect(panel).toBeHidden();
-
-  await page.click('#upright-btn');
-  await expect(panel).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(panel).toBeHidden();
   await expect(page.locator('#upright-btn')).toBeFocused();
+});
+
+test.describe('touch', () => {
+  test.use({ hasTouch: true });
+
+  test('tapping the canvas after an axis turn closes Make upright', async ({ page }) => {
+    await page.goto('/?sample=torus-ply');
+    await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+    const panel = page.locator('#upright');
+    await page.tap('#upright-btn');
+    await expect(panel).toBeVisible();
+    await page.tap('#upright-z-cw');
+    await expect(panel).toBeVisible();
+    await expect(page.locator('#upright-status')).toContainText('Turned 90°');
+
+    const view = page.locator('#view');
+    const box = await view.boundingBox();
+    expect(box).not.toBeNull();
+    await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height * 0.25);
+    await expect(panel).toBeHidden();
+    await expect(page.locator('#upright-btn')).toHaveAttribute('aria-expanded', 'false');
+  });
 });
 
 test('clicking the ground of a level slab reports already level', async ({ page }) => {
