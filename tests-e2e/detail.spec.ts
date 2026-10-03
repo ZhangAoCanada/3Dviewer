@@ -1,4 +1,12 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+/** The panel stays open across a reload, so a blind toggle would close it. */
+async function openSettings(page: Page): Promise<void> {
+  const panel = page.locator('#panel');
+  if (await panel.evaluate((el) => el.classList.contains('is-collapsed'))) {
+    await page.click('#panel-btn');
+  }
+}
 
 test('the torus sample is full detail', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
@@ -23,7 +31,7 @@ test('a decode SH cap shows reduced detail until Automatic is reopened', async (
 
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
-  await page.click('#panel-btn');
+  await openSettings(page);
   await page.click('#quality-memory');
   await expect(page.locator('#quality-reopen')).toBeVisible();
   await page.click('#quality-reopen');
@@ -42,7 +50,7 @@ test('a decode SH cap shows reduced detail until Automatic is reopened', async (
 test('the render SH setting toggles reduced detail', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
-  await page.click('#panel-btn');
+  await openSettings(page);
   await page.locator('#sec-advanced summary').click();
   await page.selectOption('#sh-degree', '0');
   await expect(page.locator('#file-detail')).toBeVisible();

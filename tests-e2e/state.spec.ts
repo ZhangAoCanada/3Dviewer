@@ -1,5 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
 
+/** The panel stays open across a reload, so a blind toggle would close it. */
+async function openSettings(page: Page): Promise<void> {
+  const panel = page.locator('#panel');
+  if (await panel.evaluate((el) => el.classList.contains('is-collapsed'))) {
+    await page.click('#panel-btn');
+  }
+}
+
 test('back leaves a graphics banner that can retry', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -49,11 +57,12 @@ test('scene controls stay off until a scene is open', async ({ page }) => {
     await expect(page.locator(id)).toHaveClass(/is-disabled/);
   }
 
-  await page.click('#focus-btn');
+  // aria-disabled blocks Playwright's actionability check; the browser still delivers the click.
+  await page.click('#focus-btn', { force: true });
   await expect(page.locator('#toast-msg')).toHaveText('Open a scene first');
-  await page.click('#reset-btn');
+  await page.click('#reset-btn', { force: true });
   await expect(page.locator('#toast-msg')).toHaveText('Open a scene first');
-  await page.click('#upright-btn');
+  await page.click('#upright-btn', { force: true });
   await expect(page.locator('#toast-msg')).toHaveText('Open a scene first');
   await expect(page.locator('#upright')).toBeHidden();
   await page.keyboard.press('r');
@@ -62,7 +71,7 @@ test('scene controls stay off until a scene is open', async ({ page }) => {
   await expect(page.locator('#toast-msg')).toHaveText('Open a scene first');
   await expect(page.locator('#upright')).toBeHidden();
 
-  await page.click('#panel-btn');
+  await openSettings(page);
   await expect(page.locator('#display-empty-hint')).toBeVisible();
   await expect(page.locator('#display-empty-hint')).toHaveText('Open a scene first');
   await expect(page.locator('#point-size')).toBeDisabled();
@@ -78,7 +87,7 @@ test('scene controls stay off until a scene is open', async ({ page }) => {
     await expect(page.locator(id)).toBeEnabled();
   }
   await page.locator('#sec-view summary').click();
-  await page.click('#upright-open');
+  await page.click('#upright-open', { force: true });
   await expect(page.locator('#toast-msg')).toHaveText('Open a scene first');
   await expect(page.locator('#upright')).toBeHidden();
 });
@@ -91,7 +100,7 @@ test('controls follow the loaded kind', async ({ page }) => {
   await expect(page.locator('#reset-btn')).toBeEnabled();
   await expect(page.locator('#reset-btn')).toHaveAttribute('title', 'Reset view (R)');
   await expect(page.locator('#upright-btn')).toHaveAttribute('title', 'Make upright');
-  await page.click('#panel-btn');
+  await openSettings(page);
   await page.locator('#sec-advanced summary').click();
   await expect(page.locator('#display-empty-hint')).toBeHidden();
   await expect(page.locator('#point-size')).toBeHidden();
@@ -111,7 +120,7 @@ test('controls follow the loaded kind', async ({ page }) => {
 
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
-  await page.click('#panel-btn');
+  await openSettings(page);
   await page.locator('#sec-advanced summary').click();
   await expect(page.locator('#shading')).toBeHidden();
   await expect(page.locator('#wireframe')).toBeHidden();
