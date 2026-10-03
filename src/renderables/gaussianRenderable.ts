@@ -15,6 +15,8 @@ export interface GaussianSceneInfo {
   sourceSh: number;
   sampleStride: number;
   extended: boolean;
+  /** Float32 centers were requested and half-float was used instead. */
+  precisionReduced: boolean;
   lod: boolean;
   /** Splats in the LoD tree. Zero when LoD was not built. */
   lodCount: number;
@@ -101,6 +103,15 @@ export class GaussianRenderable implements Renderable {
       sourcePrimitives: info?.sourceCount,
       memoryBytes: memory,
       extra,
+      detail: info
+        ? {
+            sourceCount: info.sourceCount,
+            retainedCount: count,
+            sourceSh: info.sourceSh,
+            loadedSh: info.shDegree,
+            precisionReduced: info.precisionReduced,
+          }
+        : undefined,
     };
   }
 

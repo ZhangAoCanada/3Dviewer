@@ -111,7 +111,7 @@ test('cancel during preparing hides the card and leaves the chip empty', async (
   await page.goto('about:blank');
 });
 
-test('slab badge reaches full quality and then hides', async () => {
+test('slab badge reaches ready and then hides', async () => {
   // Own browser: a 300k sort in the shared browser wedges SwiftShader for the next test.
   const browser = await chromium.launch({
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
@@ -120,7 +120,7 @@ test('slab badge reaches full quality and then hides', async () => {
   try {
     await page.goto('/?demo=slab&n=300000');
     const badge = page.locator('#file-quality');
-    await expect(badge).toHaveText('Full quality', { timeout: 45_000 });
+    await expect(badge).toHaveText('Ready', { timeout: 45_000 });
     await expect(badge).toBeHidden({ timeout: 10_000 });
     await page.goto('about:blank');
   } finally {

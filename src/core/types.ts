@@ -93,6 +93,16 @@ export interface RenderSettings {
   extendedPrecision: boolean;
 }
 
+/** How much of the source file is actually on screen. Absent for Spark-decoded splats. */
+export interface SceneDetail {
+  sourceCount: number;
+  retainedCount: number;
+  sourceSh?: number;
+  loadedSh?: number;
+  /** True when float32 centers were requested and the budget only fit half-float. */
+  precisionReduced?: boolean;
+}
+
 export interface RenderableStats {
   kind: RepresentationKind;
   label: string;
@@ -102,6 +112,7 @@ export interface RenderableStats {
   triangles?: number;
   memoryBytes?: number;
   extra?: Record<string, string | number>;
+  detail?: SceneDetail;
 }
 
 export interface RenderableMeta {

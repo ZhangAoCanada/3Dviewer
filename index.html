@@ -85,6 +85,7 @@
               <svg id="file-quality-icon" class="icon icon-sm" aria-hidden="true" hidden><use href="#i-check"/></svg>
               <span id="file-quality-label"></span>
             </span>
+            <button id="file-detail" class="badge badge-warn" type="button" hidden><svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"/></svg><span class="badge-label">Reduced detail</span></button>
             <button id="geo-badge" class="badge badge-geo" type="button" hidden aria-label="Show georeference">
               <svg class="icon icon-sm" aria-hidden="true"><use href="#i-map-pin"/></svg><span id="geo-badge-text"></span>
             </button>
@@ -133,6 +134,14 @@
           </div>
         </div>
       </header>
+      <div class="banner-slot">
+        <div id="graphics-banner" class="banner island" role="status" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-triangle-alert"/></svg>
+          <span class="banner-text">Graphics are unavailable, so the 3D view is off.</span>
+          <button id="graphics-banner-details" class="btn btn-ghost btn-sm" type="button">Details</button>
+          <button id="graphics-banner-retry" class="btn btn-secondary btn-sm" type="button">Try again</button>
+        </div>
+      </div>
 
       <section id="hud" class="hud island" aria-label="Performance stats">
         <button id="hud-toggle" class="hud-summary" type="button" aria-expanded="false" aria-controls="hud-detail" title="Stats (I)">
@@ -170,13 +179,13 @@
           </button>
         </div>
         <span class="divider" aria-hidden="true"></span>
-        <button id="focus-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Focus the center point" title="Focus the center (F)">
+        <button id="focus-btn" class="btn btn-ghost btn-icon" type="button" data-scene aria-label="Focus the center point" title="Focus the center (F)">
           <svg class="icon" aria-hidden="true"><use href="#i-focus"/></svg>
         </button>
-        <button id="reset-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Reset view" title="Reset view (R)">
+        <button id="reset-btn" class="btn btn-ghost btn-icon" type="button" data-scene aria-label="Reset view" title="Reset view (R)">
           <svg class="icon" aria-hidden="true"><use href="#i-house"/></svg>
         </button>
-        <button id="upright-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Make upright" title="Make upright" aria-expanded="false" aria-controls="upright">
+        <button id="upright-btn" class="btn btn-ghost btn-icon" type="button" data-scene aria-label="Make upright" title="Make upright" aria-expanded="false" aria-controls="upright">
           <svg class="icon" aria-hidden="true"><use href="#i-axis-3d"/></svg>
         </button>
         <button id="fullscreen-btn" class="btn btn-ghost btn-icon" type="button" aria-label="Enter full screen" title="Full screen" hidden>
@@ -245,6 +254,7 @@
           </details>
           <details id="sec-display" class="sec" open>
             <summary>Display<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <p id="display-empty-hint" class="hint" hidden>Open a scene first</p>
             <div class="field" id="quality-field">
               <span>Quality</span>
               <div class="segment" role="radiogroup" aria-label="Quality">
@@ -263,7 +273,7 @@
           <details id="sec-view" class="sec">
             <summary>View and navigation<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
             <div class="field">
-              <button id="upright-open" class="btn btn-secondary btn-sm" type="button">Make upright…</button>
+              <button id="upright-open" class="btn btn-secondary btn-sm" type="button" data-scene>Make upright…</button>
             </div>
             <label class="field"><span>Sensitivity <output id="out-sensitivity">1.0</output></span><input id="sensitivity" type="range" min="0.4" max="2" step="0.05" value="1" /></label>
           </details>
@@ -276,13 +286,13 @@
             <summary>Advanced<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
             <label class="field-row"><span>Up axis <output id="up-using">Auto</output></span><span class="select"><select id="up-axis"><option value="auto" selected>Auto (flat scans use Z-up)</option><option value="y">Y-up</option><option value="z">Z-up</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="switch-row"><span>Flip Y (OpenCV / COLMAP)</span><input id="flip-y" type="checkbox" class="switch" role="switch" /></label>
-            <label class="field-row" data-applies="splats"><span>SH degree</span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
-            <label class="field" data-applies="splats"><span>Splat cutoff <output id="out-splat-scale">1.0</output></span><input id="splat-scale" type="range" min="0.75" max="1.15" step="0.05" value="1" /></label>
-            <label class="field" data-applies="splats"><span>LOD detail <output id="out-lod">1.0</output></span><input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" /></label>
+            <label class="field-row" data-applies="splats" data-preload><span>SH degree</span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
+            <label class="field" data-applies="splats" data-preload><span>Splat cutoff <output id="out-splat-scale">1.0</output></span><input id="splat-scale" type="range" min="0.75" max="1.15" step="0.05" value="1" /></label>
+            <label class="field" data-applies="splats" data-preload><span>LOD detail <output id="out-lod">1.0</output></span><input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" /></label>
             <label class="field-row"><span>Pixel ratio</span><span class="select"><select id="pixel-ratio"><option value="auto" selected>Auto</option><option value="1">1</option><option value="1.5">1.5</option><option value="2">2</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
-            <label class="switch-row" data-applies="splats"><span>2D Gaussian axes</span><input id="gs-2d" type="checkbox" class="switch" role="switch" checked /></label>
-            <label class="switch-row" data-applies="splats"><span>Radial depth sort</span><input id="sort-radial" type="checkbox" class="switch" role="switch" checked /></label>
-            <label class="switch-row" data-applies="splats"><span>Extended precision on next load</span><input id="extended" type="checkbox" class="switch" role="switch" /></label>
+            <label class="switch-row" data-applies="splats" data-preload><span>2D Gaussian axes</span><input id="gs-2d" type="checkbox" class="switch" role="switch" checked /></label>
+            <label class="switch-row" data-applies="splats" data-preload><span>Radial depth sort</span><input id="sort-radial" type="checkbox" class="switch" role="switch" checked /></label>
+            <label class="switch-row" data-applies="splats" data-preload><span>Extended precision on next load</span><input id="extended" type="checkbox" class="switch" role="switch" /></label>
             <p class="hint">
               Large Gaussian PLY files are read in chunks and packed outside the WASM heap, so a multi-gigabyte
               file is never one ArrayBuffer. Spherical harmonics drop first, then splats are subsampled, if the
