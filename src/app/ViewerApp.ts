@@ -49,7 +49,7 @@ import { bindRangeFills, syncRangeFill } from '../ui/controls';
 import { formatBytes, formatCompact, formatCount, formatFixed } from '../ui/format';
 import { phaseOf, progressLine, stallHint } from '../ui/loadPhase';
 import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
-import { bindMenu } from '../ui/menu';
+import { bindMenu, pointerInside } from '../ui/menu';
 import { renderProblem, supportedFormats } from '../ui/problem';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
@@ -269,6 +269,7 @@ export class ViewerApp {
       if (performance.now() - start.t >= 400) return;
       this.levelAt(event.clientX, event.clientY);
     });
+    this.bindUprightDismiss(canvas);
     must('#theme-btn').addEventListener('click', () => this.toggleTheme());
     must('#panel-btn').addEventListener('click', () => this.togglePanel());
     must('#panel-close').addEventListener('click', () => {
@@ -913,6 +914,28 @@ export class ViewerApp {
   private toggleUpright(): void {
     if (must('#upright').hidden) this.openUpright();
     else this.closeUpright();
+  }
+
+  /**
+   * Same outside-pointer dismiss as the menus. Capture runs before the canvas
+   * calls setPointerCapture, and the event is not cancelled, so orbit still starts.
+   * A canvas press while leveling is the ground click the panel is waiting for.
+   */
+  private bindUprightDismiss(canvas: HTMLCanvasElement): void {
+    const panel = must('#upright');
+    const toggle = must('#upright-btn');
+    const open = must('#upright-open');
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (panel.hidden) return;
+        if (document.querySelector('dialog[open]')) return;
+        if (pointerInside(event, [panel, toggle, open])) return;
+        if (this.leveling && pointerInside(event, [canvas])) return;
+        this.closeUpright();
+      },
+      true,
+    );
   }
 
   private openUpright(): void {
