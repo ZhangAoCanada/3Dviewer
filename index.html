@@ -94,7 +94,8 @@
           <button id="open-btn" class="btn btn-primary" type="button" aria-label="Open file" title="Open file (O)">
             <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg><span class="btn-label">Open</span>
           </button>
-          <input id="file-input" type="file" hidden accept=".ply,.splat,.spz,.ksplat,.sog,.rad,.glb,.gltf,.obj,.zip" />
+          <input id="file-input" type="file" multiple hidden accept=".ply,.splat,.spz,.ksplat,.sog,.rad,.glb,.gltf,.obj,.zip,.bin,.mtl,.png,.jpg,.jpeg,.webp" />
+          <input id="folder-input" type="file" webkitdirectory multiple hidden />
           <button id="url-btn" class="btn btn-ghost btn-icon hide-phone" type="button" aria-label="Open from URL" title="Open from URL (U)">
             <svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>
           </button>
@@ -209,7 +210,8 @@
             <button id="empty-open" class="btn btn-primary btn-lg" type="button"><svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg>Choose file</button>
             <button id="empty-url" class="btn btn-secondary btn-lg" type="button"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg>Open URL</button>
           </div>
-          <p class="empty-formats">Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb .gltf .obj · Points: .ply</p>
+          <p class="empty-formats">Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb, .gltf with its .bin and textures, .obj (materials need its .mtl) · Points: .ply</p>
+          <p id="empty-multi" class="hint">For a .gltf or .obj with separate files, select them all, drop the folder, or <button id="empty-folder" class="btn btn-ghost btn-sm" type="button">choose a folder</button>. A single .glb is easiest.</p>
           <div class="empty-samples" id="empty-samples">
             <span>Try a sample</span>
             <button id="empty-sample" class="chip" type="button">3DGS torus</button>
@@ -217,7 +219,7 @@
         </div>
       </section>
       <div id="drop-overlay" class="drop-overlay" aria-hidden="true">
-        <div class="drop-inner"><svg class="icon icon-xl"><use href="#i-upload"/></svg><p>Drop to open</p><span>Splats, meshes, or point clouds</span></div>
+        <div class="drop-inner"><svg class="icon icon-xl"><use href="#i-upload"/></svg><p>Drop to open</p><span>Files or a folder: splats, meshes, or point clouds</span></div>
       </div>
 
       <aside id="panel" class="panel is-collapsed" aria-labelledby="panel-title">
@@ -434,6 +436,10 @@
                 <dt><kbd>Esc</kbd></dt><dd>Close or cancel</dd>
                 <dt>Fly mode</dt><dd><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows move · <kbd>Q</kbd> / <kbd>E</kbd> down / up (<kbd>Space</kbd> also up) · <kbd>Shift</kbd> sprint</dd>
               </dl>
+            </section>
+            <section>
+              <h3><svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg>Files</h3>
+              <p>Mesh with textures: use .glb, or select the .gltf or .obj together with its .bin, .mtl, and images (or a folder)</p>
             </section>
           </div>
         </form>

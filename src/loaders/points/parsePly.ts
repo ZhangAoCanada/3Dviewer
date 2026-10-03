@@ -1,4 +1,5 @@
 import type { ByteSource } from '../../core/byteSource';
+import { throwIfAborted } from '../gaussian/disposeIfAborted';
 
 export interface PointCloudData {
   positions: Float32Array;
@@ -69,6 +70,7 @@ export async function parsePlyPoints(
   source: ByteSource,
   maxPoints: number,
   onProgress?: (loadedVerts: number, totalVerts: number) => void,
+  signal?: AbortSignal,
 ): Promise<PointCloudData> {
   const header = await readHeader(source);
   const elements = parseElements(header.text);
@@ -111,7 +113,7 @@ export async function parsePlyPoints(
   report(0, true);
 
   if (header.format === 'ascii') {
-    await readAscii(source, header.byteLength, vertex, colorProps, stride, positions, colors, origin, report);
+    await readAscii(source, header.byteLength, vertex, colorProps, stride, positions, colors, origin, report, signal);
   } else {
     const little = header.format === 'binary_little_endian';
     await readBinary(
@@ -128,6 +130,7 @@ export async function parsePlyPoints(
       colors,
       origin,
       report,
+      signal,
     );
   }
   report(vertex.count, true);
@@ -276,6 +279,7 @@ async function readBinary(
   colors: Uint8Array | null,
   origin: OriginState,
   report?: (loaded: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const strideBytes = vertex.bytes;
   const bodyBytes = vertex.count * strideBytes;
@@ -286,6 +290,7 @@ async function readBinary(
   const end = bodyStart + bodyBytes;
   let out = 0;
   while (filePos < end) {
+    if (signal) throwIfAborted(signal);
     const remaining = end - filePos;
     const want = Math.min(CHUNK - (CHUNK % strideBytes || 0), remaining);
     const take = want < strideBytes ? strideBytes : want - (want % strideBytes);
@@ -329,6 +334,7 @@ async function readAscii(
   colors: Uint8Array | null,
   origin: OriginState,
   report?: (loaded: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const col = new Map(vertex.props.map((prop, index) => [prop.name, index]));
   const xi = col.get('x');
@@ -346,6 +352,7 @@ async function readAscii(
   let out = 0;
   const decoder = new TextDecoder('latin1');
   while (pos < source.size && index < vertex.count) {
+    if (signal) throwIfAborted(signal);
     const buf = await source.read(pos, Math.min(source.size, pos + CHUNK));
     pos += buf.byteLength;
     const text = carry + decoder.decode(buf, { stream: pos < source.size });

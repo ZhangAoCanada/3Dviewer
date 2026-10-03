@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { abortReason } from '../../core/abortable';
 import { blobSource } from '../../core/byteSource';
 import { fetchBlobWithProgress } from '../../core/fetchProgress';
 import type { AssetSource, FormatLoader, LoadContext } from '../../core/types';
@@ -48,12 +49,7 @@ function parseInWorker(
       else if (data) resolve(data);
     };
     const onAbort = () => {
-      const reason = signal.reason;
-      const error =
-        reason instanceof Error && reason.name !== 'AbortError'
-          ? reason
-          : new DOMException('Load aborted', 'AbortError');
-      finish(error);
+      finish(abortReason(signal));
     };
     if (signal.aborted) {
       onAbort();
@@ -117,9 +113,9 @@ export const pointCloudLoader: FormatLoader = {
       data = await parseInWorker(blob, ctx.budget.maxPoints, ctx.signal, onProgress);
     } catch (error) {
       if (ctx.signal.aborted || blob.size > 64 * 1024 * 1024) throw error;
-      data = await parsePlyPoints(blobSource(blob), ctx.budget.maxPoints, onProgress);
+      data = await parsePlyPoints(blobSource(blob), ctx.budget.maxPoints, onProgress, ctx.signal);
     }
-    if (ctx.signal.aborted) throw new DOMException('Load aborted', 'AbortError');
+    if (ctx.signal.aborted) throw abortReason(ctx.signal);
     if (!data.colors) data = { ...data, colors: colorizeByHeight(data.positions, upAxisOf(data.positions)) };
     ctx.onProgress({
       loaded: data.count,

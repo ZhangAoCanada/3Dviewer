@@ -595,6 +595,12 @@ export class SceneHost {
     });
   }
 
+  /** Live WebGL object counts. Only read while the performance panel is open. */
+  gpuObjects(): { geometries: number; textures: number } {
+    const memory = this.renderer.info.memory;
+    return { geometries: memory.geometries, textures: memory.textures };
+  }
+
   stats(): FrameStats {
     return {
       fps: this.fps,

@@ -4,6 +4,7 @@ export interface ProblemHandlers {
   retry?: () => void;
   retryLowerMemory?: () => void;
   chooseFile?: () => void;
+  chooseFolder?: () => void;
   openFile?: () => void;
   downloadApp?: () => void;
   reinitGraphics?: () => void;
@@ -16,12 +17,13 @@ export interface ProblemHandlers {
 }
 
 const FORMATS =
-  'Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb .gltf .obj · Points: .ply';
+  'Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb, .gltf with its .bin and textures, .obj (materials need its .mtl) · Points: .ply';
 
 const RUNNERS: Record<FailureAction, keyof ProblemHandlers> = {
   retry: 'retry',
   'retry-lower-memory': 'retryLowerMemory',
   'choose-file': 'chooseFile',
+  'choose-folder': 'chooseFolder',
   'open-file': 'openFile',
   'download-app': 'downloadApp',
   'reinit-graphics': 'reinitGraphics',
@@ -110,6 +112,8 @@ function actionLabel(
       return 'Switch to Lower memory and try again';
     case 'choose-file':
       return 'Choose another file';
+    case 'choose-folder':
+      return 'Choose folder';
     case 'open-file':
       return 'Open a local file instead';
     case 'download-app':

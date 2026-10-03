@@ -8,6 +8,7 @@ export type FailureAction =
   | 'retry'
   | 'retry-lower-memory'
   | 'choose-file'
+  | 'choose-folder'
   | 'open-file'
   | 'download-app'
   | 'reinit-graphics'
@@ -42,6 +43,16 @@ export class LoadStalledError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'LoadStalledError';
+  }
+}
+
+export class MissingCompanionsError extends Error {
+  readonly missing: string[];
+
+  constructor(missing: string[]) {
+    super(`Missing: ${missing.join(', ')}`);
+    this.name = 'MissingCompanionsError';
+    this.missing = missing;
   }
 }
 
@@ -100,6 +111,16 @@ export function classifyFailure(error: unknown, context?: FailureContext): Failu
       title: 'Could not download the file',
       body: networkBody(chain, context?.source),
       actions: ['retry', 'open-file'],
+      raw,
+    };
+  }
+  const missing = chain.map(missingList).find((list) => list != null);
+  if (missing) {
+    return {
+      kind: 'format',
+      title: 'Files missing for this model',
+      body: `Missing: ${missing.join(', ')}. Select the model together with these files, or drop the whole folder. A single .glb avoids this.`,
+      actions: ['choose-file', 'choose-folder'],
       raw,
     };
   }
@@ -175,6 +196,14 @@ function isNetwork(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (NETWORK_STATUS_PATTERN.test(error.message)) return true;
   return error instanceof TypeError && FETCH_PATTERN.test(error.message);
+}
+
+function missingList(error: unknown): string[] | null {
+  if (error instanceof MissingCompanionsError) return error.missing;
+  if (!(error instanceof Error) || error.name !== 'MissingCompanionsError') return null;
+  const missing = (error as { missing?: unknown }).missing;
+  if (!Array.isArray(missing) || !missing.every((item) => typeof item === 'string')) return null;
+  return missing;
 }
 
 function isFormat(error: unknown): boolean {

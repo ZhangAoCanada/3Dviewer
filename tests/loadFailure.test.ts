@@ -4,6 +4,7 @@ import {
   classifyFailure,
   GraphicsUnavailableError,
   LoadStalledError,
+  MissingCompanionsError,
   type FailureAction,
   type FailureKind,
 } from '../src/core/loadFailure';
@@ -98,6 +99,16 @@ describe('classifyFailure', () => {
     const failure = classifyFailure(new Error('decoder gave up'), { stage: 'parse' });
     expect(failure.kind).toBe('format');
     expect(failure.actions).toEqual(['choose-file', 'formats']);
+  });
+
+  it('lists missing companion files and offers a folder', () => {
+    const failure = classifyFailure(new MissingCompanionsError(['scene.bin', 'textures/wood.png']));
+    expect(failure.kind).toBe('format');
+    expect(failure.title).toBe('Files missing for this model');
+    expect(failure.body).toBe(
+      'Missing: scene.bin, textures/wood.png. Select the model together with these files, or drop the whole folder. A single .glb avoids this.',
+    );
+    expect(failure.actions).toEqual(['choose-file', 'choose-folder']);
   });
 
   it('names graphics and format cards', () => {
