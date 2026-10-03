@@ -107,7 +107,7 @@ function actionLabel(
     case 'reinit-graphics':
       return 'Try again';
     case 'retry-lower-memory':
-      return 'Try again with lower memory';
+      return 'Switch to Lower memory and try again';
     case 'choose-file':
       return 'Choose another file';
     case 'open-file':

@@ -8,6 +8,7 @@ import {
   type Failure,
 } from '../core/loadFailure';
 import { detectMemoryBudget } from '../core/memoryBudget';
+import { mergePresetOverrides, parseQualityPreset, resolvePreset, type PresetPlan } from '../core/qualityPreset';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
 import { readProbe, sourceFromFile, sourceFromUrl } from '../core/sniff';
@@ -18,6 +19,7 @@ import {
   type GaussianLoadOverrides,
   type LoadProgress,
   type MemoryBudget,
+  type QualityPreset,
   type Renderable,
   type RenderSettings,
   type ShadingMode,
@@ -36,6 +38,7 @@ import { renderProblem, supportedFormats } from '../ui/problem';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
 const INFLIGHT_KEY = '3dviewer-inflight';
+const QUALITY_KEY = '3dviewer-quality';
 const INFLIGHT_MAX_AGE = 24 * 60 * 60 * 1000;
 const LARGE_BYTES = 64 * 1024 * 1024;
 const SOFTWARE_TOAST =
@@ -85,7 +88,7 @@ export class ViewerApp {
   private reloadGraphics = false;
   private surface: 'empty' | 'problem' | 'none' = 'none';
   private bootFinishedWithoutGraphics = false;
-  private pendingLowerMemory = false;
+  private loadedPreset: QualityPreset | null = null;
   private softwareNotified = false;
   private contextTimer = 0;
 
@@ -95,10 +98,10 @@ export class ViewerApp {
     this.budget = detectMemoryBudget();
     this.settings = {
       ...DEFAULT_SETTINGS,
-      shDegree: this.budget.maxSh,
+      quality: readStoredPreset(),
     };
     bindRangeFills(document);
-    this.syncControls();
+    this.applyPreset(resolvePreset(this.settings.quality, this.budget));
     this.restoreNavPrefs();
     this.bind();
     this.syncThemeButton();
@@ -161,7 +164,6 @@ export class ViewerApp {
         if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
         return;
       }
-      this.pendingLowerMemory = false;
       fileInput.click();
     };
     must('#open-btn').addEventListener('click', open);
@@ -175,13 +177,8 @@ export class ViewerApp {
         return;
       }
       const source = sourceFromFile(file);
-      const lowerMemory = this.pendingLowerMemory;
-      this.pendingLowerMemory = false;
       this.setQuery(null);
-      void this.load(source, {
-        lowerMemory,
-        restore: lowerMemory ? this.snapshotForRetry(source) : null,
-      });
+      void this.load(source);
     });
 
     must('#empty-sample').addEventListener('click', () => {
@@ -283,7 +280,6 @@ export class ViewerApp {
           if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
           return;
         }
-        this.pendingLowerMemory = false;
         must<HTMLInputElement>('#file-input').click();
       } else if (event.code === 'KeyU') {
         this.openUrlDialog();
@@ -310,6 +306,14 @@ export class ViewerApp {
   }
 
   private bindSettings(): void {
+    for (const preset of ['auto', 'quality', 'memory'] as const) {
+      must<HTMLButtonElement>(`#quality-${preset}`).addEventListener('click', () => this.selectPreset(preset));
+    }
+    must('#quality-reopen').addEventListener('click', () => {
+      const source = this.lastSource;
+      if (!source) return;
+      void this.load(source);
+    });
     const scale = must<HTMLInputElement>('#splat-scale');
     const points = must<HTMLInputElement>('#point-size');
     const lod = must<HTMLInputElement>('#lod-scale');
@@ -458,11 +462,59 @@ export class ViewerApp {
     }
   }
 
+  private selectPreset(preset: QualityPreset): void {
+    if (this.settings.quality === preset) return;
+    this.settings.quality = preset;
+    writeStorage(QUALITY_KEY, preset);
+    this.settings.splatScale = DEFAULT_SETTINGS.splatScale;
+    this.settings.lodSplatScale = DEFAULT_SETTINGS.lodSplatScale;
+    this.settings.enable2DGS = DEFAULT_SETTINGS.enable2DGS;
+    this.settings.sortRadial = DEFAULT_SETTINGS.sortRadial;
+    this.applyPreset(resolvePreset(preset, detectMemoryBudget()));
+  }
+
+  /** Apply a preset's render levers. Decode changes wait for a reopen. */
+  private applyPreset(plan: PresetPlan): void {
+    this.settings.shDegree = plan.renderSh;
+    this.settings.pixelRatio = plan.pixelRatio;
+    this.settings.extendedPrecision = plan.extendedPrecision;
+    this.syncControls();
+    this.host?.applySettings(this.settings);
+    this.syncShDegree();
+    this.syncReopen();
+  }
+
+  private syncQuality(plan: PresetPlan): void {
+    for (const preset of ['auto', 'quality', 'memory'] as const) {
+      const button = must<HTMLButtonElement>(`#quality-${preset}`);
+      const on = this.settings.quality === preset;
+      button.classList.toggle('is-on', on);
+      button.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+    must('#quality-summary').textContent = plan.summary;
+  }
+
+  private syncReopen(): void {
+    const reopen = document.querySelector<HTMLButtonElement>('#quality-reopen');
+    if (!reopen) return;
+    const needsDecode =
+      this.loadedPreset != null &&
+      this.loadedPreset !== this.settings.quality &&
+      this.lastSource != null &&
+      this.items.length > 0;
+    reopen.hidden = !needsDecode;
+  }
+
   private syncControls(): void {
+    this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget()));
     must<HTMLInputElement>('#splat-scale').value = String(this.settings.splatScale);
+    must('#out-splat-scale').textContent = formatFixed(this.settings.splatScale);
     must<HTMLInputElement>('#point-size').value = String(this.settings.pointSize);
+    must('#out-point-size').textContent = formatFixed(this.settings.pointSize);
     must<HTMLInputElement>('#lod-scale').value = String(this.settings.lodSplatScale);
+    must('#out-lod').textContent = formatFixed(this.settings.lodSplatScale);
     must<HTMLSelectElement>('#sh-degree').value = String(this.settings.shDegree);
+    must<HTMLSelectElement>('#pixel-ratio').value = this.settings.pixelRatio;
     must<HTMLInputElement>('#gs-2d').checked = this.settings.enable2DGS;
     must<HTMLInputElement>('#sort-radial').checked = this.settings.sortRadial;
     must<HTMLInputElement>('#extended').checked = this.settings.extendedPrecision;
@@ -624,10 +676,7 @@ export class ViewerApp {
     await this.load(sourceFromUrl(url, 'sample'));
   }
 
-  private async load(
-    source: AssetSource,
-    options?: { lowerMemory?: boolean; restore?: NavSnapshot | null },
-  ): Promise<void> {
+  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null }): Promise<void> {
     if (!this.host) {
       this.loadingSource = source;
       this.failureSource = source;
@@ -671,13 +720,13 @@ export class ViewerApp {
     this.setLoading(true, `Opening ${source.name}`, undefined, undefined, 'detect');
     this.noteInflight(source);
     const restore = options?.restore ?? null;
-    const overrides = options?.lowerMemory ? { ...this.gaussianOverrides, maxSh: 0 as const } : this.gaussianOverrides;
+    const detected = detectMemoryBudget();
+    const plan = resolvePreset(this.settings.quality, detected);
+    const overrides = mergePresetOverrides(this.settings.quality, plan, this.gaussianOverrides);
+    const extendedPrecision = this.settings.extendedPrecision;
+    const presetAtLoad = this.settings.quality;
     let loaded = false;
     try {
-      if (options?.lowerMemory) {
-        host.clear();
-        this.renderSceneInfo();
-      }
       const header = PROBE_EXTENSIONS.has(source.extension)
         ? await readProbe(source, 65536, abort.signal)
         : new Uint8Array();
@@ -689,7 +738,7 @@ export class ViewerApp {
         );
       }
       const large =
-        options?.lowerMemory === true ||
+        plan.alwaysPreClear ||
         (source.sizeBytes ?? Infinity) >= LARGE_BYTES ||
         this.items.some((item) => (item.getStats().memoryBytes ?? 0) >= 256 * 1024 * 1024);
       if (large) {
@@ -698,8 +747,8 @@ export class ViewerApp {
       }
       const renderable = await loader.load(source, {
         signal: abort.signal,
-        budget: detectMemoryBudget(),
-        extendedPrecision: this.settings.extendedPrecision,
+        budget: plan.budget,
+        extendedPrecision,
         overrides,
         onProgress: (progress) => {
           arm(progress.stage);
@@ -714,6 +763,7 @@ export class ViewerApp {
       host.clear();
       host.add(renderable, this.settings);
       this.lastSource = source;
+      this.loadedPreset = presetAtLoad;
       host.setFlip(this.settings.flipY);
       if (restore) {
         host.navigation.restore(restore);
@@ -1224,6 +1274,7 @@ export class ViewerApp {
     this.renderFileChip();
     this.syncShDegree();
     this.syncApplicable();
+    this.syncReopen();
   }
 
   private renderGeoref(extra: Record<string, string | number> | undefined): void {
@@ -1444,10 +1495,10 @@ export class ViewerApp {
   private paintProblem(failure: Failure, showBack: boolean): void {
     const root = must('#problem');
     renderProblem(root, failure, formatReport(collectDiagnostics(this.host, this.loadDiag())), {
-      retry: () => this.retryLoad(false),
-      retryLowerMemory: () => this.retryLoad(true),
-      chooseFile: () => this.chooseFile(false),
-      openFile: () => this.chooseFile(false),
+      retry: () => this.retryLoad(),
+      retryLowerMemory: () => this.retryLowerMemory(),
+      chooseFile: () => this.chooseFile(),
+      openFile: () => this.chooseFile(),
       downloadApp: () => this.openDownloadDialog(),
       reinitGraphics: () => {
         if (this.reloadGraphics) {
@@ -1479,38 +1530,47 @@ export class ViewerApp {
     this.setSurface(this.items.length > 0 ? 'none' : 'empty');
   }
 
-  private retryLoad(lowerMemory: boolean): void {
+  private retryLowerMemory(): void {
+    this.selectPreset('memory');
+    this.toast('Lower memory is on. Change it in Settings.', 'info');
+    if (this.showingBreadcrumb && this.crashEntry) {
+      this.retryBreadcrumb();
+      return;
+    }
+    this.retryLoad();
+  }
+
+  private retryLoad(): void {
     if (this.showingBreadcrumb && this.crashEntry) {
       this.retryBreadcrumb();
       return;
     }
     const source = this.failureSource ?? this.loadingSource ?? this.lastSource;
     if (!source || (source.origin === 'file' && !source.file)) {
-      this.chooseFile(lowerMemory);
+      this.chooseFile();
       return;
     }
-    void this.load(source, { lowerMemory, restore: this.snapshotForRetry(source) });
+    void this.load(source, { restore: this.snapshotForRetry(source) });
   }
 
   private retryBreadcrumb(): void {
     const entry = this.crashEntry;
     if (!entry) return;
     if (entry.origin === 'file' || !entry.url) {
-      this.chooseFile(true);
+      this.chooseFile();
       return;
     }
     const origin: AssetOrigin = entry.origin === 'sample' ? 'sample' : 'url';
     const source = sourceFromUrl(entry.url, origin);
     if (entry.size != null) source.sizeBytes = entry.size;
-    void this.load(source, { lowerMemory: true, restore: this.snapshotForRetry(source) });
+    void this.load(source, { restore: this.snapshotForRetry(source) });
   }
 
-  private chooseFile(lowerMemory: boolean): void {
+  private chooseFile(): void {
     if (!this.host) {
       if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
       return;
     }
-    this.pendingLowerMemory = lowerMemory;
     must<HTMLInputElement>('#file-input').click();
   }
 
@@ -1531,7 +1591,7 @@ export class ViewerApp {
       url: source?.url ?? bootUrl ?? undefined,
       stage: this.loadingStage ?? undefined,
       elapsedMs: this.loadingStarted > 0 ? performance.now() - this.loadingStarted : undefined,
-      preset: 'automatic',
+      preset: this.settings.quality === 'quality' ? 'better quality' : this.settings.quality === 'memory' ? 'lower memory' : 'automatic',
       error: this.lastError,
     };
   }
@@ -1637,6 +1697,14 @@ function clearStoredInflight(): void {
 function stallMessage(ms: number): string {
   const label = ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 1000)} s`;
   return `Loading stalled: no progress for ${label}. The file is still on disk; try again, or convert it to a paged .rad so the next open does not read the whole PLY.`;
+}
+
+function readStoredPreset(): QualityPreset {
+  try {
+    return parseQualityPreset(localStorage.getItem(QUALITY_KEY));
+  } catch {
+    return 'auto';
+  }
 }
 
 function writeStorage(key: string, value: string): void {
