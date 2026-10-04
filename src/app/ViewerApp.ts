@@ -11,7 +11,7 @@ import {
 import { detectMemoryBudget } from '../core/memoryBudget';
 import { mergePresetOverrides, parseQualityPreset, resolvePreset, type PresetPlan } from '../core/qualityPreset';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
-import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
+import { SAMPLES, sampleUrl, startScreenSamples, type SampleAsset } from '../core/samples';
 import { readProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
@@ -258,12 +258,6 @@ export class ViewerApp {
       this.openFiles(files);
     });
 
-    must('#empty-sample').addEventListener('click', () => {
-      const sample = SAMPLES[0];
-      if (!sample) return;
-      this.setQuery({ sample: sample.id });
-      void this.loadSample(sample);
-    });
     must('#url-btn').addEventListener('click', () => this.openUrlDialog());
     must('#empty-url').addEventListener('click', () => this.openUrlDialog());
     must('#help-btn').addEventListener('click', () => this.openHelp());
@@ -755,23 +749,35 @@ export class ViewerApp {
   private buildSamples(): void {
     const menu = must('#samples-menu');
     const button = must<HTMLButtonElement>('#samples-btn');
-    const samplesRoot = must('#empty-samples');
     const moreSamples = must('#more-samples');
-    const first = SAMPLES[0];
-    if (first) this.fillSampleCard(must('#empty-sample'), first);
+    const { featured, more } = startScreenSamples();
+    const picks = must('#empty-sample-picks');
+    const firstButton = must<HTMLButtonElement>('#empty-sample');
+    featured.forEach((sample, index) => {
+      const link = index === 0 ? firstButton : document.createElement('button');
+      if (index > 0) {
+        link.type = 'button';
+        picks.append(link);
+      }
+      this.fillSampleLink(link, sample);
+    });
+    const rest = must('#empty-samples-rest');
+    for (const sample of more) {
+      const link = document.createElement('button');
+      link.type = 'button';
+      this.fillSampleLink(link, sample);
+      rest.append(link);
+    }
+    const samplesMore = must<HTMLButtonElement>('#empty-samples-more');
+    samplesMore.hidden = more.length === 0;
+    samplesMore.addEventListener('click', () => {
+      const open = rest.hidden;
+      rest.hidden = !open;
+      samplesMore.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
     for (const sample of SAMPLES) {
       menu.append(this.sampleItem(sample));
       moreSamples.append(this.sampleItem(sample));
-    }
-    for (const sample of SAMPLES.slice(1)) {
-      const card = document.createElement('button');
-      card.type = 'button';
-      this.fillSampleCard(card, sample);
-      card.addEventListener('click', () => {
-        this.setQuery({ sample: sample.id });
-        void this.loadSample(sample);
-      });
-      samplesRoot.append(card);
     }
     this.trackMenu(button, menu);
     const moreButton = must<HTMLButtonElement>('#more-btn');
@@ -789,41 +795,14 @@ export class ViewerApp {
     this.trackMenu(moreButton, moreMenu);
   }
 
-  private fillSampleCard(button: HTMLButtonElement, sample: SampleAsset): void {
-    button.className = 'sample-card';
-    button.replaceChildren();
-    const thumb = document.createElement('span');
-    thumb.className = 'sample-thumb';
-    thumb.dataset.kind = sample.kind;
-    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.setAttribute('class', 'icon icon-xl');
-    icon.setAttribute('aria-hidden', 'true');
-    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-    use.setAttribute('href', '#i-shapes');
-    icon.append(use);
-    thumb.append(icon);
-    if (sample.thumb) {
-      const img = document.createElement('img');
-      img.alt = '';
-      img.width = 96;
-      img.height = 72;
-      img.loading = 'lazy';
-      img.decoding = 'async';
-      img.addEventListener('error', () => img.remove());
-      img.src = assetUrl(sample.thumb);
-      thumb.append(img);
-    }
-    const name = document.createElement('span');
-    name.className = 'sample-name';
-    name.textContent = sample.title;
-    const meta = document.createElement('span');
-    meta.className = 'sample-meta';
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = sampleKindLabel(sample.kind);
-    const size = sample.remote || sample.bytes == null ? 'Remote' : formatBytes(sample.bytes);
-    meta.append(badge, document.createTextNode(` ${sampleExtension(sample.href)} · ${size}`));
-    button.append(thumb, name, meta);
+  private fillSampleLink(button: HTMLButtonElement, sample: SampleAsset): void {
+    button.className = 'sample-pill';
+    button.dataset.sample = sample.id;
+    button.textContent = sample.title;
+    button.addEventListener('click', () => {
+      this.setQuery({ sample: sample.id });
+      void this.loadSample(sample);
+    });
   }
 
   private sampleItem(sample: SampleAsset): HTMLButtonElement {
@@ -2485,27 +2464,6 @@ function benchScene(item: Renderable | undefined): {
     ...(stats.sourcePrimitives != null ? { sourceCount: stats.sourcePrimitives } : {}),
     ...(sh != null ? { sh: String(sh) } : {}),
   };
-}
-
-function assetUrl(path: string): string {
-  const base = import.meta.env.BASE_URL;
-  const prefix = base.endsWith('/') ? base : `${base}/`;
-  return `${prefix}${path}`;
-}
-
-function sampleExtension(href: string): string {
-  const clean = href.split('?')[0]?.split('#')[0] ?? href;
-  const base = clean.split('/').pop() ?? clean;
-  const dot = base.lastIndexOf('.');
-  return dot >= 0 ? base.slice(dot) : '';
-}
-
-function sampleKindLabel(kind: string): string {
-  if (kind === 'splats') return 'Splats';
-  if (kind === 'points') return 'Points';
-  if (kind === 'mesh') return 'Mesh';
-  if (kind === 'voxels') return 'Voxels';
-  return kind;
 }
 
 function safeStorage(): { getItem(key: string): string | null } {

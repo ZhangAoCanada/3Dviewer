@@ -1,67 +1,63 @@
 import { expect, test } from '@playwright/test';
 
-test('start screen sample cards show a type, a size, and a thumbnail', async ({ page }) => {
+test('start screen offers three quiet sample links and hides the rest', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
-  const cards = page.locator('.sample-card');
-  await expect(cards).toHaveCount(6);
-  await expect(cards.locator('.badge')).toHaveText(['Splats', 'Splats', 'Points', 'Mesh', 'Mesh', 'Splats']);
-  await expect(cards.nth(0)).toContainText('.ply');
-  await expect(cards.nth(0)).toContainText(/\d/);
-  await expect(cards.nth(2)).toContainText('.ply');
-  await expect(cards.filter({ hasText: 'Butterfly' })).toContainText('Remote');
-  await expect(cards.filter({ hasText: 'Remote' })).toHaveCount(1);
+  await expect(page.locator('#empty-open')).toBeVisible();
+  await expect(page.locator('#empty-samples-prompt')).toHaveText('No file handy? Try a sample:');
+  await expect(page.locator('.sample-card, .sample-thumb, #empty-samples img')).toHaveCount(0);
 
-  await expect
-    .poll(async () =>
-      page.locator('.sample-card img').evaluateAll((imgs) =>
-        imgs.every((img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0),
-      ),
-    )
-    .toBe(true);
-  await expect(page.locator('.sample-card img')).toHaveCount(5);
+  const picks = page.locator('#empty-sample-picks .sample-pill');
+  await expect(picks).toHaveText(['Torus splat', 'Crate', 'Point cloud']);
+  await expect(page.locator('#empty-samples-rest')).toBeHidden();
+  await expect(page.locator('#empty-samples-more')).toHaveAttribute('aria-expanded', 'false');
+
+  const openBox = await page.locator('#empty-open').boundingBox();
+  const pillBox = await picks.first().boundingBox();
+  expect(openBox).not.toBeNull();
+  expect(pillBox).not.toBeNull();
+  expect(openBox!.height).toBeGreaterThan(pillBox!.height);
+  expect(openBox!.y).toBeLessThan(pillBox!.y);
+
+  const closed = await page.locator('#empty-samples').boundingBox();
+  expect(closed).not.toBeNull();
+  expect(closed!.height).toBeLessThan(48);
+  const rowYs = await page.locator('#empty-samples-prompt, #empty-sample, #empty-samples-more').evaluateAll((nodes) =>
+    nodes.map((node) => Math.round(node.getBoundingClientRect().y)),
+  );
+  expect(Math.max(...rowYs) - Math.min(...rowYs)).toBeLessThanOrEqual(2);
+
+  await page.click('#empty-samples-more');
+  await expect(page.locator('#empty-samples-rest')).toBeVisible();
+  await expect(page.locator('#empty-samples-more')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#empty-samples-rest .sample-pill')).toHaveText(['Torus', 'Sphere', 'Butterfly']);
+  await expect(page.locator('#empty-samples img')).toHaveCount(0);
+
+  await page.click('#empty-samples-more');
+  await expect(page.locator('#empty-samples-rest')).toBeHidden();
 
   await page.click('#empty-sample');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
-  await expect(page.locator('#file-name')).toHaveText('torus.ply');
+  await expect(page.locator('#file-name')).toHaveText('torus.splat');
+  await expect(page).toHaveURL(/[?&]sample=torus-splat(?:&|$)/);
 });
 
-test.describe('missing thumbnail', () => {
-  test.use({ serviceWorkers: 'block' });
-
-  test('a missing thumbnail keeps the icon and the card size', async ({ page }) => {
-    await page.route('**/*.webp', (route) => route.abort());
-    await page.goto('/');
-    await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
-    await expect(page.locator('.sample-card')).toHaveCount(6);
-    await expect.poll(() => page.locator('.sample-card img').count()).toBe(0);
-    const thumbs = await page.locator('.sample-thumb').evaluateAll((nodes) =>
-      nodes.map((node) => {
-        const box = node.getBoundingClientRect();
-        return {
-          width: box.width,
-          height: box.height,
-          icon: node.querySelector('svg') != null,
-          image: node.querySelector('img') != null,
-        };
-      }),
-    );
-    expect(thumbs).toHaveLength(6);
-    for (const thumb of thumbs) {
-      expect(thumb.icon).toBe(true);
-      expect(thumb.image).toBe(false);
-      expect(thumb.height).toBeGreaterThanOrEqual(70);
-      expect(thumb.height).toBeLessThanOrEqual(74);
-    }
-  });
+test('a sample deep link still opens that sample', async ({ page }) => {
+  await page.goto('/?sample=sphere');
+  await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+  await expect(page.locator('#file-name')).toHaveText('sphere.obj');
+  await expect(page.locator('#empty')).toBeHidden();
 });
 
-test('phone width fits three sample cards on the first row', async ({ page }) => {
+test('phone width keeps the sample links in one short row', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
-  const xs = await page.locator('.sample-card').evaluateAll((nodes) =>
-    nodes.slice(0, 3).map((node) => Math.round(node.getBoundingClientRect().x)),
-  );
-  expect(new Set(xs).size).toBe(3);
+  const block = await page.locator('#empty-samples').boundingBox();
+  const open = await page.locator('#empty-open').boundingBox();
+  expect(block).not.toBeNull();
+  expect(open).not.toBeNull();
+  expect(block!.height).toBeLessThan(96);
+  expect(open!.y).toBeLessThan(block!.y);
+  await expect(page.locator('#empty-samples img')).toHaveCount(0);
 });

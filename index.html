@@ -223,8 +223,14 @@
           <p class="empty-formats">Splats: .ply .splat .spz .ksplat .sog .rad · Meshes: .glb, .gltf with its .bin and textures, .obj (materials need its .mtl) · Points: .ply</p>
           <p id="empty-multi" class="hint">For a .gltf or .obj with separate files, select them all, drop the folder, or <button id="empty-folder" class="btn btn-ghost btn-sm" type="button">choose a folder</button>. A single .glb is easiest.</p>
           <div class="empty-samples" id="empty-samples">
-            <h2 class="empty-samples-title">Try a sample</h2>
-            <button id="empty-sample" class="sample-card" type="button">Torus</button>
+            <p class="empty-samples-line">
+              <span id="empty-samples-prompt">No file handy? Try a sample:</span>
+              <span id="empty-sample-picks" class="empty-sample-picks">
+                <button id="empty-sample" class="sample-pill" type="button">Torus splat</button>
+              </span>
+              <button id="empty-samples-more" class="sample-more" type="button" aria-expanded="false" aria-controls="empty-samples-rest">More samples</button>
+            </p>
+            <div id="empty-samples-rest" class="empty-samples-rest" hidden></div>
           </div>
         </div>
       </section>
