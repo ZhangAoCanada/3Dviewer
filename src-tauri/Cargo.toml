@@ -1,6 +1,6 @@
 [package]
 name = "viewer"
-version = "0.2.0"
+version = "0.3.0"
 description = "Omniview — real-time viewer for 3D Gaussian splats, meshes, and point clouds."
 edition = "2021"
 rust-version = "1.90"

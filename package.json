@@ -1,6 +1,6 @@
 {
   "name": "3dviewer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Omniview — real-time web viewer for 3D Gaussian splats, meshes, and point clouds.",
