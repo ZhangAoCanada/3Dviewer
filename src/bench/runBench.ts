@@ -45,6 +45,7 @@ export interface BenchHost {
   drawStamp: { count: number; at: number };
   lastRenderMs: number;
   sortState(): { sorting?: boolean; lastSortTime?: number };
+  pauseDraws?(paused: boolean): void;
   stats(): { gpuMemoryBytes: number };
   navigation: {
     snapshot(): NavSnapshot;
@@ -97,6 +98,7 @@ export async function runBench(app: BenchApp, host: BenchHost, signal: AbortSign
     if (!halt() && !orbit.stopped) {
       host.navigation.restore(before);
       app.onStatus('Waiting for the sort to settle…');
+      await nextFrame();
       sortSettleMs = await waitForSort(host, orbit.sortMark, signal, halt);
     }
   }
@@ -236,7 +238,10 @@ async function scriptedOrbit(
         resolve();
         return;
       }
-      host.navigation.restore(rotated(base, elapsed / ORBIT_MS));
+      // Finish the turn with time left in the 6 s window so the in-flight sort
+      // can complete before the camera jumps home.
+      const moveMs = ORBIT_MS - 2000;
+      if (elapsed < moveMs) host.navigation.restore(rotated(base, elapsed / moveMs));
       if (host.drawStamp.count !== seen) {
         seen = host.drawStamp.count;
         renderMs.push(host.lastRenderMs);
@@ -275,24 +280,29 @@ async function waitForSort(
 ): Promise<number | null> {
   const started = performance.now();
   // Spark clears `sorting` and, in the same turn, starts another sort when the
-  // view is still dirty. The second new timestamp is that handoff: the sort
-  // triggered by the camera jump has finished.
+  // view is still dirty. Pausing draws keeps that from chaining. The second new
+  // timestamp is the handoff: the sort triggered by the camera jump has finished.
+  host.pauseDraws?.(true);
   let firstNew: number | undefined;
-  while (performance.now() - started < SETTLE_MS) {
-    if (halt()) return null;
-    const state = host.sortState();
-    const time = state.lastSortTime;
-    if (time != null && time !== mark) {
-      if (firstNew == null) firstNew = time;
-      else if (time !== firstNew) return performance.now() - started;
+  try {
+    while (performance.now() - started < SETTLE_MS) {
+      if (halt()) return null;
+      const state = host.sortState();
+      const time = state.lastSortTime;
+      if (time != null && time !== mark) {
+        if (firstNew == null) firstNew = time;
+        else if (time !== firstNew) return performance.now() - started;
+      }
+      if (firstNew != null && state.sorting === false && time === firstNew) {
+        return performance.now() - started;
+      }
+      await nextFrame();
+      if (signal.aborted) return null;
     }
-    if (firstNew != null && state.sorting === false && time === firstNew) {
-      return performance.now() - started;
-    }
-    await nextFrame();
-    if (signal.aborted) return null;
+    return null;
+  } finally {
+    host.pauseDraws?.(false);
   }
-  return null;
 }
 
 function startHeapProbe(): {

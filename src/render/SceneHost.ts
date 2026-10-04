@@ -65,6 +65,8 @@ export class SceneHost {
   lastRenderMs = 0;
   /** Frames that called `renderer.render`. Updated next to the first-draw flag. */
   readonly drawStamp = { count: 0, at: 0 };
+  /** Benchmark settle sets this so a sort readback is not competing with new frames. */
+  private drawsPaused = false;
   private renderEmaReady = false;
   private idle = false;
   upMode: UpMode = 'auto';
@@ -287,6 +289,11 @@ export class SceneHost {
     const spark = this.spark as unknown as { lastSortTime?: number };
     this.sortMark = spark.lastSortTime ?? 0;
     this.awaitingSort = true;
+  }
+
+  /** Skip viewport draws. An in-flight Spark sort readback still runs. */
+  pauseDraws(paused: boolean): void {
+    this.drawsPaused = paused;
   }
 
   /** Spark's sort flag and the timestamp of the sort that most recently started. */
@@ -659,6 +666,7 @@ export class SceneHost {
   }
 
   private needsDraw(): boolean {
+    if (this.drawsPaused) return false;
     const moving =
       this.navigation.isMoving() ||
       this.pivotMarker.visible ||
