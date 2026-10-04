@@ -105,7 +105,7 @@ test('clicking the ground of a level slab reports already level', async ({ page 
   const toastClose = page.locator('#toast-close');
   if (await toastClose.isVisible()) await toastClose.click({ timeout: 2_000 }).catch(() => undefined);
   await page.locator('#toast').evaluate((node) => {
-    node.hidden = true;
+    (node as HTMLElement).hidden = true;
   });
   await page.click('#upright-btn');
   await page.click('#upright-level');
