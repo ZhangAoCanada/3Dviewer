@@ -4,7 +4,7 @@ export interface SampleAsset {
   id: string;
   /** Menu label. */
   label: string;
-  /** Short name on the start-screen link. */
+  /** Short name on the start-screen card. */
   title: string;
   kind: RepresentationKind;
   /** Site-relative path, or an absolute URL when `remote` is set. */
@@ -78,22 +78,6 @@ export const SAMPLES: readonly SampleAsset[] = [
     note: 'Public Spark sample',
   },
 ];
-
-/** One splat, one mesh, and one point cloud. Everything else stays behind More samples. */
-export const START_SAMPLE_IDS = ['torus-splat', 'crate', 'cloud'] as const;
-
-export function startScreenSamples(samples: readonly SampleAsset[] = SAMPLES): {
-  featured: SampleAsset[];
-  more: SampleAsset[];
-} {
-  const featured: SampleAsset[] = [];
-  for (const id of START_SAMPLE_IDS) {
-    const sample = samples.find((item) => item.id === id);
-    if (sample) featured.push(sample);
-  }
-  const shown = new Set(featured.map((sample) => sample.id));
-  return { featured, more: samples.filter((sample) => !shown.has(sample.id)) };
-}
 
 export function sampleUrl(sample: SampleAsset, baseUrl: string): string {
   if (sample.remote || /^https?:\/\//i.test(sample.href)) return sample.href;

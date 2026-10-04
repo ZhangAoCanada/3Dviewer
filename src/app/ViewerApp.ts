@@ -11,7 +11,7 @@ import {
 import { detectMemoryBudget } from '../core/memoryBudget';
 import { mergePresetOverrides, parseQualityPreset, resolvePreset, type PresetPlan } from '../core/qualityPreset';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
-import { SAMPLES, sampleUrl, startScreenSamples, type SampleAsset } from '../core/samples';
+import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
 import { readProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
@@ -750,35 +750,19 @@ export class ViewerApp {
     const menu = must('#samples-menu');
     const button = must<HTMLButtonElement>('#samples-btn');
     const moreSamples = must('#more-samples');
-    const { featured, more } = startScreenSamples();
-    const picks = must('#empty-sample-picks');
+    const track = must('#empty-sample-track');
     const firstButton = must<HTMLButtonElement>('#empty-sample');
-    featured.forEach((sample, index) => {
-      const link = index === 0 ? firstButton : document.createElement('button');
+    SAMPLES.forEach((sample, index) => {
+      const card = index === 0 ? firstButton : document.createElement('button');
       if (index > 0) {
-        link.type = 'button';
-        picks.append(link);
+        card.type = 'button';
+        track.append(card);
       }
-      this.fillSampleLink(link, sample);
-    });
-    const rest = must('#empty-samples-rest');
-    for (const sample of more) {
-      const link = document.createElement('button');
-      link.type = 'button';
-      this.fillSampleLink(link, sample);
-      rest.append(link);
-    }
-    const samplesMore = must<HTMLButtonElement>('#empty-samples-more');
-    samplesMore.hidden = more.length === 0;
-    samplesMore.addEventListener('click', () => {
-      const open = rest.hidden;
-      rest.hidden = !open;
-      samplesMore.setAttribute('aria-expanded', open ? 'true' : 'false');
-    });
-    for (const sample of SAMPLES) {
+      this.fillSampleCard(card, sample);
       menu.append(this.sampleItem(sample));
       moreSamples.append(this.sampleItem(sample));
-    }
+    });
+    this.bindSampleCarousel(track);
     this.trackMenu(button, menu);
     const moreButton = must<HTMLButtonElement>('#more-btn');
     const moreMenu = must('#more-menu');
@@ -795,14 +779,88 @@ export class ViewerApp {
     this.trackMenu(moreButton, moreMenu);
   }
 
-  private fillSampleLink(button: HTMLButtonElement, sample: SampleAsset): void {
-    button.className = 'sample-pill';
+  private fillSampleCard(button: HTMLButtonElement, sample: SampleAsset): void {
+    button.className = 'sample-card';
     button.dataset.sample = sample.id;
-    button.textContent = sample.title;
+    button.replaceChildren();
+    const thumb = document.createElement('span');
+    thumb.className = 'sample-thumb';
+    thumb.dataset.kind = sample.kind;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('class', 'icon');
+    icon.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#i-shapes');
+    icon.append(use);
+    thumb.append(icon);
+    if (sample.thumb) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.width = 84;
+      img.height = 52;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.addEventListener('error', () => img.remove());
+      img.src = assetUrl(sample.thumb);
+      thumb.append(img);
+    }
+    const name = document.createElement('span');
+    name.className = 'sample-name';
+    name.textContent = sample.title;
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = sampleKindLabel(sample.kind);
+    button.append(thumb, name, badge);
     button.addEventListener('click', () => {
       this.setQuery({ sample: sample.id });
       void this.loadSample(sample);
     });
+    button.addEventListener('focus', () => {
+      button.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    });
+  }
+
+  private bindSampleCarousel(track: HTMLElement): void {
+    const prev = must<HTMLButtonElement>('#sample-prev');
+    const next = must<HTMLButtonElement>('#sample-next');
+    const carousel = track.parentElement;
+    const sync = () => {
+      const max = track.scrollWidth - track.clientWidth;
+      const atStart = track.scrollLeft <= 2;
+      const atEnd = max <= 2 || track.scrollLeft >= max - 2;
+      prev.hidden = atStart;
+      next.hidden = atEnd;
+      carousel?.classList.toggle('at-start', atStart);
+      carousel?.classList.toggle('at-end', atEnd);
+    };
+    const behavior = (): ScrollBehavior =>
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    const scrollToCard = (direction: -1 | 1) => {
+      const max = Math.max(0, track.scrollWidth - track.clientWidth);
+      const cards = [...track.querySelectorAll<HTMLElement>('.sample-card')];
+      const positions = cards.map((card) => card.offsetLeft).filter((pos) => pos <= max + 1);
+      const current = track.scrollLeft;
+      const target =
+        direction > 0
+          ? (positions.find((pos) => pos > current + 2) ?? max)
+          : ([...positions].reverse().find((pos) => pos < current - 2) ?? 0);
+      track.scrollTo({ left: target, behavior: behavior() });
+    };
+    prev.addEventListener('click', () => scrollToCard(-1));
+    next.addEventListener('click', () => scrollToCard(1));
+    track.addEventListener('scroll', sync, { passive: true });
+    track.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const cards = [...track.querySelectorAll<HTMLButtonElement>('.sample-card')];
+      const index = cards.indexOf(document.activeElement as HTMLButtonElement);
+      if (index < 0) return;
+      const card = cards[index + (event.key === 'ArrowRight' ? 1 : -1)];
+      if (!card) return;
+      event.preventDefault();
+      card.focus();
+    });
+    new ResizeObserver(sync).observe(track);
+    sync();
   }
 
   private sampleItem(sample: SampleAsset): HTMLButtonElement {
@@ -2464,6 +2522,20 @@ function benchScene(item: Renderable | undefined): {
     ...(stats.sourcePrimitives != null ? { sourceCount: stats.sourcePrimitives } : {}),
     ...(sh != null ? { sh: String(sh) } : {}),
   };
+}
+
+function assetUrl(path: string): string {
+  const base = import.meta.env.BASE_URL;
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  return `${prefix}${path}`;
+}
+
+function sampleKindLabel(kind: string): string {
+  if (kind === 'splats') return 'Splats';
+  if (kind === 'points') return 'Points';
+  if (kind === 'mesh') return 'Mesh';
+  if (kind === 'voxels') return 'Voxels';
+  return kind;
 }
 
 function safeStorage(): { getItem(key: string): string | null } {

@@ -2,7 +2,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { blobSource } from '../src/core/byteSource';
-import { SAMPLES, startScreenSamples } from '../src/core/samples';
+import { SAMPLES } from '../src/core/samples';
 import { classifyPly, extensionOf, headerText, isGlbMagic, sniffGaussian, sniffMesh, sniffPoints } from '../src/core/sniff';
 import type { AssetSource } from '../src/core/types';
 import { parsePlyPoints } from '../src/loaders/points/parsePly';
@@ -54,13 +54,5 @@ describe('bundled samples', () => {
             : null;
       expect(sample.kind).toBe(sniffed);
     }
-  });
-
-  it('features one splat, one mesh, and one point cloud, and keeps the rest for More samples', () => {
-    const { featured, more } = startScreenSamples();
-    expect(featured.map((sample) => sample.title)).toEqual(['Torus splat', 'Crate', 'Point cloud']);
-    expect(featured.map((sample) => sample.kind)).toEqual(['splats', 'mesh', 'points']);
-    expect(more.map((sample) => sample.id)).toEqual(['torus-ply', 'sphere', 'butterfly']);
-    expect(featured.length + more.length).toBe(SAMPLES.length);
   });
 });
