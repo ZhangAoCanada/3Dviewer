@@ -122,3 +122,16 @@ These cells are for the owner to fill on the real file, in desktop Chrome. This 
 | | |
 
 For the torus sample and the slab demo, only `lodCount / count` is required. If `?lod=force&sh=1` crashes the tab, write "crashed" in that row. `?sh=2` and `?sh=3` are the same kind of cap if you want an extra row; the three runs above are the ones this batch asks for.
+
+## Built-in benchmark
+
+The viewer can time the open scene on a real device. Open a scene, then choose **Run benchmark on this scene** in the Help dialog, or **Run benchmark** in the phone More menu. Adding `?bench=1` runs it once the first scene finishes loading. That works with `?sample=`, `?url=`, and `?demo=slab`.
+
+The run orbits 360° over 6 seconds, waits for the splat sort to settle, then reloads the same scene three times. Cancel stops between steps. Copy markdown or Copy JSON on the report. The JSON schema is `omniview-bench/1`.
+
+Numbers from headless Chrome on SwiftShader, including CI, are not representative of a discrete GPU. Record a row on the machine you care about:
+
+| Device | Browser | Scene | First frame | Ready | Frame p50 | Frame p90 | Frame p99 | Settle | Heap peak | Reload growth |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| | | | | | | | | | | |
+

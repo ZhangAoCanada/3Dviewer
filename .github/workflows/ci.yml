@@ -56,4 +56,18 @@ jobs:
         run: npm run build
 
       - name: Browser smoke
-        run: npm run test:e2e
+        run: |
+          set +e
+          npm run test:e2e > /tmp/e2e.log 2>&1
+          code=$?
+          cat /tmp/e2e.log
+          if [ "$code" -ne 0 ]; then
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const lines = readFileSync("/tmp/e2e.log", "utf8").split("\n");
+              const picked = lines.filter((line) => /Error:|Expected:|Received:|✘|failed/.test(line)).slice(-8);
+              const msg = picked.join(" | ").replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A").slice(0, 4000);
+              console.log(`::error::${msg || "e2e failed"}`);
+            '
+            exit "$code"
+          fi

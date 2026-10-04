@@ -25,7 +25,25 @@ describe('resolvePreset', () => {
     expect(plan.pixelRatio).toBe('auto');
     expect(plan.extendedPrecision).toBe(false);
     expect(plan.alwaysPreClear).toBe(false);
-    expect(plan.summary).toContain('Desktop · up to SH 3 · level of detail off');
+    expect(plan.summary).toBe(
+      'Automatic balances detail and memory for this device. Some changes require reopening the file.',
+    );
+    expect(plan.details).toContain('Desktop · up to SH 3 · level of detail off');
+  });
+
+  it('keeps the technical line behind Details for the other presets', () => {
+    const quality = resolvePreset('quality', desktop8);
+    const memory = resolvePreset('memory', desktop8);
+    expect(quality.summary).toBe(
+      'Better quality keeps more detail and uses more memory. Some changes require reopening the file.',
+    );
+    expect(quality.details).toContain('float32 centers');
+    expect(quality.details).toContain('level of detail off');
+    expect(memory.summary).toBe(
+      'Lower memory keeps less detail so large scenes fit. Some changes require reopening the file.',
+    );
+    expect(memory.details).toContain('pixel ratio 1');
+    expect(memory.details).toContain('level of detail is never built');
   });
 
   it('plans the 14,161,020 splat SH3 scan the same way Automatic does today', () => {

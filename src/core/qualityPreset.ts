@@ -12,7 +12,10 @@ export interface PresetPlan {
   extendedPrecision: boolean;
   /** When true, drop the previous scene before decode, even for a small file. */
   alwaysPreClear: boolean;
+  /** One plain sentence for the Quality control. */
   summary: string;
+  /** The technical line, shown behind Details. */
+  details: string;
 }
 
 const PRESETS = new Set<QualityPreset>(['auto', 'quality', 'memory']);
@@ -37,7 +40,8 @@ export function resolvePreset(preset: QualityPreset, budget: MemoryBudget): Pres
     pixelRatio: 'auto',
     extendedPrecision: false,
     alwaysPreClear: false,
-    summary: `${deviceLabel(budget)} · up to SH ${budget.maxSh} · level of detail off. ${SPARK_HINT}`,
+    summary: 'Automatic balances detail and memory for this device. Some changes require reopening the file.',
+    details: `${deviceLabel(budget)} · up to SH ${budget.maxSh} · level of detail off. ${SPARK_HINT}`,
   };
 }
 
@@ -72,7 +76,8 @@ function betterQuality(budget: MemoryBudget): PresetPlan {
     pixelRatio: mobile ? '2' : 'auto',
     extendedPrecision: true,
     alwaysPreClear: false,
-    summary: `${deviceLabel(budget)} · up to SH 3 · ${mobile ? 'pixel ratio 2 · ' : ''}float32 centers · level of detail off. ${stepDown}${cost} ${SPARK_HINT}`,
+    summary: 'Better quality keeps more detail and uses more memory. Some changes require reopening the file.',
+    details: `${deviceLabel(budget)} · up to SH 3 · ${mobile ? 'pixel ratio 2 · ' : ''}float32 centers · level of detail off. ${stepDown}${cost} ${SPARK_HINT}`,
   };
 }
 
@@ -91,7 +96,8 @@ function lowerMemory(budget: MemoryBudget): PresetPlan {
     pixelRatio: '1',
     extendedPrecision: false,
     alwaysPreClear: true,
-    summary: `${deviceLabel(budget)} · up to SH ${cap} · pixel ratio 1 · level of detail off. The previous scene is cleared before decode, and level of detail is never built. ${SPARK_HINT}`,
+    summary: 'Lower memory keeps less detail so large scenes fit. Some changes require reopening the file.',
+    details: `${deviceLabel(budget)} · up to SH ${cap} · pixel ratio 1 · level of detail off. The previous scene is cleared before decode, and level of detail is never built. ${SPARK_HINT}`,
   };
 }
 

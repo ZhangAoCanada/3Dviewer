@@ -1,8 +1,18 @@
 /// <reference types="vitest/config" />
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { defineConfig, type PluginOption } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { appBase } from './src/desktop/basePath';
+
+function appVersion(): string {
+  try {
+    const parsed = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version?: string };
+    return parsed.version && parsed.version.length > 0 ? parsed.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 function appBuild(): string {
   const override = process.env.VITE_BUILD_LABEL?.trim();
@@ -53,7 +63,7 @@ export default defineConfig(() => {
       },
       workbox: {
         // index.html is network-first below, not precached, so a deploy is visible on reload.
-        globPatterns: ['**/*.{js,css,svg,png,ply,splat,obj,glb,woff2}'],
+        globPatterns: ['**/*.{js,css,svg,png,webp,ply,splat,obj,glb,woff2}'],
         navigateFallback: undefined,
         clientsClaim: true,
         // public/sw-update.js: take over immediately when the open page cannot
@@ -80,6 +90,7 @@ export default defineConfig(() => {
     clearScreen: !desktop,
     define: {
       __APP_BUILD__: JSON.stringify(appBuild()),
+      __APP_VERSION__: JSON.stringify(appVersion()),
     },
     plugins,
     server: {

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 
 const release = 'https://github.com/ZhangAoCanada/3Dviewer/releases/latest';
@@ -11,7 +12,7 @@ test('download dialog highlights this computer and links to the latest release',
   await page.click('#download-btn');
   const dialog = page.locator('#download-dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('#download-title')).toHaveText('Download Omniview');
+  await expect(dialog.locator('#download-title')).toContainText('Download Omniview');
   await expect(dialog.locator(`a[href="${release}"]`)).toHaveCount(4);
   const os = await page.evaluate(() => {
     const ua = navigator.userAgent;
@@ -54,4 +55,54 @@ test('the download entry is hidden inside the desktop app', async ({ page }) => 
   await page.click('#more-btn');
   await expect(page.locator('#download-menu-item')).toBeHidden();
   await expect(page.locator('html')).toHaveClass(/is-desktop/);
+});
+
+const releaseApi = 'https://api.github.com/repos/ZhangAoCanada/3Dviewer/releases/latest';
+
+test('shows the latest release tag on Download', async ({ page }) => {
+  await page.route(releaseApi, (route) => route.fulfill({ json: { tag_name: 'v9.9.9' } }));
+  await page.goto('/');
+  await expect(page.locator('#download-version')).toHaveText('v9.9.9', { timeout: 10_000 });
+});
+
+test('falls back to the packaged version when the release API fails', async ({ page }) => {
+  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
+  let hits = 0;
+  await page.route(releaseApi, (route) => {
+    hits += 1;
+    return route.abort();
+  });
+  await page.goto('/');
+  await expect.poll(() => hits, { timeout: 8_000 }).toBeGreaterThan(0);
+  await expect(page.locator('#download-version')).toHaveText(`v${version}`);
+});
+
+test('a fresh release cache does not ask GitHub again', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('3dviewer-release', JSON.stringify({ tag: 'v1.2.3', at: Date.now() }));
+  });
+  let hits = 0;
+  await page.route(releaseApi, (route) => {
+    hits += 1;
+    return route.abort();
+  });
+  await page.goto('/');
+  await expect(page.locator('#download-version')).toHaveText('v1.2.3');
+  await page.waitForTimeout(1000);
+  expect(hits).toBe(0);
+});
+
+test('the desktop app does not ask for the latest release', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {} });
+  });
+  let hits = 0;
+  await page.route(releaseApi, (route) => {
+    hits += 1;
+    return route.abort();
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveClass(/is-desktop/);
+  await page.waitForTimeout(4000);
+  expect(hits).toBe(0);
 });
