@@ -3,6 +3,7 @@ import type { NavSnapshot } from '../render/Navigation';
 import {
   BENCH_NOTE,
   formatBenchMarkdown,
+  noSortToSettle,
   summarizeFrames,
   type BenchReport,
   type LoadTimings,
@@ -61,6 +62,8 @@ const ORBIT_MS = 6000;
 const SETTLE_MS = 30_000;
 const READY_WAIT_MS = 15_000;
 const HEAP_AFTER_READY_MS = 2000;
+/** Meshes and clouds never set `lastSortTime`. Bail before the 30 s settle cap. */
+const NO_SORT_IDLE_MS = 250;
 
 /**
  * Orbit, sort, memory, and three reloads. Stops early, with a partial report,
@@ -284,6 +287,7 @@ async function waitForSort(
   // timestamp is the handoff: the sort triggered by the camera jump has finished.
   host.pauseDraws?.(true);
   let firstNew: number | undefined;
+  let idleStarted: number | undefined;
   try {
     while (performance.now() - started < SETTLE_MS) {
       if (halt()) return null;
@@ -295,6 +299,12 @@ async function waitForSort(
       }
       if (firstNew != null && state.sorting === false && time === firstNew) {
         return performance.now() - started;
+      }
+      if (firstNew == null && noSortToSettle(state)) {
+        idleStarted ??= performance.now();
+        if (performance.now() - idleStarted >= NO_SORT_IDLE_MS) return null;
+      } else {
+        idleStarted = undefined;
       }
       await nextFrame();
       if (signal.aborted) return null;

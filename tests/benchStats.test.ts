@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BENCH_MARKDOWN_FIELDS,
   formatBenchMarkdown,
+  noSortToSettle,
   percentile,
   summarizeFrames,
   type BenchReport,
@@ -14,6 +15,16 @@ describe('percentile', () => {
     expect(percentile([10, 20, 30, 40, 50], 90)).toBe(50);
     expect(percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 100)).toBe(10);
     expect(percentile([5], 99)).toBe(5);
+  });
+});
+
+describe('noSortToSettle', () => {
+  it('is true only when Spark has never started a sort', () => {
+    expect(noSortToSettle({})).toBe(true);
+    expect(noSortToSettle({ sorting: false })).toBe(true);
+    expect(noSortToSettle({ sorting: true })).toBe(false);
+    expect(noSortToSettle({ lastSortTime: 12 })).toBe(false);
+    expect(noSortToSettle({ lastSortTime: 12, sorting: false })).toBe(false);
   });
 });
 

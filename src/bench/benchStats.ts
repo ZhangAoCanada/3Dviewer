@@ -70,6 +70,11 @@ export interface BenchReport {
 export const BENCH_NOTE =
   'Frame times measure render and sort only. Orbiting through restore() skips input handling and inertia.';
 
+/** Spark has never started a sort, so settle has nothing to wait for. */
+export function noSortToSettle(state: { sorting?: boolean; lastSortTime?: number }): boolean {
+  return state.lastSortTime == null && state.sorting !== true;
+}
+
 /**
  * Nearest-rank percentile. `sorted` must be ascending.
  * Rank is `ceil(p/100 * n)`, clamped into the array.
