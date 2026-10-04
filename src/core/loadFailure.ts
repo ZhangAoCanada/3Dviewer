@@ -251,7 +251,9 @@ function networkBody(chain: unknown[], source?: AssetSource): string {
   let why: string;
   if (status === '401' || status === '403') why = 'Access was denied.';
   else if (status === '404') why = 'The file was not found.';
-  else if (status && status !== 'network') why = `The server returned status ${status}.`;
+  else if (status === '200' || status === '206') {
+    why = 'The file arrived, but it was not the bytes that were requested.';
+  } else if (status && status !== 'network') why = `The server returned status ${status}.`;
   else if (typeof navigator !== 'undefined' && navigator.onLine === false) why = 'You appear to be offline.';
   else if (!source?.url || isCrossOrigin(source.url)) why = 'The download was blocked by CORS or offline.';
   else why = 'The download failed before a status came back.';

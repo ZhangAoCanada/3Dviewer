@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 
 test('start screen scrolls compact sample cards in one row', async ({ page }) => {
@@ -93,6 +94,101 @@ test('a sample deep link still opens that sample', async ({ page }) => {
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
   await expect(page.locator('#file-name')).toHaveText('sphere.obj');
   await expect(page.locator('#empty')).toBeHidden();
+});
+
+test('every sample opens from the carousel, the menu, and a sample link', async ({ page }) => {
+  test.setTimeout(180_000);
+  const samples = [
+    { id: 'torus-ply', file: 'torus.ply' },
+    { id: 'torus-splat', file: 'torus.splat' },
+    { id: 'cloud', file: 'cloud.ply' },
+    { id: 'crate', file: 'crate.glb' },
+    { id: 'sphere', file: 'sphere.obj' },
+    { id: 'butterfly', file: 'butterfly.spz' },
+  ];
+  for (const sample of samples) {
+    await page.goto('/');
+    await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
+    await page.locator(`[data-sample="${sample.id}"]`).click();
+    await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#file-name')).toHaveText(sample.file);
+    await expect(page.locator('#problem')).toBeHidden();
+    await expect(page.locator('#problem-desc')).not.toContainText('status 200');
+  }
+
+  await page.goto('/');
+  await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
+  await page.click('#samples-btn');
+  await page.locator('#samples-menu [role="menuitem"]').filter({ hasText: '3DGS torus (.ply)' }).click();
+  await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+  await expect(page.locator('#file-name')).toHaveText('torus.ply');
+  await expect(page).toHaveURL(/[?&]sample=torus-ply(?:&|$)/);
+
+  await page.goto('/?sample=torus-ply');
+  await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+  await expect(page.locator('#file-name')).toHaveText('torus.ply');
+  await expect(page.locator('#problem')).toBeHidden();
+});
+
+test.describe('range response of 200', () => {
+  test.use({ serviceWorkers: 'block' });
+
+  test('torus loads when HEAD is gzip and a range request is not a partial response', async ({ page }) => {
+    const body = readFileSync(new URL('../public/samples/torus.ply', import.meta.url));
+    await page.route('**/samples/torus.ply', async (route) => {
+      if (route.request().method() === 'HEAD') {
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-encoding': 'gzip',
+            'content-length': '41416',
+            'accept-ranges': 'bytes',
+          },
+          body: '',
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+        body,
+      });
+    });
+    await page.goto('/?sample=torus-ply');
+    await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#file-name')).toHaveText('torus.ply');
+    await expect(page.locator('#problem')).toBeHidden();
+    await expect(page.locator('#problem-desc')).not.toContainText('status 200');
+  });
+
+  test('torus loads when a ranged GET comes back as 200 with the whole file', async ({ page }) => {
+    const body = readFileSync(new URL('../public/samples/torus.ply', import.meta.url));
+    await page.route('**/samples/torus.ply', async (route) => {
+      if (route.request().method() === 'HEAD') {
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-length': String(body.byteLength),
+            'accept-ranges': 'bytes',
+          },
+          body: '',
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes' },
+        body,
+      });
+    });
+    await page.goto('/?sample=torus-ply');
+    await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator('#file-name')).toHaveText('torus.ply');
+    await expect(page.locator('#problem')).toBeHidden();
+    await expect(page.locator('#problem-desc')).not.toContainText('status 200');
+  });
 });
 
 test('phone width keeps one scrolling row and hides the arrows', async ({ page }) => {

@@ -115,6 +115,27 @@ describe('classifyFailure', () => {
     expect(classifyFailure(new GraphicsUnavailableError('no-webgl2', 'no')).title).toBe('Graphics are not available');
     expect(classifyFailure(new GaussianPlyError('bad')).title).toBe('This file could not be read');
     expect(classifyFailure(new Error('Could not download x.ply (404)')).title).toBe('Could not download the file');
+    expect(classifyFailure(new Error('Could not download x.ply (404)')).body).toBe('The file was not found.');
     expect(classifyFailure(new RangeError('Invalid array length')).title).toBe('Not enough memory for this scene');
+  });
+
+  it('never describes HTTP 200 as the reason a download failed', () => {
+    const source = {
+      name: 'torus.ply',
+      extension: 'ply',
+      origin: 'sample' as const,
+      url: 'https://zhangaocanada.github.io/3Dviewer/samples/torus.ply',
+    };
+    for (const message of [
+      'Range request returned 200, expected 206.',
+      'Could not download torus.ply (200)',
+      'Could not read torus.ply (200)',
+    ]) {
+      const failure = classifyFailure(new Error(message), { source });
+      expect(failure.title).toBe('Could not download the file');
+      expect(failure.body).toContain('Host: zhangaocanada.github.io');
+      expect(failure.body).not.toMatch(/status 200/i);
+      expect(failure.body).not.toMatch(/\b200\b/);
+    }
   });
 });

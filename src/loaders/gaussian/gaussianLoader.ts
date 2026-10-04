@@ -1,5 +1,12 @@
 import { ExtSplats, PackedSplats, SplatFileType, SplatMesh, type SplatMeshOptions } from '@sparkjsdev/spark';
-import { blobSource, rangeSource, type ByteSource } from '../../core/byteSource';
+import {
+  blobSource,
+  decodedContentLength,
+  interpretHead,
+  rangeSource,
+  type ByteSource,
+  type HeadProbe,
+} from '../../core/byteSource';
 import { fetchBlobWithProgress } from '../../core/fetchProgress';
 import type { AssetSource, FormatLoader, LoadContext, LoadProgress, MemoryBudget } from '../../core/types';
 import { sniffGaussian } from '../../core/sniff';
@@ -31,18 +38,11 @@ const STREAM_BYTES = 16 * 1024 * 1024;
 /** Float32 centers when the decoded scene can afford them. Drone PLYs are far past this. */
 export const EXTENDED_BYTES = 80 * 1024 * 1024;
 
-interface HeadProbe {
-  size?: number;
-  acceptRanges: boolean;
-}
-
 async function probeHead(url: string, signal: AbortSignal): Promise<HeadProbe> {
   try {
     const res = await fetch(url, { method: 'HEAD', signal });
-    const value = Number(res.headers.get('content-length'));
-    const size = Number.isFinite(value) && value > 0 ? value : undefined;
-    const accept = (res.headers.get('accept-ranges') ?? '').toLowerCase();
-    return { size, acceptRanges: accept.includes('bytes') };
+    if (!res.ok) return { acceptRanges: false };
+    return interpretHead(res.headers);
   } catch {
     return { acceptRanges: false };
   }
@@ -355,10 +355,11 @@ export const gaussianLoader: FormatLoader = {
 
     if (source.extension === 'ply' || source.extension === '') {
       if (useRange && source.url && size !== undefined) {
-        const header = await inspectGaussianPly(rangeSource(source.url, size, ctx.signal));
+        const ranged = rangeSource(source.url, size, ctx.signal);
+        const header = await inspectGaussianPly(ranged);
         if (header) {
           try {
-            return await loadStandardPly(source, { kind: 'range', url: source.url, size }, ctx, started);
+            return await loadStandardPly(source, { kind: 'range', url: source.url, size: ranged.size }, ctx, started);
           } catch (error) {
             if (error instanceof GaussianPlyUnsupported) {
               /* Compressed or unusual PLY still goes through Spark. */
@@ -399,8 +400,7 @@ async function streamRemote(
   const res = await fetch(url, { signal: ctx.signal });
   if (!res.ok) throw new Error(`Could not download ${name} (${res.status})`);
   if (!res.body) throw new Error(`Could not download ${name} (network)`);
-  const header = Number(res.headers.get('content-length'));
-  const total = Number.isFinite(header) && header > 0 ? header : size;
+  const total = decodedContentLength(res.headers) ?? size;
   let loaded = 0;
   const reader = res.body.getReader();
   const stop = () => {
