@@ -1,3 +1,5 @@
+import { decodedContentLength } from './byteSource';
+
 /** Fold downloaded chunks into one Blob this often, so a large file can stay on disk. */
 const FOLD_BYTES = 32 * 1024 * 1024;
 
@@ -25,8 +27,7 @@ export async function fetchBlobWithProgress(
   const res = await fetch(url, { signal });
   if (signal.aborted) throw abortError(signal);
   if (!res.ok) throw new Error(`Could not download (${res.status})`);
-  const parsed = Number(res.headers.get('content-length'));
-  const total = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  const total = decodedContentLength(res.headers);
   if (!res.body) {
     const blob = await res.blob();
     onBytes({ loaded: blob.size, total });

@@ -45,6 +45,32 @@ describe('fetchBlobWithProgress', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('keeps a 200 whose content-length is the compressed size', async () => {
+    const body = new Uint8Array(50).fill(7);
+    const calls: ByteCount[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(body, {
+            status: 200,
+            headers: {
+              'content-type': 'application/octet-stream',
+              'content-encoding': 'gzip',
+              'content-length': '10',
+            },
+          }),
+      ),
+    );
+    const blob = await fetchBlobWithProgress('https://example.test/scan.ply', new AbortController().signal, (bytes) => {
+      calls.push(bytes);
+    });
+    expect(blob.size).toBe(50);
+    expect(new Uint8Array(await blob.arrayBuffer())[0]).toBe(7);
+    expect(calls.every((entry) => entry.total === undefined)).toBe(true);
+    expect(calls[calls.length - 1]?.loaded).toBe(50);
+  });
+
   it('rejects with AbortError when the signal aborts while reading', async () => {
     const controller = new AbortController();
     const stream = new ReadableStream<Uint8Array>({

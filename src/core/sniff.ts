@@ -91,8 +91,11 @@ export async function readProbe(source: AssetSource, limit = 65536, signal?: Abo
     headers: { Range: `bytes=0-${limit - 1}` },
     signal,
   });
-  if (!res.ok || !res.body) {
+  if (!res.ok) {
     throw new Error(`Could not read ${source.name} (${res.status || 'network'})`);
+  }
+  if (!res.body) {
+    throw new Error(`Could not read ${source.name}. The response had no body.`);
   }
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
