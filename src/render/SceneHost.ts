@@ -296,6 +296,14 @@ export class SceneHost {
     this.drawsPaused = paused;
   }
 
+  /**
+   * Spark queues another depth sort when a frame arrives while `sorting` is set.
+   * Clearing that flag lets the in-flight readback finish instead of chaining.
+   */
+  dropQueuedSort(): void {
+    (this.spark as unknown as { sortDirty: boolean }).sortDirty = false;
+  }
+
   /** Spark's sort flag and the timestamp of the sort that most recently started. */
   sortState(): { sorting?: boolean; lastSortTime?: number } {
     const spark = this.spark as unknown as { lastSortTime?: number; sorting?: boolean };

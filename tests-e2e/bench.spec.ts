@@ -11,7 +11,7 @@ test('a normal load does not request the benchmark chunk', async ({ page }) => {
   expect(urls.some((url) => /runBench|benchStats|\/bench/i.test(url))).toBe(false);
 });
 
-test('?bench=1 reports the crate sample and restores the camera', async () => {
+test('?bench=1 reports the torus sample and restores the camera', async () => {
   test.setTimeout(120_000);
   const browser = await chromium.launch({
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
@@ -24,11 +24,12 @@ test('?bench=1 reports the crate sample and restores the camera', async () => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   try {
-    // torus-ply Spark sorts on CI SwiftShader exceed the 40 s budget (stuck on
-    // "Reloading 3 of 3…"). The crate mesh still runs the full report path.
-    await page.goto('/?sample=crate&bench=1');
+    await page.goto('/?sample=torus-ply&bench=1');
     await expect(page.locator('#bench-dialog')).toBeVisible();
-    await expect(page.locator('#bench-status')).toHaveText('Done.', { timeout: 40_000 });
+    // SwiftShader's sort fence varies: a quiet run finishes near 25 s and a
+    // backed-up one near 40 s. 75 s still fails a stuck reload or a fence that
+    // never signals (settle gives up at 30 s, each Ready wait at 15 s).
+    await expect(page.locator('#bench-status')).toHaveText('Done.', { timeout: 75_000 });
     await page.click('#bench-copy-json');
     const text = await page.evaluate(() => navigator.clipboard.readText());
     const report = JSON.parse(text) as {
