@@ -32,11 +32,44 @@ function clientCanPrompt(client) {
 
 // Precache stores the decoded body but keeps the network's Content-Encoding and
 // Content-Length. A Range GET then comes back as that full 200, which the
-// gaussian loader rejects. Serve HEAD and Range from the cached bytes instead.
+// gaussian loader rejects. Serve HEAD and Range from those cached bytes.
+// Anything else must reach the network: claiming it and refetching from here
+// hides a failed download and can return the HTML shell as status 200.
+const precachePaths = new Set();
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(refreshPrecachePaths());
+});
+
+async function refreshPrecachePaths() {
+  try {
+    const names = await caches.keys();
+    const next = new Set();
+    for (const name of names) {
+      if (!name.startsWith('workbox-precache-')) continue;
+      const cache = await caches.open(name);
+      for (const cached of await cache.keys()) {
+        next.add(new URL(cached.url).pathname);
+      }
+    }
+    precachePaths.clear();
+    for (const path of next) precachePaths.add(path);
+  } catch {
+    /* Range requests then stay on the network. */
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'HEAD' && request.method !== 'GET') return;
   if (request.method === 'GET' && !request.headers.has('range')) return;
+  let path = '';
+  try {
+    path = new URL(request.url).pathname;
+  } catch {
+    return;
+  }
+  if (!precachePaths.has(path)) return;
   if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
   event.respondWith(serveCachedBytes(request));
 });
@@ -48,6 +81,7 @@ async function serveCachedBytes(request) {
       ignoreVary: true,
     });
     if (!cached || cached.status !== 200) return fetch(request);
+    if (new URL(cached.url || request.url).pathname !== new URL(request.url).pathname) return fetch(request);
     const blob = await cached.blob();
     const magic = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
     if (magic.length >= 2 && magic[0] === 0x1f && magic[1] === 0x8b) return fetch(request);
