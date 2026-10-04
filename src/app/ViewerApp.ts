@@ -258,12 +258,6 @@ export class ViewerApp {
       this.openFiles(files);
     });
 
-    must('#empty-sample').addEventListener('click', () => {
-      const sample = SAMPLES[0];
-      if (!sample) return;
-      this.setQuery({ sample: sample.id });
-      void this.loadSample(sample);
-    });
     must('#url-btn').addEventListener('click', () => this.openUrlDialog());
     must('#empty-url').addEventListener('click', () => this.openUrlDialog());
     must('#help-btn').addEventListener('click', () => this.openHelp());
@@ -755,24 +749,20 @@ export class ViewerApp {
   private buildSamples(): void {
     const menu = must('#samples-menu');
     const button = must<HTMLButtonElement>('#samples-btn');
-    const samplesRoot = must('#empty-samples');
     const moreSamples = must('#more-samples');
-    const first = SAMPLES[0];
-    if (first) this.fillSampleCard(must('#empty-sample'), first);
-    for (const sample of SAMPLES) {
+    const track = must('#empty-sample-track');
+    const firstButton = must<HTMLButtonElement>('#empty-sample');
+    SAMPLES.forEach((sample, index) => {
+      const card = index === 0 ? firstButton : document.createElement('button');
+      if (index > 0) {
+        card.type = 'button';
+        track.append(card);
+      }
+      this.fillSampleCard(card, sample);
       menu.append(this.sampleItem(sample));
       moreSamples.append(this.sampleItem(sample));
-    }
-    for (const sample of SAMPLES.slice(1)) {
-      const card = document.createElement('button');
-      card.type = 'button';
-      this.fillSampleCard(card, sample);
-      card.addEventListener('click', () => {
-        this.setQuery({ sample: sample.id });
-        void this.loadSample(sample);
-      });
-      samplesRoot.append(card);
-    }
+    });
+    this.bindSampleCarousel(track);
     this.trackMenu(button, menu);
     const moreButton = must<HTMLButtonElement>('#more-btn');
     const moreMenu = must('#more-menu');
@@ -791,12 +781,13 @@ export class ViewerApp {
 
   private fillSampleCard(button: HTMLButtonElement, sample: SampleAsset): void {
     button.className = 'sample-card';
+    button.dataset.sample = sample.id;
     button.replaceChildren();
     const thumb = document.createElement('span');
     thumb.className = 'sample-thumb';
     thumb.dataset.kind = sample.kind;
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    icon.setAttribute('class', 'icon icon-xl');
+    icon.setAttribute('class', 'icon');
     icon.setAttribute('aria-hidden', 'true');
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
     use.setAttribute('href', '#i-shapes');
@@ -805,8 +796,8 @@ export class ViewerApp {
     if (sample.thumb) {
       const img = document.createElement('img');
       img.alt = '';
-      img.width = 96;
-      img.height = 72;
+      img.width = 84;
+      img.height = 52;
       img.loading = 'lazy';
       img.decoding = 'async';
       img.addEventListener('error', () => img.remove());
@@ -816,14 +807,60 @@ export class ViewerApp {
     const name = document.createElement('span');
     name.className = 'sample-name';
     name.textContent = sample.title;
-    const meta = document.createElement('span');
-    meta.className = 'sample-meta';
     const badge = document.createElement('span');
     badge.className = 'badge';
     badge.textContent = sampleKindLabel(sample.kind);
-    const size = sample.remote || sample.bytes == null ? 'Remote' : formatBytes(sample.bytes);
-    meta.append(badge, document.createTextNode(` ${sampleExtension(sample.href)} · ${size}`));
-    button.append(thumb, name, meta);
+    button.append(thumb, name, badge);
+    button.addEventListener('click', () => {
+      this.setQuery({ sample: sample.id });
+      void this.loadSample(sample);
+    });
+    button.addEventListener('focus', () => {
+      button.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    });
+  }
+
+  private bindSampleCarousel(track: HTMLElement): void {
+    const prev = must<HTMLButtonElement>('#sample-prev');
+    const next = must<HTMLButtonElement>('#sample-next');
+    const carousel = track.parentElement;
+    const sync = () => {
+      const max = track.scrollWidth - track.clientWidth;
+      const atStart = track.scrollLeft <= 2;
+      const atEnd = max <= 2 || track.scrollLeft >= max - 2;
+      prev.hidden = atStart;
+      next.hidden = atEnd;
+      carousel?.classList.toggle('at-start', atStart);
+      carousel?.classList.toggle('at-end', atEnd);
+    };
+    const behavior = (): ScrollBehavior =>
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    const scrollToCard = (direction: -1 | 1) => {
+      const max = Math.max(0, track.scrollWidth - track.clientWidth);
+      const cards = [...track.querySelectorAll<HTMLElement>('.sample-card')];
+      const positions = cards.map((card) => card.offsetLeft).filter((pos) => pos <= max + 1);
+      const current = track.scrollLeft;
+      const target =
+        direction > 0
+          ? (positions.find((pos) => pos > current + 2) ?? max)
+          : ([...positions].reverse().find((pos) => pos < current - 2) ?? 0);
+      track.scrollTo({ left: target, behavior: behavior() });
+    };
+    prev.addEventListener('click', () => scrollToCard(-1));
+    next.addEventListener('click', () => scrollToCard(1));
+    track.addEventListener('scroll', sync, { passive: true });
+    track.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const cards = [...track.querySelectorAll<HTMLButtonElement>('.sample-card')];
+      const index = cards.indexOf(document.activeElement as HTMLButtonElement);
+      if (index < 0) return;
+      const card = cards[index + (event.key === 'ArrowRight' ? 1 : -1)];
+      if (!card) return;
+      event.preventDefault();
+      card.focus();
+    });
+    new ResizeObserver(sync).observe(track);
+    sync();
   }
 
   private sampleItem(sample: SampleAsset): HTMLButtonElement {
@@ -2491,13 +2528,6 @@ function assetUrl(path: string): string {
   const base = import.meta.env.BASE_URL;
   const prefix = base.endsWith('/') ? base : `${base}/`;
   return `${prefix}${path}`;
-}
-
-function sampleExtension(href: string): string {
-  const clean = href.split('?')[0]?.split('#')[0] ?? href;
-  const base = clean.split('/').pop() ?? clean;
-  const dot = base.lastIndexOf('.');
-  return dot >= 0 ? base.slice(dot) : '';
 }
 
 function sampleKindLabel(kind: string): string {

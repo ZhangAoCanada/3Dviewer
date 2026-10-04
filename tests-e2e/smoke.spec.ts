@@ -13,9 +13,15 @@ for (const item of loads) {
   test(`loads ${item.query}`, async ({ page }) => {
     const errors: string[] = [];
     page.on('console', (message) => {
-      if (message.type() === 'error') errors.push(message.text());
+      if (message.type() !== 'error') return;
+      const url = message.location().url;
+      errors.push(url ? `${message.text()} (${url})` : message.text());
     });
     page.on('pageerror', (error) => errors.push(error.message));
+    page.on('response', (response) => {
+      if (response.status() < 400) return;
+      errors.push(`${response.status()} ${response.url()}`);
+    });
 
     await page.goto(`/${item.query}`);
     await page.waitForFunction(
