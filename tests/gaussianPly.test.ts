@@ -203,6 +203,36 @@ describe('decodeGaussianPly', () => {
     expect(local + decoded.origin[0]).toBeCloseTo(70_000);
   });
 
+  it('reports precisionReduced only when extended centers were requested and did not fit', async () => {
+    const kept = await decodeGaussianPly(blobSource(gaussianBlob(1, 1)), {
+      budget: desktop,
+      preferExtended: false,
+    });
+    expect(kept.extended).toBe(false);
+    expect(kept.precisionReduced).toBe(false);
+
+    const extended = await decodeGaussianPly(blobSource(gaussianBlob(1, 1)), {
+      budget: desktop,
+      preferExtended: true,
+    });
+    expect(extended.extended).toBe(true);
+    expect(extended.precisionReduced).toBe(false);
+
+    const half = await decodeGaussianPly(blobSource(gaussianBlob(2, 2)), {
+      budget: {
+        profile: 'desktop',
+        cpuBytes: 64 * 1024,
+        maxPoints: 100,
+        maxSplatsResident: 100,
+        maxSh: 3,
+        pixelRatioCap: 1,
+      },
+      preferExtended: true,
+    });
+    expect(half.extended).toBe(false);
+    expect(half.precisionReduced).toBe(true);
+  });
+
   it('quantizes an SH1 coefficient of 0.03 to within 0.01', async () => {
     const decoded = await decodeGaussianPly(blobSource(gaussianBlob(1, 1, [], 0.03)), {
       budget: desktop,

@@ -23,7 +23,9 @@ import {
   type MemoryBudget,
   type QualityPreset,
   type Renderable,
+  type RenderableStats,
   type RenderSettings,
+  type RepresentationKind,
   type ShadingMode,
 } from '../core/types';
 import { createDefaultRegistry } from '../loaders';
@@ -52,6 +54,7 @@ import { phaseOf, progressLine, stallHint } from '../ui/loadPhase';
 import { isDesktopApp } from '../desktop/runtime';
 import { detectDesktopOs, unsignedInstallNote } from '../ui/downloadDesktop';
 import { bindMenu, pointerInside } from '../ui/menu';
+import { controlState } from '../ui/applicability';
 import { collectDropped, toDropEntry, type DropEntry } from '../ui/dropEntries';
 import { copyText, renderProblem, supportedFormats } from '../ui/problem';
 import { presetConsequence, type PresetSceneDetail } from '../ui/presetConsequence';
@@ -63,6 +66,7 @@ import {
   writeCachedRelease,
 } from '../ui/releaseVersion';
 import type { LoadTimings } from '../bench/benchStats';
+import { detailOf, detailSceneText, detailText } from '../ui/sceneDetail';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
 const INFLIGHT_KEY = '3dviewer-inflight';
@@ -111,7 +115,7 @@ export class ViewerApp {
   private lastProgress: LoadProgress | null = null;
   private detailLine = '';
   private shownStep: 'reading' | 'preparing' | 'ready' | null = null;
-  private qualityMode: 'off' | 'preview' | 'full' = 'off';
+  private qualityMode: 'off' | 'preview' | 'ready' = 'off';
   private qualityTimer = 0;
   private geoCopy = '';
   private hintHeld = false;
@@ -197,6 +201,8 @@ export class ViewerApp {
       this.graphicsFailure = null;
       if (this.crashEntry) this.showBreadcrumb();
       else if (this.surface === 'problem') this.setSurface('none');
+      this.syncGraphicsBanner();
+      this.syncApplicable();
       if (this.bootFinishedWithoutGraphics) void this.boot();
       return true;
     } catch (error) {
@@ -206,6 +212,8 @@ export class ViewerApp {
       this.lastError = error;
       this.graphicsFailure = classifyFailure(error);
       this.showProblem(this.graphicsFailure);
+      this.syncGraphicsBanner();
+      this.syncApplicable();
       return false;
     }
   }
@@ -279,6 +287,17 @@ export class ViewerApp {
     must('#download-btn').addEventListener('click', () => this.openDownloadDialog());
     must('#loading-cancel').addEventListener('click', () => this.cancelLoad());
     must('#geo-badge').addEventListener('click', () => this.showGeoref());
+    must('#file-detail').addEventListener('click', () => this.showSection('#sec-scene'));
+    must('#graphics-banner-details').addEventListener('click', () => {
+      if (this.graphicsFailure) this.showProblem(this.graphicsFailure);
+    });
+    must('#graphics-banner-retry').addEventListener('click', () => {
+      if (this.reloadGraphics) {
+        location.reload();
+        return;
+      }
+      this.initGraphics();
+    });
     must('#geo-copy').addEventListener('click', () => {
       const text = this.geoCopy;
       if (!text) return;
@@ -296,8 +315,14 @@ export class ViewerApp {
     this.bindSheetSwipe();
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
-    must('#focus-btn').addEventListener('click', () => this.focusCenter());
-    must('#reset-btn').addEventListener('click', () => this.host?.resetView());
+    must('#focus-btn').addEventListener('click', () => {
+      if (!this.needScene()) return;
+      this.focusCenter();
+    });
+    must('#reset-btn').addEventListener('click', () => {
+      if (!this.needScene()) return;
+      this.host?.resetView();
+    });
     must('#upright-btn').addEventListener('click', () => this.toggleUpright());
     must('#upright-open').addEventListener('click', () => this.openUpright());
     must('#upright-done').addEventListener('click', () => this.closeUpright());
@@ -422,8 +447,10 @@ export class ViewerApp {
       } else if (event.code === 'KeyT') {
         this.toggleTheme();
       } else if (event.code === 'KeyR') {
+        if (!this.needScene()) return;
         this.host?.resetView();
       } else if (event.code === 'KeyF') {
+        if (!this.needScene()) return;
         this.focusCenter();
       } else if (event.code === 'Digit1') {
         this.setMode('orbit');
@@ -471,6 +498,8 @@ export class ViewerApp {
       this.settings.shDegree = Number((event.target as HTMLSelectElement).value) as RenderSettings['shDegree'];
       this.host?.applySettings(this.settings);
       this.syncShDegree();
+      this.renderDetail();
+      this.renderSceneInfo();
     });
     must<HTMLSelectElement>('#shading').addEventListener('change', (event) => {
       this.settings.shading = (event.target as HTMLSelectElement).value as ShadingMode;
@@ -479,6 +508,8 @@ export class ViewerApp {
     must<HTMLSelectElement>('#pixel-ratio').addEventListener('change', (event) => {
       this.settings.pixelRatio = (event.target as HTMLSelectElement).value as RenderSettings['pixelRatio'];
       this.host?.applySettings(this.settings);
+      this.renderDetail();
+      this.renderSceneInfo();
     });
     bindCheck('#wireframe', (on) => {
       this.settings.wireframe = on;
@@ -639,6 +670,8 @@ export class ViewerApp {
     this.host?.applySettings(this.settings);
     this.syncShDegree();
     this.syncReopen();
+    this.renderDetail();
+    this.renderSceneInfo();
   }
 
   private syncQuality(plan: PresetPlan): void {
@@ -1105,6 +1138,7 @@ export class ViewerApp {
   }
 
   private openUpright(): void {
+    if (!this.needScene()) return;
     const panel = must('#upright');
     const opening = panel.hidden;
     panel.hidden = false;
@@ -1265,6 +1299,12 @@ export class ViewerApp {
     if (node) node.textContent = this.uprightStatus;
   }
 
+  private needScene(): boolean {
+    if (this.items.length > 0) return true;
+    this.toast('Open a scene first', 'info');
+    return false;
+  }
+
   private focusCenter(): void {
     if (!this.host) return;
     const canvas = must<HTMLCanvasElement>('#view');
@@ -1341,6 +1381,14 @@ export class ViewerApp {
     this.surface = surface;
     must('#empty').hidden = surface !== 'empty';
     must('#problem').hidden = surface !== 'problem';
+    this.syncGraphicsBanner();
+  }
+
+  /** Visible on the start screen after Back, while graphics are still off. */
+  private syncGraphicsBanner(): void {
+    const banner = document.getElementById('graphics-banner');
+    if (!banner) return;
+    banner.hidden = !(this.host === null && this.graphicsFailure !== null && this.surface !== 'problem');
   }
 
   private setEmpty(empty: boolean): void {
@@ -1519,10 +1567,10 @@ export class ViewerApp {
       return;
     }
     if (this.qualityMode !== 'preview') return;
-    this.qualityMode = 'full';
+    this.qualityMode = 'ready';
     badge.hidden = false;
     must('#file-quality-icon').hidden = false;
-    must('#file-quality-label').textContent = 'Full quality';
+    must('#file-quality-label').textContent = 'Ready';
     badge.removeAttribute('title');
     window.clearTimeout(this.qualityTimer);
     this.qualityTimer = window.setTimeout(() => {
@@ -1848,9 +1896,13 @@ export class ViewerApp {
   }
 
   private showGeoref(): void {
+    this.showSection('#sec-geo');
+  }
+
+  private showSection(id: string): void {
     const panel = must('#panel');
     if (panel.classList.contains('is-collapsed')) this.togglePanel();
-    const section = must<HTMLDetailsElement>('#sec-geo');
+    const section = must<HTMLDetailsElement>(id);
     section.open = true;
     section.scrollIntoView({ block: 'nearest' });
     section.querySelector('summary')?.focus();
@@ -1877,15 +1929,21 @@ export class ViewerApp {
         voxels: 'Voxels',
       };
       const countValue = item.kind === 'mesh' ? (stats.vertices ?? stats.primitives) : stats.primitives;
+      const detailState = detailOf(
+        this.items.map((entry) => entry.getStats()),
+        this.settings.shDegree,
+        this.pixelRatioNow(),
+      );
       const rows: [string, string][] = [
         ['File', item.meta.fileName],
         ['Type', typeLabels[item.kind] ?? item.kind],
         ['Format', item.meta.loaderId],
         ['Size', formatBytes(item.meta.bytes)],
         [countLabels[item.kind] ?? 'Count', formatCount(countValue)],
+        ['Detail', detailSceneText(detailState)],
       ];
-      if (stats.sourcePrimitives != null && stats.sourcePrimitives !== stats.primitives) {
-        rows.push(['Source', `${formatCount(stats.sourcePrimitives)} (subsampled to fit memory)`]);
+      if (this.items.some((entry) => entry.kind === 'splats') && detailState.activeSh != null && detailState.sourceSh != null) {
+        rows.push(['Active SH', `${detailState.activeSh} of ${detailState.sourceSh}`]);
       }
       if (stats.triangles) rows.push(['Triangles', formatCount(stats.triangles)]);
       const ms = item.meta.loadMs;
@@ -1921,6 +1979,36 @@ export class ViewerApp {
     this.syncReopen();
     this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget()));
     this.renderQuality();
+    this.renderDetail();
+  }
+
+  private pixelRatioNow(): { used: number; automatic: number } {
+    const device = window.devicePixelRatio || 1;
+    const selected = this.settings.pixelRatio === 'auto' ? this.budget.pixelRatioCap : Number(this.settings.pixelRatio);
+    return {
+      used: Math.min(device, selected),
+      automatic: Math.min(device, this.budget.pixelRatioCap),
+    };
+  }
+
+  private renderDetail(): void {
+    const badge = document.getElementById('file-detail');
+    if (!badge) return;
+    const state = detailOf(
+      this.items.map((entry) => entry.getStats()),
+      this.settings.shDegree,
+      this.pixelRatioNow(),
+    );
+    const show = !must('#file-chip').hidden && state.reduced;
+    badge.hidden = !show;
+    if (!show) {
+      badge.removeAttribute('title');
+      badge.removeAttribute('aria-label');
+      return;
+    }
+    const text = `Reduced detail: ${detailText(state)}`;
+    badge.title = text;
+    badge.setAttribute('aria-label', text);
   }
 
   private renderGeoref(extra: Record<string, string | number> | undefined): void {
@@ -1996,10 +2084,21 @@ export class ViewerApp {
   }
 
   private syncApplicable(): void {
-    const kinds = new Set<string>(this.items.map((item) => item.kind));
-    for (const el of document.querySelectorAll<HTMLElement>('#panel [data-applies]')) {
-      const applies = el.dataset.applies?.split(' ') ?? [];
-      el.hidden = kinds.size > 0 && !applies.some((kind) => kinds.has(kind));
+    const kinds = new Set<RepresentationKind>(this.items.map((item) => item.kind));
+    const hint = document.getElementById('display-empty-hint');
+    if (hint) hint.hidden = kinds.size > 0;
+    for (const el of document.querySelectorAll<HTMLElement>('[data-applies], [data-scene]')) {
+      const applies = el.hasAttribute('data-applies')
+        ? (el.dataset.applies?.split(' ').filter((part) => part.length > 0) ?? [])
+        : undefined;
+      this.paintControl(
+        el,
+        controlState(kinds, {
+          applies,
+          scene: el.hasAttribute('data-scene'),
+          preload: el.hasAttribute('data-preload'),
+        }),
+      );
     }
     for (const sec of document.querySelectorAll<HTMLElement>('#panel details.sec')) {
       const applied = [...sec.querySelectorAll<HTMLElement>('[data-applies]')];
@@ -2008,6 +2107,28 @@ export class ViewerApp {
         (el) => !el.hasAttribute('data-applies'),
       );
       sec.hidden = applied.every((el) => el.hidden) && otherControls.every((el) => el.hidden);
+    }
+  }
+
+  private paintControl(el: HTMLElement, state: 'on' | 'off' | 'hidden'): void {
+    const button = el instanceof HTMLButtonElement;
+    if (button && !el.hasAttribute('data-ready-title')) el.dataset.readyTitle = el.title;
+    el.hidden = state === 'hidden';
+    el.classList.toggle('is-disabled', state === 'off');
+    if (button) {
+      if (state === 'off') {
+        el.title = 'Open a scene first';
+        el.setAttribute('aria-disabled', 'true');
+      } else {
+        el.title = el.dataset.readyTitle ?? '';
+        el.removeAttribute('aria-disabled');
+      }
+      return;
+    }
+    if (state === 'off') el.title = 'Open a scene first';
+    else el.removeAttribute('title');
+    for (const input of el.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select, textarea')) {
+      input.disabled = state === 'off';
     }
   }
 
@@ -2049,15 +2170,22 @@ export class ViewerApp {
     if (must('#panel').classList.contains('is-collapsed')) return;
     const perf = must('#perf-info');
     const gpu = this.host?.gpuObjects();
+    const hasSplats = this.items.some((item) => item.kind === 'splats');
     const rows: [string, string][] = [
       ['Backend', stats.webgpuAvailable ? 'WebGL2 (WebGPU present)' : 'WebGL2'],
       ['FPS', stats.idle ? 'idle' : formatFixed(stats.fps, 0)],
       ['Frame', `${formatFixed(stats.renderMs)} ms`],
-      ['Sort', stats.sortMs == null ? '—' : `${formatFixed(stats.sortMs, 0)} ms`],
-      ['Active splats', formatCount(shownSplats)],
+    ];
+    if (hasSplats) {
+      rows.push(
+        ['Sort', stats.sortMs == null ? '—' : `${formatFixed(stats.sortMs, 0)} ms`],
+        ['Active splats', formatCount(shownSplats)],
+      );
+    }
+    rows.push(
       ['GPU est.', formatBytes(stats.gpuMemoryBytes)],
       ['GPU objects', gpu ? `${gpu.geometries} geometries · ${gpu.textures} textures` : '—'],
-    ];
+    );
     perf.replaceChildren(
       ...rows.flatMap(([key, value]) => {
         const dt = document.createElement('dt');
@@ -2299,12 +2427,16 @@ export class ViewerApp {
   }
 }
 
-function detailForConsequence(stats: {
-  kind: string;
-  primitives: number;
-  sourcePrimitives?: number;
-  extra?: Record<string, string | number>;
-}): PresetSceneDetail | null {
+function detailForConsequence(stats: RenderableStats): PresetSceneDetail | null {
+  if (stats.detail) {
+    const detail: PresetSceneDetail = {
+      sourceCount: stats.detail.sourceCount,
+      retainedCount: stats.detail.retainedCount,
+    };
+    if (stats.detail.sourceSh != null) detail.sourceSh = stats.detail.sourceSh;
+    if (stats.detail.loadedSh != null) detail.loadedSh = stats.detail.loadedSh;
+    return detail;
+  }
   if (stats.kind === 'points') {
     return {
       sourceCount: stats.sourcePrimitives ?? stats.primitives,

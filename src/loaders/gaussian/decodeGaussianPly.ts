@@ -177,6 +177,8 @@ export interface DecodedGaussian {
   shDegree: ShDegree;
   sourceSh: ShDegree;
   extended: boolean;
+  /** Float32 centers were requested and the plan fell back to half-float. */
+  precisionReduced: boolean;
   limits: SplatEncodingLimits;
   packedArray?: Uint32Array;
   extArrays?: [Uint32Array, Uint32Array];
@@ -434,6 +436,7 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     shDegree: plan.shDegree,
     sourceSh: header.sourceSh,
     extended: plan.extended,
+    precisionReduced: options.preferExtended && !plan.extended,
     limits,
     packedArray,
     extArrays,

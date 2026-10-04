@@ -261,6 +261,11 @@ html.is-desktop #download-menu-item { display: none !important; }
 .btn-sm.btn-icon { width: var(--control-h-sm); }
 .btn-lg { height: var(--control-h-lg); padding: 0 18px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.is-disabled { color: var(--color-text-subtle); }
+button.is-disabled { cursor: not-allowed; }
+button.is-disabled:hover { background: transparent; }
+.is-disabled input,
+.is-disabled select { opacity: 0.55; cursor: not-allowed; }
 .btn[aria-expanded='true'],
 .btn[aria-pressed='true'] {
   background: var(--color-accent-soft);
@@ -388,6 +393,13 @@ html.is-desktop #download-menu-item { display: none !important; }
   font-variant-numeric: tabular-nums;
 }
 #file-quality { flex: none; white-space: nowrap; }
+#file-detail { flex: none; white-space: nowrap; }
+.badge-warn {
+  border: 0;
+  cursor: pointer;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+}
 .badge-geo { border: 0; cursor: pointer; }
 .badge-geo:hover { background: var(--color-active); }
 .top-actions { flex: none; }
@@ -452,6 +464,42 @@ body.is-fullscreen .when-windowed { display: none; }
   #open-btn { width: var(--control-h); padding: 0; }
   .file-size { display: none; }
   .file-name { max-width: none; flex: 1 1 auto; }
+  .badge-label { display: none; }
+}
+
+.banner-slot {
+  position: absolute;
+  z-index: var(--z-topbar);
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.banner {
+  position: relative;
+  top: calc(var(--safe-top) + var(--inset) + 48px);
+  max-width: 520px;
+  height: auto;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  pointer-events: auto;
+}
+.banner .icon { color: var(--color-warning); }
+.banner .btn { flex: none; }
+.banner-text {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+@media (max-width: 640px) {
+  .banner {
+    width: calc(100% - 2 * var(--inset));
+    max-width: none;
+  }
 }
 
 .menu { position: relative; }

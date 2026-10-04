@@ -58,6 +58,10 @@ export class PointCloudRenderable implements Renderable {
         stride: this.data.stride,
         subsampled: this.data.stride > 1 ? 'yes' : 'no',
       },
+      detail: {
+        sourceCount: this.data.sourceCount,
+        retainedCount: this.data.count,
+      },
     };
   }
 
