@@ -274,10 +274,19 @@ async function waitForSort(
   halt: () => boolean,
 ): Promise<number | null> {
   const started = performance.now();
+  // Spark clears `sorting` and, in the same turn, starts another sort when the
+  // view is still dirty. The second new timestamp is that handoff: the sort
+  // triggered by the camera jump has finished.
+  let firstNew: number | undefined;
   while (performance.now() - started < SETTLE_MS) {
     if (halt()) return null;
     const state = host.sortState();
-    if (state.sorting === false && state.lastSortTime != null && state.lastSortTime !== mark) {
+    const time = state.lastSortTime;
+    if (time != null && time !== mark) {
+      if (firstNew == null) firstNew = time;
+      else if (time !== firstNew) return performance.now() - started;
+    }
+    if (firstNew != null && state.sorting === false && time === firstNew) {
       return performance.now() - started;
     }
     await nextFrame();
