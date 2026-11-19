@@ -6,6 +6,23 @@ Vertex coordinates must be finite and within the float32 world-transform range u
 
 Input is read in chunks of at most 4 MiB, not buffered as one file. Retained position/color arrays are capped at 256 MiB even if a caller supplies an excessive point budget. ASCII pending records are capped at 1 MiB; headers at 1 MiB; binary record layouts at 64 KiB. Invalid records are rejected, not silently filtered or zero-filled. Source/retained counts therefore describe complete validated vertices and the actual subsampling stride. This does not certify unlimited GPU capacity or every PLY exporter grammar.
 
+### Shared PLY boundary grammar
+
+Representation selection first reads 64 KiB; an incomplete PLY header extends to the shared 1 MiB header budget before choosing points versus Gaussians. Comment text is not a Gaussian declaration. Incomplete/over-budget headers are errors, not affirmative format matches. Prefix bodies are clipped while collecting and canceled; valid long-comment and long-property ASCII/both-endian imports remain bounded.
+
+Probe completion, classifier header slicing, point parsing and Gaussian parsing use the same bounded boundary helper. The keyword must start its line. Payload begins after the complete terminator, including horizontal whitespace and line ending; binary readers never interpret that whitespace as coordinate bytes.
+
+| Terminator / context | Compatibility regression |
+| --- | --- |
+| `end_header` + none, space, tab, or mixed spaces/tabs + LF | All four accepted |
+| Same four suffixes + CRLF | All four accepted |
+| Same four suffixes + legacy bare CR, with following byte available | All four accepted |
+| CRLF split at the 64-KiB prefix edge | Extend prefix; do not start payload at LF |
+| Complete LF/CRLF terminator ending exactly at 1 MiB | Accepted; one byte over is rejected |
+| Comment containing `end_header`, indented/uppercase keyword, extra keyword suffix, inline comment, vertical tab, missing line ending | Not a boundary |
+
+The 12 accepted forms each exercise real ASCII point parsing, both binary point endiannesses, both Gaussian header endiannesses and Gaussian decoding, preserving count 1 and coordinates [1,2,3]. A bare CR at the budget edge is ambiguous with a split CRLF and is not considered complete without lookahead inside the budget. Binary data is never searched beyond that bound. Missing/incomplete/over-budget and aborted probes remain errors. Application-browser cases additionally cover the three reported whitespace files, bare CR, both binary endiannesses, and a Gaussian scene; long-header application controls remain separate.
+
 ## HTTP byte ranges
 
 A 206 must expose a valid `Content-Range` with exactly the requested start/end and the same resource total as the source. Missing/non-exposed `Content-Range` is a clear error, not permission to trust offsets. CORS hosts must expose that header (and preferably ETag/Last-Modified). Encoded 206 bodies are refused. Truncated/oversized bodies are rejected with bounded reads.
@@ -23,5 +40,3 @@ Rendered-frame intervals come from changes to drawStamp during the moving portio
 Benchmark cancellation aborts only its owned load, races hung reload promises, and prevents late scene adoption through the existing load generation. Starting another user scene aborts the benchmark and transfers scene/camera ownership; its old cancellation cannot cancel that newer load or restore an old camera over it. Synthetic demo creation can still finish internally after cancellation, but its eventual result is rejected/disposed, never adopted.
 
 Quality buttons implement one roving Tab stop, selection/focus with arrow keys, and Home/End. Native button Space activation remains available. Screen-reader and physical-device acceptance remain separate from headless keyboard tests.
-
-Representation selection first reads 64 KiB; an incomplete PLY header extends to the shared 1 MiB header budget before choosing points versus Gaussians. Comment text is not a Gaussian declaration. Incomplete/over-budget headers are errors, not affirmative format matches. Prefix bodies are clipped while collecting and canceled; valid long-comment and long-property ASCII/both-endian imports remain bounded.

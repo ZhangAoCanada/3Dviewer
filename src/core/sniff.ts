@@ -1,5 +1,6 @@
 import { pickPrimary } from './fileSet';
 import { PLY_HEADER_LIMIT } from './plyLimits';
+import { plyHeaderBoundary } from './plyHeader';
 import type { AssetSource, CompanionFile } from './types';
 
 export type PlyKind = 'gaussian' | 'points' | 'not-ply';
@@ -14,10 +15,10 @@ export function extensionOf(name: string): string {
 
 /** ASCII header region of a PLY (stops at end_header when present). */
 export function headerText(bytes: Uint8Array, max = PLY_HEADER_LIMIT): string {
-  const slice = bytes.subarray(0, Math.min(bytes.length, max));
+  const slice = bytes.subarray(0, Math.min(bytes.length, max, PLY_HEADER_LIMIT));
   const text = new TextDecoder('latin1').decode(slice);
-  const marker = /(?:^|\n)end_header(?:\r?\n|$)/.exec(text);
-  if (marker) return text.slice(0, marker.index + marker[0].length);
+  const boundary = plyHeaderBoundary(text);
+  if (boundary) return text.slice(0, boundary.headerEnd);
   return text;
 }
 
@@ -119,7 +120,7 @@ export async function readFormatProbe(source: AssetSource, signal?: AbortSignal)
   let bytes = await readProbe(source, 65536, signal);
   signal?.throwIfAborted();
   if (!/^\s*ply\r?\n/i.test(new TextDecoder('latin1').decode(bytes.subarray(0, 64)))) return bytes;
-  const complete = (data: Uint8Array) => /(?:^|\n)end_header\r?\n/.test(new TextDecoder('latin1').decode(data));
+  const complete = (data: Uint8Array) => plyHeaderBoundary(new TextDecoder('latin1').decode(data)) !== null;
   if (!complete(bytes)) bytes = await readProbe(source, PLY_HEADER_LIMIT, signal);
   signal?.throwIfAborted();
   if (!complete(bytes)) throw new Error('PLY header is incomplete or exceeds the 1 MiB header limit.');

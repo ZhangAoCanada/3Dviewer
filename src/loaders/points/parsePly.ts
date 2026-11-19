@@ -1,3 +1,4 @@
+import { plyHeaderBoundary } from '../../core/plyHeader';
 import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { throwIfAborted } from '../gaussian/disposeIfAborted';
@@ -180,20 +181,16 @@ async function readHeader(source: ByteSource): Promise<HeaderInfo> {
   const cap = Math.min(source.size, PLY_HEADER_LIMIT);
   const bytes = new Uint8Array(await source.read(0, cap));
   const text = new TextDecoder('latin1').decode(bytes);
-  const marker = 'end_header';
-  const match = /^end_header[ \t]*\r?$/m.exec(text);
-  const idx = match?.index ?? -1;
+  const boundary = plyHeaderBoundary(text);
   if (!/^ply\r?\n/.test(text)) throw new PlyParseError('Invalid PLY signature');
-  if (idx < 0) throw new PlyParseError('PLY header is missing end_header');
-  let byteLength = idx + marker.length;
-  if (text.charCodeAt(byteLength) === 13) byteLength += 1;
-  if (text.charCodeAt(byteLength) === 10) byteLength += 1;
-  const formatLine = text.match(/format\s+(\S+)/i);
+  if (!boundary) throw new PlyParseError('PLY header is missing end_header');
+  const header = text.slice(0, boundary.headerEnd);
+  const formatLine = header.match(/format\s+(\S+)/i);
   const format = formatLine?.[1]?.toLowerCase();
   if (format !== 'ascii' && format !== 'binary_little_endian' && format !== 'binary_big_endian') {
     throw new PlyParseError(`Unsupported PLY format${format ? `: ${format}` : ''}`);
   }
-  return { text: text.slice(0, idx + marker.length), byteLength, format };
+  return { text: header, byteLength: boundary.bodyStart, format };
 }
 
 function parseElements(header: string): ElementDef[] {
