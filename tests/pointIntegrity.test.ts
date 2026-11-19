@@ -56,3 +56,10 @@ describe('point data integrity', () => {
     expect(text).toContain('100 of 1,000'); expect(text).not.toContain('all shown');
   });
 });
+
+it('rejects a finite double world origin that would overflow the GPU transform', async () => {
+  await expect(parse(header(1) + '1e308 0 0\n')).rejects.toBeInstanceOf(PlyParseError);
+});
+it('bounds complete ASCII records too, not only unfinished chunk tails', async () => {
+  await expect(parse(header(1) + ' '.repeat(1024 * 1024 + 1) + '0 0 0\n')).rejects.toThrow(/record.*long/i);
+});

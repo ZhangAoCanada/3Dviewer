@@ -108,8 +108,8 @@ export function resolveCompanion(
   const direct = normalized.find((item) => item.path === exact);
   if (direct) return direct.file;
   const lower = exact.toLowerCase();
-  const insensitive = normalized.find((item) => item.path.toLowerCase() === lower);
-  if (insensitive) return insensitive.file;
+  const insensitive = normalized.filter((item) => item.path.toLowerCase() === lower);
+  if (insensitive.length) return insensitive.length === 1 ? insensitive[0].file : null;
   const name = baseName(exact).toLowerCase();
   if (!name) return null;
   const byName = normalized.filter((item) => baseName(item.path).toLowerCase() === name).map((item) => item.file);

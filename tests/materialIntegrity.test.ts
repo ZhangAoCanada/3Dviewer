@@ -40,3 +40,7 @@ it('does not guess a texture from duplicate basenames', () => {
   expect(resolveCompanion('tex.png', 'missing', files)).toBeNull();
   expect(resolveCompanion('tex.png', 'b', files)?.path).toBe('b/tex.png');
 });
+it('does not guess between case-insensitive duplicate paths', () => {
+  const files = ['A/Tex.png', 'a/tex.PNG'].map((path) => ({ path, file: new File([''], 'tex.png') }));
+  expect(resolveCompanion('tex.png', 'a', files)).toBeNull();
+});

@@ -244,6 +244,7 @@ function colorByte(value: number, type: string): number {
 
 function noteOrigin(origin: OriginState, x: number, y: number, z: number): void {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) throw new PlyParseError('Nonfinite PLY position');
+  if (!Number.isFinite(Math.fround(x)) || !Number.isFinite(Math.fround(y)) || !Number.isFinite(Math.fround(z))) throw new PlyParseError('PLY world position exceeds float32 transform range');
   if (origin.ready) return;
   origin.x = x;
   origin.y = y;
@@ -360,6 +361,7 @@ async function readAscii(
   let record = 0;
   let out = 0;
   const consume = (line: string) => {
+    if (line.length > 1024 * 1024) throw new PlyParseError('ASCII PLY record is too long');
     if (!line.trim()) return;
     while (elementIndex < elements.length && record === elements[elementIndex].count) {
       elementIndex += 1; record = 0;
@@ -399,7 +401,7 @@ async function readAscii(
     const lines = (carry + decoder.decode(buf)).split(/\r?\n/);
     carry = lines.pop() ?? '';
     for (const line of lines) { consume(line); if (complete()) break; }
-    if (carry.length > 1024 * 1024) throw new PlyParseError('ASCII PLY record is too long');
+    if (!complete() && carry.length > 1024 * 1024) throw new PlyParseError('ASCII PLY record is too long');
   }
   if (!complete() && carry.trim()) consume(carry);
   if (!complete()) throw new PlyParseError('PLY vertex data is truncated');
