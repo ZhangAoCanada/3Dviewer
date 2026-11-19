@@ -53,6 +53,9 @@ const WHOLE_FILE_LIMIT = 64 * 1024 * 1024;
  * byte length when the advertised length was the compressed size.
  */
 export function rangeSource(url: string, size: number, signal: AbortSignal): ByteSource {
+  // If-Range is not CORS-safelisted. Cross-origin reads compare exposed response
+  // validators without inventing a server preflight requirement.
+  const conditionalAllowed = typeof location === 'undefined' || new URL(url, location.href).origin === location.origin;
   let fileSize = size;
   let whole: ArrayBuffer | undefined;
   let partialSeen = false;
@@ -67,7 +70,7 @@ export function rangeSource(url: string, size: number, signal: AbortSignal): Byt
       if (start === end) return new ArrayBuffer(0);
       if (whole) return whole.slice(start, end);
       const res = await fetch(url, {
-        headers: { Range: `bytes=${start}-${end - 1}`, ...(validator && !validator.startsWith('W/') ? { 'If-Range': validator } : {}) },
+        headers: { Range: `bytes=${start}-${end - 1}`, ...(conditionalAllowed && validator && !validator.startsWith('W/') ? { 'If-Range': validator } : {}) },
         signal,
       });
       if (signal.aborted) throw abortError(signal);
