@@ -12,7 +12,7 @@ import { detectMemoryBudget } from '../core/memoryBudget';
 import { mergePresetOverrides, parseQualityPreset, resolvePreset, type PresetPlan } from '../core/qualityPreset';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
-import { readProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
+import { readFormatProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
   type AssetOrigin,
@@ -1089,7 +1089,7 @@ export class ViewerApp {
     let loaded = false;
     try {
       const header = PROBE_EXTENSIONS.has(source.extension)
-        ? await readProbe(source, 65536, abort.signal)
+        ? await readFormatProbe(source, abort.signal)
         : new Uint8Array();
       if (generation !== this.generation) return;
       const loader = this.registry.resolve(source, header);

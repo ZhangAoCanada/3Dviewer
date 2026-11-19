@@ -1,3 +1,4 @@
+import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { throwIfAborted } from '../gaussian/disposeIfAborted';
 
@@ -176,7 +177,7 @@ interface HeaderInfo {
 }
 
 async function readHeader(source: ByteSource): Promise<HeaderInfo> {
-  const cap = Math.min(source.size, 1024 * 1024);
+  const cap = Math.min(source.size, PLY_HEADER_LIMIT);
   const bytes = new Uint8Array(await source.read(0, cap));
   const text = new TextDecoder('latin1').decode(bytes);
   const marker = 'end_header';

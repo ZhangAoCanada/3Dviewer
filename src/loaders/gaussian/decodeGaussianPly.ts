@@ -1,3 +1,4 @@
+import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { epsgCode } from '../../core/epsg';
 import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
@@ -21,7 +22,7 @@ import {
 } from './packSplat';
 
 const SH_C0 = 0.28209479177387814;
-const HEADER_PROBE = 1024 * 1024;
+const HEADER_PROBE = PLY_HEADER_LIMIT;
 const DEFAULT_CHUNK = 8 * 1024 * 1024;
 const RESERVOIR = 65_536;
 
