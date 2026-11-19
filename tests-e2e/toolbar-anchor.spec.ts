@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from './test';
 
 async function finishAnimations(page: Page): Promise<void> {
   await page.evaluate(async () => {
@@ -20,7 +20,8 @@ test.describe('wide viewport', () => {
   test.use({ viewport: { width: 1600, height: 900 } });
 
   test('toolbar stays put when settings opens', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/?sample=crate');
+    await expect(page.locator('#file-name')).toHaveText('crate.glb');
     await expect(page.locator('#loading')).toBeHidden({ timeout: 30_000 });
     await page.evaluate(() => {
       const toast = document.querySelector<HTMLElement>('#toast');

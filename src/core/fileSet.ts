@@ -94,14 +94,6 @@ function joinPath(base: string, rel: string): string {
   return `${base.replace(/\/+$/, '')}/${rel}`;
 }
 
-function byShallowPath(files: readonly CompanionFile[]): CompanionFile | undefined {
-  return [...files].sort((a, b) => {
-    const depth = depthOf(a.path) - depthOf(b.path);
-    if (depth !== 0) return depth;
-    return a.path.localeCompare(b.path);
-  })[0];
-}
-
 /**
  * Find the companion a glTF or MTL reference names.
  * Exact path, then case-insensitive path, then case-insensitive file name.
@@ -116,12 +108,12 @@ export function resolveCompanion(
   const direct = normalized.find((item) => item.path === exact);
   if (direct) return direct.file;
   const lower = exact.toLowerCase();
-  const insensitive = normalized.find((item) => item.path.toLowerCase() === lower);
-  if (insensitive) return insensitive.file;
+  const insensitive = normalized.filter((item) => item.path.toLowerCase() === lower);
+  if (insensitive.length) return insensitive.length === 1 ? insensitive[0].file : null;
   const name = baseName(exact).toLowerCase();
   if (!name) return null;
   const byName = normalized.filter((item) => baseName(item.path).toLowerCase() === name).map((item) => item.file);
-  return byShallowPath(byName) ?? null;
+  return byName.length === 1 ? byName[0] : null;
 }
 
 export function missingCompanions(refs: readonly string[], baseDir: string, files: readonly CompanionFile[]): string[] {
@@ -165,47 +157,78 @@ export function gltfRefs(json: unknown): GltfRefs {
   return { buffers, images, required };
 }
 
+/** Reference subset: quoted names, inline comments and common numeric map options. */
+function refTokens(text: string): string[] {
+  const tokens: string[] = [];
+  let token = ''; let quote = '';
+  for (const char of text) {
+    if (quote) { if (char === quote) quote = ''; else token += char; }
+    else if (!token && (char === '"' || char === "'")) quote = char;
+    else if (char === '#') break;
+    else if (/\s/.test(char)) { if (token) tokens.push(token); token = ''; }
+    else token += char;
+  }
+  if (quote) throw new Error('Unclosed quote in OBJ/MTL reference');
+  if (token) tokens.push(token);
+  return tokens;
+}
+
 export function objRefs(text: string): string[] {
   const refs: string[] = [];
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line.toLowerCase().startsWith('mtllib')) continue;
-    const parts = line.split(/\s+/).slice(1);
-    for (const part of parts) {
-      if (part) refs.push(part);
-    }
+    if (!/^\s*mtllib\s/i.test(raw)) continue;
+    const value = raw.trim().replace(/^mtllib\s+/i, '');
+    const tokens = refTokens(value);
+    if (!/["']/.test(value) && tokens.length > 1 && tokens.filter((t) => /\.mtl$/i.test(t)).length === 1 && /\.mtl$/i.test(tokens[tokens.length - 1])) refs.push(tokens.join(' '));
+    else if (tokens.length > 1 && !/["']/.test(value) && !tokens.every((t) => /\.mtl$/i.test(t))) throw new Error('Ambiguous mtllib names; quote names containing spaces');
+    else refs.push(...tokens);
   }
   return refs;
 }
 
 const MTL_MAPS = new Set(['map_kd', 'map_ks', 'map_ke', 'map_d', 'map_bump', 'bump', 'norm', 'disp']);
 
-function stripMapOptions(tokens: string[]): string {
-  const kept: string[] = [];
-  for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i] ?? '';
-    if (!token.startsWith('-')) {
-      kept.push(token);
-      continue;
-    }
-    const flag = token.toLowerCase();
-    if (flag === '-o' || flag === '-s' || flag === '-t') i += 3;
-    else if (flag === '-mm') i += 2;
-    else i += 1;
+function mapReference(tokens: string[]): { ref: string; value: string } {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  let i = 0;
+  while (tokens[i]?.startsWith('-')) {
+    const flag = tokens[i++].toLowerCase();
+    if (seen.has(flag)) throw new Error(`Duplicate MTL option ${flag}`);
+    seen.add(flag);
+    const max = flag === '-s' || flag === '-o' ? 3 : flag === '-bm' ? 1 : flag === '-mm' ? 2 : 0;
+    if (!max) throw new Error(`Unsupported MTL map option ${flag}; supported: -s, -o, -bm, -mm`);
+    const values: number[] = [];
+    while (values.length < max && tokens[i] !== undefined && tokens[i].trim() !== '' && Number.isFinite(Number(tokens[i]))) values.push(Number(tokens[i++]));
+    const min = flag === '-mm' ? 2 : 1;
+    if (values.length < min) throw new Error(`Invalid MTL map option ${flag}`);
+    if (flag === '-s' || flag === '-o') while (values.length < 3) values.push(flag === '-s' ? 1 : 0);
+    normalized.push(flag, ...values.map(String));
   }
-  return kept.join(' ').trim();
+  const ref = tokens.slice(i).join(' ');
+  if (!ref || ref.startsWith('-')) throw new Error('MTL texture filename is missing or ambiguous');
+  // Three's MTLLoader expects an unquoted URL, not our reference grammar.
+  const urlRef = ref.replace(/['"#]/g, (char) => char === "'" ? '%27' : char === '"' ? '%22' : '%23');
+  return { ref, value: [...normalized, urlRef].join(' ') };
+}
+
+export function prepareMtl(text: string): { text: string; refs: string[] } {
+  const refs: string[] = [];
+  const lines = text.split(/\r?\n/).map((line) => {
+    const tokens = refTokens(line); const key = tokens.shift()?.toLowerCase();
+    if (!key) return '';
+    if (!MTL_MAPS.has(key)) return [key, ...tokens].join(' ');
+    const map = mapReference(tokens);
+    refs.push(map.ref);
+    return `${key} ${map.value}`;
+  });
+  return { text: lines.join('\n'), refs };
+}
+
+export function normalizeMtl(text: string): string {
+  return prepareMtl(text).text;
 }
 
 export function mtlRefs(text: string): string[] {
-  const refs: string[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const tokens = line.split(/\s+/);
-    const key = tokens[0]?.toLowerCase();
-    if (!key || !MTL_MAPS.has(key)) continue;
-    const url = stripMapOptions(tokens.slice(1));
-    if (url) refs.push(url);
-  }
-  return refs;
+  return prepareMtl(text).refs;
 }

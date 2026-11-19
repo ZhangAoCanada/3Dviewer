@@ -1,4 +1,4 @@
-import { chromium, expect, test, type Page } from '@playwright/test';
+import { chromium, expect, test, type Page } from './test';
 
 const origin = 'http://127.0.0.1:4173/3Dviewer/';
 
@@ -124,7 +124,7 @@ test('slab badge reaches ready and then hides', async () => {
     const badge = page.locator('#file-quality');
     await expect(badge).toHaveText('Ready', { timeout: 45_000 });
     await expect(badge).toBeHidden({ timeout: 10_000 });
-    await page.goto('about:blank');
+    // Close the owned browser directly; unloading a busy SwiftShader page can wedge navigation.
   } finally {
     await browser.close();
   }

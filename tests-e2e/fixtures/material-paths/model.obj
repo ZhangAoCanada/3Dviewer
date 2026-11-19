@@ -1,0 +1,14 @@
+mtllib a/one.mtl b/two.mtl
+v -2 -1 0
+v 0 -1 0
+v -1 1 0
+v 0 -1 0
+v 2 -1 0
+v 1 1 0
+vt 0 0
+vt 1 0
+vt 0.5 1
+usemtl one
+f 1/1 2/2 3/3
+usemtl two
+f 4/1 5/2 6/3

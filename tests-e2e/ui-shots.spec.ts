@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 
 const enabled = !!process.env.UI_SHOTS;
 const out = process.env.UI_SHOTS_DIR ?? 'artifacts/ui';

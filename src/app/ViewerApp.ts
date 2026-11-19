@@ -12,7 +12,7 @@ import { detectMemoryBudget } from '../core/memoryBudget';
 import { mergePresetOverrides, parseQualityPreset, resolvePreset, type PresetPlan } from '../core/qualityPreset';
 import { createStallWatchdog, type StallWatchdog } from '../core/watchdog';
 import { SAMPLES, sampleUrl, type SampleAsset } from '../core/samples';
-import { readProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
+import { readFormatProbe, sourceFromFiles, sourceFromUrl } from '../core/sniff';
 import {
   DEFAULT_SETTINGS,
   type AssetOrigin,
@@ -32,7 +32,7 @@ import { createDefaultRegistry } from '../loaders';
 import type { FrameStats, Refinement } from '../render/SceneHost';
 import { SceneHost } from '../render/SceneHost';
 import type { NavMode, NavSnapshot, UpMode } from '../render/Navigation';
-import { isTypingTarget } from '../render/Navigation';
+import { isControlTarget, isTypingTarget } from '../render/Navigation';
 import { createDemoSlab } from '../render/demoSlab';
 import {
   FLIP_Y,
@@ -88,6 +88,12 @@ interface InflightRecord {
   at: number;
 }
 
+interface LoadOptions {
+  restore?: NavSnapshot | null;
+  flipY?: boolean;
+  ownerSignal?: AbortSignal;
+}
+
 interface ToastAction {
   label: string;
   run: () => void;
@@ -99,6 +105,7 @@ export class ViewerApp {
   private readonly budget: MemoryBudget;
   private readonly settings: RenderSettings;
   private generation = 0;
+  private sceneIntent = 0;
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
   private toastAction: ToastAction | null = null;
@@ -131,6 +138,8 @@ export class ViewerApp {
   private reloadGraphics = false;
   private surface: 'empty' | 'problem' | 'none' = 'none';
   private bootFinishedWithoutGraphics = false;
+  private startupPending = true;
+  private pendingGraphicsLoad: { source: AssetSource; options?: LoadOptions } | null = null;
   private loadedPreset: QualityPreset | null = null;
   private softwareNotified = false;
   private contextTimer = 0;
@@ -203,7 +212,12 @@ export class ViewerApp {
       else if (this.surface === 'problem') this.setSurface('none');
       this.syncGraphicsBanner();
       this.syncApplicable();
-      if (this.bootFinishedWithoutGraphics) void this.boot();
+      const pending = this.pendingGraphicsLoad;
+      this.pendingGraphicsLoad = null;
+      if (pending) {
+        this.bootFinishedWithoutGraphics = false;
+        void this.load(pending.source, pending.options);
+      } else if (this.bootFinishedWithoutGraphics) void this.boot();
       return true;
     } catch (error) {
       this.host = null;
@@ -420,8 +434,8 @@ export class ViewerApp {
         }
         return;
       }
-      if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (document.querySelector('dialog[open]')) return;
+      if (event.defaultPrevented || isControlTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('dialog[open], [role="menu"]:not([hidden])')) return;
       if (event.key === '?') {
         this.openHelp();
         return;
@@ -460,7 +474,19 @@ export class ViewerApp {
 
   private bindSettings(): void {
     for (const preset of ['auto', 'quality', 'memory'] as const) {
-      must<HTMLButtonElement>(`#quality-${preset}`).addEventListener('click', () => this.selectPreset(preset));
+      const button = must<HTMLButtonElement>(`#quality-${preset}`);
+      button.addEventListener('click', () => this.selectPreset(preset));
+      button.addEventListener('keydown', (event) => {
+        const presets = ['auto', 'quality', 'memory'] as const;
+        const index = presets.indexOf(preset);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2
+          : event.key === 'ArrowRight' || event.key === 'ArrowDown' ? (index + 1) % 3
+          : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? (index + 2) % 3 : null;
+        if (next === null) return;
+        event.preventDefault(); event.stopPropagation();
+        this.selectPreset(presets[next]);
+        must<HTMLButtonElement>(`#quality-${presets[next]}`).focus();
+      });
     }
     must('#quality-reopen').addEventListener('click', () => {
       const source = this.lastSource;
@@ -587,7 +613,11 @@ export class ViewerApp {
     must('#up-using').textContent = this.host.upAxis === 'z' ? 'Z-up' : 'Y-up';
   }
 
-  private async loadDemoSlab(count?: number): Promise<void> {
+  private async loadDemoSlab(count?: number, ownerSignal?: AbortSignal): Promise<void> {
+    ownerSignal?.throwIfAborted();
+    if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
+    this.startupPending = false;
+    this.crashEntry = null;
     if (!this.host) {
       const failure =
         this.graphicsFailure ??
@@ -604,6 +634,7 @@ export class ViewerApp {
     this.loadAbort?.abort();
     const abort = new AbortController();
     this.loadAbort = abort;
+    const unbindOwner = this.watchLoadOwner(ownerSignal, abort);
     this.loadingSource = null;
     this.failureSource = null;
     this.benchDemo = count;
@@ -636,6 +667,7 @@ export class ViewerApp {
       this.showProblem(classifyFailure(error, { stage: this.loadingStage ?? undefined }));
       this.setEmpty(this.items.length === 0);
     } finally {
+      unbindOwner();
       if (this.loadAbort === abort) this.loadAbort = null;
       if (generation === this.generation) {
         this.setLoading(false);
@@ -674,6 +706,7 @@ export class ViewerApp {
       const on = this.settings.quality === preset;
       button.classList.toggle('is-on', on);
       button.setAttribute('aria-checked', on ? 'true' : 'false');
+      button.tabIndex = on ? 0 : -1;
     }
     must('#quality-summary').textContent = plan.summary;
     must('#quality-details-text').textContent = plan.details;
@@ -946,6 +979,11 @@ export class ViewerApp {
   }
 
   async boot(): Promise<void> {
+    if (!this.startupPending) return;
+    if (this.crashEntry) {
+      this.startupPending = false;
+      return;
+    }
     try {
       const params = new URLSearchParams(location.search);
       const url = params.get('url');
@@ -959,6 +997,7 @@ export class ViewerApp {
         return;
       }
       this.bootFinishedWithoutGraphics = false;
+      this.startupPending = false;
       if (params.get('demo') === 'slab') {
         const raw = params.get('n');
         const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
@@ -985,14 +1024,19 @@ export class ViewerApp {
   }
 
   private async loadSample(sample: SampleAsset): Promise<void> {
-    this.settings.flipY = Boolean(sample.flipY);
-    must<HTMLInputElement>('#flip-y').checked = this.settings.flipY;
     const url = sampleUrl(sample, import.meta.env.BASE_URL);
-    await this.load(sourceFromUrl(url, 'sample'));
+    await this.load(sourceFromUrl(url, 'sample'), { flipY: Boolean(sample.flipY) });
   }
 
-  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null }): Promise<void> {
+  private async load(source: AssetSource, options?: LoadOptions): Promise<void> {
+    const ownerSignal = options?.ownerSignal;
+    ownerSignal?.throwIfAborted();
+    if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
+    this.startupPending = false;
+    this.crashEntry = null;
     if (!this.host) {
+      // Automatic boot is consumed, but the latest explicit request survives a graphics retry.
+      if (!ownerSignal) this.pendingGraphicsLoad = { source, options };
       this.loadingSource = source;
       this.failureSource = source;
       const failure =
@@ -1011,6 +1055,7 @@ export class ViewerApp {
     this.loadAbort?.abort();
     const abort = new AbortController();
     this.loadAbort = abort;
+    const unbindOwner = this.watchLoadOwner(ownerSignal, abort);
     const stallFor = (stage?: string) => (stage === 'gpu' ? 10 * 60_000 : 90_000);
     let stallMs = stallFor();
     const stall = () => {
@@ -1044,7 +1089,7 @@ export class ViewerApp {
     let loaded = false;
     try {
       const header = PROBE_EXTENSIONS.has(source.extension)
-        ? await readProbe(source, 65536, abort.signal)
+        ? await readFormatProbe(source, abort.signal)
         : new Uint8Array();
       if (generation !== this.generation) return;
       const loader = this.registry.resolve(source, header);
@@ -1069,8 +1114,8 @@ export class ViewerApp {
         extendedPrecision,
         overrides,
         onProgress: (progress) => {
-          arm(progress.stage);
           if (generation !== this.generation) return;
+          arm(progress.stage);
           this.noteProgress(progress);
           this.setLoading(true, progress);
         },
@@ -1087,6 +1132,10 @@ export class ViewerApp {
       if (generation !== this.generation) {
         renderable.dispose();
         return;
+      }
+      if (options?.flipY !== undefined) {
+        this.settings.flipY = options.flipY;
+        must<HTMLInputElement>('#flip-y').checked = options.flipY;
       }
       host.clear();
       host.add(renderable, this.settings);
@@ -1126,6 +1175,7 @@ export class ViewerApp {
       this.setEmpty(this.items.length === 0);
     } finally {
       watchdog.clear();
+      unbindOwner();
       if (this.loadAbort === abort) this.loadAbort = null;
       if (generation === this.generation) {
         this.clearInflight();
@@ -1135,9 +1185,16 @@ export class ViewerApp {
     }
   }
 
+  private watchLoadOwner(owner: AbortSignal | undefined, load: AbortController): () => void {
+    const cancel = () => { if (this.loadAbort === load) this.cancelLoad(); };
+    owner?.addEventListener('abort', cancel, { once: true });
+    return () => owner?.removeEventListener('abort', cancel);
+  }
+
   private setMode(mode: NavMode): void {
     this.host?.setMode(mode);
     this.syncModeButtons(mode);
+    must<HTMLCanvasElement>('#view').focus({ preventScroll: true });
   }
 
   private syncModeButtons(mode: NavMode): void {
@@ -1811,6 +1868,7 @@ export class ViewerApp {
     must('#bench-report').textContent = '';
     must('#bench-status').textContent = 'Starting…';
     const host = this.host;
+    const intent = this.sceneIntent;
     try {
       const { runBench, formatBenchMarkdown } = await import('../bench/runBench');
       if (abort.signal.aborted || this.host !== host) return;
@@ -1823,7 +1881,8 @@ export class ViewerApp {
             this.noteFrameMarks();
             return { ...this.loadTimings };
           },
-          reload: () => this.reloadForBench(),
+          reload: (signal) => this.reloadForBench(signal),
+          canRestore: () => this.sceneIntent === intent,
           scene: () => benchScene(this.items[0]),
           environment: () => this.benchEnvironment(),
         },
@@ -1843,11 +1902,11 @@ export class ViewerApp {
     }
   }
 
-  private async reloadForBench(): Promise<boolean> {
-    if (this.benchDemo !== null) await this.loadDemoSlab(this.benchDemo);
-    else if (this.lastSource) await this.load(this.lastSource);
+  private async reloadForBench(signal: AbortSignal): Promise<boolean> {
+    if (this.benchDemo !== null) await this.loadDemoSlab(this.benchDemo, signal);
+    else if (this.lastSource) await this.load(this.lastSource, { ownerSignal: signal });
     else return false;
-    return this.loadSucceeded;
+    return !signal.aborted && this.loadSucceeded;
   }
 
   private benchEnvironment(): {
@@ -2340,6 +2399,9 @@ export class ViewerApp {
   }
 
   private dismissBreadcrumb(): void {
+    this.startupPending = false;
+    this.pendingGraphicsLoad = null;
+    this.setQuery(null);
     this.clearInflight();
     this.crashEntry = null;
     this.showingBreadcrumb = false;

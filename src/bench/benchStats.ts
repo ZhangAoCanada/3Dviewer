@@ -68,7 +68,7 @@ export interface BenchReport {
 }
 
 export const BENCH_NOTE =
-  'Frame times measure render and sort only. Orbiting through restore() skips input handling and inertia.';
+  'Frame intervals sample actual draws during the moving orbit; no-draw callbacks and paused settle time are excluded. CPU render submission is reported separately; GPU execution time is not measured. Orbiting through restore() skips input handling and inertia.';
 
 /** Spark has never started a sort, so settle has nothing to wait for. */
 export function noSortToSettle(state: { sorting?: boolean; lastSortTime?: number }): boolean {

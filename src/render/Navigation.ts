@@ -69,6 +69,8 @@ export class NavigationController {
   private readonly worldUp = new THREE.Vector3(0, 1, 0);
   private readonly homeCamera = new THREE.Vector3(1.6, 1.1, 2.8);
   private readonly homePivot = new THREE.Vector3();
+  private readonly homeDirection = new THREE.Vector3();
+  private homeRadius = 1;
   private readonly animFromCam = new THREE.Vector3();
   private readonly animToCam = new THREE.Vector3();
   private readonly animFromPivot = new THREE.Vector3();
@@ -101,7 +103,6 @@ export class NavigationController {
   private armX = 0;
   private armY = 0;
   private lastMoveTime = 0;
-  private flyTouchCount = 0;
   private lastTap: { time: number; x: number; y: number } | null = null;
   private wheelCache: { x: number; y: number; time: number; hit: PickResult } | null = null;
   private zoomPending = 0;
@@ -129,9 +130,12 @@ export class NavigationController {
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('visibilitychange', this.onBlur);
+    document.addEventListener('focusin', this.onFocusChange);
   }
 
   setMode(mode: NavMode): void {
+    if (mode === this.mode) return;
+    this.onBlur();
     this.zoomPending = 0;
     this.pivotHideAt = 0;
     this.yawVel = 0;
@@ -174,41 +178,47 @@ export class NavigationController {
 
   /** Instant frame used when a file finishes loading. */
   frame(box: THREE.Box3, groundLevel?: number): number {
+    this.onBlur();
     upVector(this.up, this.worldUp);
     this.camera.up.copy(this.worldUp);
-    const center = box.getCenter(new THREE.Vector3());
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const radius = Math.max(sphere.radius, 0.05);
-    const fov = THREE.MathUtils.degToRad(this.camera.fov);
-    const distance = (radius / Math.sin(fov / 2)) * 0.92;
-    const eye = this.up === 'z' ? new THREE.Vector3(0.55, -0.72, 0.42) : new THREE.Vector3(0.42, 0.34, 0.84);
-    this.camera.position.copy(center).add(eye.normalize().multiplyScalar(distance));
-    this.camera.near = Math.max(radius / 800, 0.01);
-    this.camera.far = Math.max(radius * 50, 50);
-    this.camera.updateProjectionMatrix();
-    this.camera.up.copy(this.worldUp);
-    this.pivot.copy(center);
+    this.homePivot.copy(sphere.center);
     this.flat = groundLevel !== undefined;
     this.maxPolar = this.flat ? Math.PI / 2 + 0.05 : Math.PI - 0.12;
     if (groundLevel !== undefined) {
-      if (this.up === 'z') this.pivot.z = groundLevel;
-      else this.pivot.y = groundLevel;
+      if (this.up === 'z') this.homePivot.z = groundLevel;
+      else this.homePivot.y = groundLevel;
     }
+    this.homeRadius = radius + this.homePivot.distanceTo(sphere.center);
+    this.homeDirection.copy(this.up === 'z' ? new THREE.Vector3(0.55, -0.72, 0.42) : new THREE.Vector3(0.42, 0.34, 0.84));
+    this.homeDirection.normalize();
+    this.camera.near = Math.max(radius / 800, 0.01);
+    this.camera.far = Math.max(radius * 50, 50);
+    this.fitHome();
+    this.camera.position.copy(this.homeCamera);
+    this.pivot.copy(this.homePivot);
     this.lookAtPivot();
     this.speed = Math.max(radius * 0.65, 0.2);
     this.sceneRadius = radius;
-    this.homeCamera.copy(this.camera.position);
-    this.homePivot.copy(this.pivot);
     this.hasHome = true;
-    this.animating = false;
-    this.yawVel = 0;
-    this.pitchVel = 0;
     return radius;
+  }
+
+  /** Resize leaves the current view alone. Reset fits the new aspect ratio. */
+  private fitHome(): void {
+    const vertical = THREE.MathUtils.degToRad(this.camera.getEffectiveFOV()) / 2;
+    const horizontal = Math.atan(Math.tan(vertical) * this.camera.aspect);
+    const distance = this.homeRadius / Math.sin(Math.min(vertical, horizontal)) * 1.05;
+    this.homeCamera.copy(this.homePivot).addScaledVector(this.homeDirection, distance);
+    this.camera.far = Math.max(this.camera.far, distance + this.homeRadius * 2);
+    this.camera.updateProjectionMatrix();
   }
 
   reset(animated = true): void {
     if (!this.hasHome) return;
-    this.endDrag();
+    this.onBlur();
+    this.fitHome();
     if (!animated) {
       this.camera.position.copy(this.homeCamera);
       this.pivot.copy(this.homePivot);
@@ -241,6 +251,7 @@ export class NavigationController {
   }
 
   update(dt: number): void {
+    if (!this.ownsKeyboard(document.activeElement)) this.keys.clear();
     if (this.animating) {
       this.animT += dt;
       const u = smoothstep(this.animT / this.animDuration);
@@ -283,6 +294,7 @@ export class NavigationController {
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('visibilitychange', this.onBlur);
+    document.removeEventListener('focusin', this.onFocusChange);
   }
 
   private minDistance(): number {
@@ -335,12 +347,17 @@ export class NavigationController {
   };
 
   private onPointerDown = (event: PointerEvent): void => {
+    this.dom.focus({ preventScroll: true });
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, type: event.pointerType });
     this.animating = false;
     this.zoomPending = 0;
     this.pivotHideAt = 0;
     this.onPivot?.(null);
     if (this.mode === 'fly') {
+      if (event.pointerType === 'touch') {
+        this.beginFlyTouch();
+        return;
+      }
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       this.drag = 'fly';
       this.dragId = event.pointerId;
@@ -411,7 +428,8 @@ export class NavigationController {
     const prev = this.pointers.get(event.pointerId);
     if (prev) this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, type: prev.type });
     if (this.mode === 'fly') {
-      if (this.drag !== 'fly' || event.pointerId !== this.dragId) return;
+      if (this.drag !== 'fly' || !prev) return;
+      if (event.pointerType !== 'touch' && event.pointerId !== this.dragId) return;
       this.moveFlyPointer(event);
       return;
     }
@@ -501,7 +519,12 @@ export class NavigationController {
 
   private onPointerUp = (event: PointerEvent): void => {
     this.pointers.delete(event.pointerId);
-    if (event.pointerType === 'touch' && this.mode === 'orbit' && this.drag === 'arm') {
+    if (this.mode === 'fly' && event.pointerType === 'touch') {
+      this.beginFlyTouch();
+      return;
+    }
+    if (event.type === 'pointercancel') this.lastTap = null;
+    if (event.type === 'pointerup' && event.pointerType === 'touch' && this.mode === 'orbit' && this.drag === 'arm') {
       const now = event.timeStamp;
       const prev = this.lastTap;
       const repeat =
@@ -520,7 +543,7 @@ export class NavigationController {
       return;
     }
     if (this.drag !== 'none' && (event.pointerId === this.dragId || this.pointers.size === 0)) {
-      const stopped = event.timeStamp - this.lastMoveTime > 80;
+      const stopped = event.type === 'pointercancel' || event.timeStamp - this.lastMoveTime > 80;
       const showInertia = this.drag === 'orbit' && !stopped;
       if (!showInertia) {
         this.yawVel = 0;
@@ -604,22 +627,24 @@ export class NavigationController {
     return hit;
   }
 
-  private moveFlyPointer(event: PointerEvent): void {
-    if (event.pointerType === 'touch') {
-      const touches = [...this.pointers.values()].filter((p) => p.type === 'touch');
-      if (touches.length !== this.flyTouchCount) {
-        this.flyTouchCount = touches.length;
-        if (touches.length > 0) {
-          let sum = 0;
-          for (const touch of touches) sum += touch.y;
-          this.lastY = sum / touches.length;
-        }
-        return;
-      }
+  private beginFlyTouch(): void {
+    const touches = [...this.pointers.entries()].filter(([, pointer]) => pointer.type === 'touch');
+    const first = touches[0];
+    if (!first) {
+      this.endDrag();
+      return;
     }
-    if (this.pointers.size >= 2 && event.pointerType === 'touch') {
-      const ys = [...this.pointers.values()].map((p) => p.y);
-      const avg = ys.reduce((sum, y) => sum + y, 0) / ys.length;
+    this.drag = 'fly';
+    this.dragId = first[0];
+    this.lastX = first[1].x;
+    this.lastY = touches.reduce((sum, [, pointer]) => sum + pointer.y, 0) / touches.length;
+    for (const [id] of touches) this.capture(id);
+  }
+
+  private moveFlyPointer(event: PointerEvent): void {
+    const touches = [...this.pointers.values()].filter((pointer) => pointer.type === 'touch');
+    if (touches.length >= 2 && event.pointerType === 'touch') {
+      const avg = touches.reduce((sum, pointer) => sum + pointer.y, 0) / touches.length;
       const delta = avg - this.lastY;
       this.lastY = avg;
       this.camera.getWorldDirection(this.forward);
@@ -665,9 +690,23 @@ export class NavigationController {
     }
   }
 
+  private ownsKeyboard(target: EventTarget | null): boolean {
+    return !document.querySelector('dialog[open], [role="menu"]:not([hidden])') &&
+      (target === this.dom || target === document.body);
+  }
+
+  private onFocusChange = (): void => {
+    if (!this.ownsKeyboard(document.activeElement)) this.onBlur();
+  };
+
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (isTypingTarget(event.target)) return;
-    if (event.metaKey || event.ctrlKey) return;
+    if (event.defaultPrevented || !this.ownsKeyboard(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+      this.keys.clear();
+      return;
+    }
+    if (event.repeat && !this.keys.has(event.code)) return;
+    if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ArrowUp', 'ArrowDown',
+      'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight'].includes(event.code)) return;
     this.keys.add(event.code);
     if (this.mode === 'fly' && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
       event.preventDefault();
@@ -683,6 +722,10 @@ export class NavigationController {
   };
 
   private onBlur = (): void => {
+    this.yawVel = 0;
+    this.pitchVel = 0;
+    this.zoomPending = 0;
+    this.animating = false;
     this.keys.clear();
     this.pointers.clear();
     this.endDrag();
@@ -693,4 +736,9 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+export function isControlTarget(target: EventTarget | null): boolean {
+  return isTypingTarget(target) || (target instanceof HTMLElement &&
+    target.closest('button, a[href], summary, [role="menu"], [role="radio"]') !== null);
 }

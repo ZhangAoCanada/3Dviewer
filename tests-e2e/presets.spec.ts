@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('the selected quality preset persists across a reload', async ({ page }) => {
   await page.goto('/');

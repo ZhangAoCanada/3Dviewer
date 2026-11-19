@@ -1,3 +1,5 @@
+import { plyHeaderBoundary } from '../../core/plyHeader';
+import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { throwIfAborted } from '../gaussian/disposeIfAborted';
 
@@ -83,11 +85,13 @@ export async function parsePlyPoints(
   if (!x || !y || !z) throw new PlyParseError('PLY vertex is missing x/y/z');
 
   const colorProps = findColorProps(vertex.props);
-  const cap = Math.max(1, Math.floor(maxPoints));
+  if (!Number.isSafeInteger(source.size) || source.size < 0) throw new PlyParseError('Invalid PLY source size');
+  if (!Number.isFinite(maxPoints) || maxPoints < 1) throw new PlyParseError('Invalid point budget');
+  if (vertex.count < 1) throw new PlyParseError('PLY contains no vertices');
+  // Output is bounded independently of untrusted header counts; input remains streamed.
+  const cap = Math.min(Math.floor(maxPoints), Math.floor(256 * 1024 * 1024 / (colorProps ? 15 : 12)));
   const stride = Math.max(1, Math.ceil(vertex.count / cap));
   const samples = Math.ceil(vertex.count / stride);
-  const positions = new Float32Array(samples * 3);
-  const colors = colorProps ? new Uint8Array(samples * 3) : null;
   const origin: OriginState = { x: 0, y: 0, z: 0, ready: false };
 
   let preBytes = 0;
@@ -98,6 +102,13 @@ export async function parsePlyPoints(
     }
     preBytes += el.count * el.bytes;
   }
+
+  const available = source.size - header.byteLength;
+  if (header.format === 'ascii' ? vertex.count > available : preBytes + vertex.count * vertex.bytes > available) {
+    throw new PlyParseError('PLY vertex data is truncated');
+  }
+  const positions = new Float32Array(samples * 3);
+  const colors = colorProps ? new Uint8Array(samples * 3) : null;
 
   let lastReport = 0;
   let lastLoaded = -1;
@@ -113,7 +124,7 @@ export async function parsePlyPoints(
   report(0, true);
 
   if (header.format === 'ascii') {
-    await readAscii(source, header.byteLength, vertex, colorProps, stride, positions, colors, origin, report, signal);
+    await readAscii(source, header.byteLength, elements.slice(0, elements.indexOf(vertex)), vertex, colorProps, stride, positions, colors, origin, report, signal);
   } else {
     const little = header.format === 'binary_little_endian';
     await readBinary(
@@ -167,21 +178,19 @@ interface HeaderInfo {
 }
 
 async function readHeader(source: ByteSource): Promise<HeaderInfo> {
-  const cap = Math.min(source.size, 1024 * 1024);
+  const cap = Math.min(source.size, PLY_HEADER_LIMIT);
   const bytes = new Uint8Array(await source.read(0, cap));
   const text = new TextDecoder('latin1').decode(bytes);
-  const marker = 'end_header';
-  const idx = text.indexOf(marker);
-  if (idx < 0) throw new PlyParseError('PLY header is missing end_header');
-  let byteLength = idx + marker.length;
-  if (text.charCodeAt(byteLength) === 13) byteLength += 1;
-  if (text.charCodeAt(byteLength) === 10) byteLength += 1;
-  const formatLine = text.match(/format\s+(\S+)/i);
+  const boundary = plyHeaderBoundary(text);
+  if (!/^ply\r?\n/.test(text)) throw new PlyParseError('Invalid PLY signature');
+  if (!boundary) throw new PlyParseError('PLY header is missing end_header');
+  const header = text.slice(0, boundary.headerEnd);
+  const formatLine = header.match(/format\s+(\S+)/i);
   const format = formatLine?.[1]?.toLowerCase();
   if (format !== 'ascii' && format !== 'binary_little_endian' && format !== 'binary_big_endian') {
     throw new PlyParseError(`Unsupported PLY format${format ? `: ${format}` : ''}`);
   }
-  return { text: text.slice(0, idx + marker.length), byteLength, format };
+  return { text: header, byteLength: boundary.bodyStart, format };
 }
 
 function parseElements(header: string): ElementDef[] {
@@ -190,15 +199,18 @@ function parseElements(header: string): ElementDef[] {
   for (const raw of header.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('comment') || line.startsWith('obj_info')) continue;
-    if (line.startsWith('element ')) {
+    if (/^element\s/.test(line)) {
       const parts = line.split(/\s+/);
       current = { name: parts[1] ?? '', count: Number(parts[2] ?? 0), props: [], bytes: 0, hasList: false };
+      if (!Number.isSafeInteger(current.count) || current.count < 0) throw new PlyParseError('Invalid PLY element count');
+      if (elements.some((el) => el.name === current?.name)) throw new PlyParseError('Duplicate PLY element');
       elements.push(current);
       continue;
     }
-    if (line.startsWith('property ') && current) {
+    if (/^property\s/.test(line) && current) {
       const parts = line.split(/\s+/);
       if (parts[1] === 'list') {
+        if (!TYPE_SIZE[parts[2]] || !TYPE_SIZE[parts[3]]) throw new PlyParseError('Unsupported PLY list type');
         current.hasList = true;
         continue;
       }
@@ -206,8 +218,10 @@ function parseElements(header: string): ElementDef[] {
       const size = TYPE_SIZE[type];
       if (!size) throw new PlyParseError(`Unsupported PLY property type "${type}"`);
       const prop: Prop = { name: parts[2] ?? '', type, size, offset: current.bytes };
+      if (current.props.some((p) => p.name === prop.name)) throw new PlyParseError('Duplicate PLY property');
       current.props.push(prop);
       current.bytes += size;
+      if (current.bytes > 65536) throw new PlyParseError('PLY record layout is too large');
     }
   }
   return elements;
@@ -221,13 +235,15 @@ function colorValue(value: number, type: string): number {
 }
 
 function colorByte(value: number, type: string): number {
+  if (!Number.isFinite(value)) throw new PlyParseError('Nonfinite PLY color');
   const unit = Math.min(1, Math.max(0, colorValue(value, type)));
   return Math.round(unit * 255);
 }
 
 function noteOrigin(origin: OriginState, x: number, y: number, z: number): void {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) throw new PlyParseError('Nonfinite PLY position');
+  if (!Number.isFinite(Math.fround(x)) || !Number.isFinite(Math.fround(y)) || !Number.isFinite(Math.fround(z))) throw new PlyParseError('PLY world position exceeds float32 transform range');
   if (origin.ready) return;
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
   origin.x = x;
   origin.y = y;
   origin.z = z;
@@ -283,7 +299,7 @@ async function readBinary(
 ): Promise<void> {
   const strideBytes = vertex.bytes;
   const bodyBytes = vertex.count * strideBytes;
-  if (bodyStart + bodyBytes > source.size + 1) {
+  if (bodyStart + bodyBytes > source.size) {
     throw new PlyParseError('PLY vertex data is truncated');
   }
   let filePos = bodyStart;
@@ -295,12 +311,12 @@ async function readBinary(
     const want = Math.min(CHUNK - (CHUNK % strideBytes || 0), remaining);
     const take = want < strideBytes ? strideBytes : want - (want % strideBytes);
     const buf = await source.read(filePos, filePos + take);
+    if (buf.byteLength !== take) throw new PlyParseError('PLY vertex data is truncated');
     const view = new DataView(buf);
     const verts = Math.floor(view.byteLength / strideBytes);
     const baseIndex = (filePos - bodyStart) / strideBytes;
     for (let i = 0; i < verts; i++) {
       const index = baseIndex + i;
-      if (origin.ready && index % stride !== 0) continue;
       const at = i * strideBytes;
       const px = readScalar(view, at + x.offset, x.type, little);
       const py = readScalar(view, at + y.offset, y.type, little);
@@ -311,6 +327,7 @@ async function readBinary(
       positions[o] = px - origin.x;
       positions[o + 1] = py - origin.y;
       positions[o + 2] = pz - origin.z;
+      if (!Number.isFinite(positions[o]) || !Number.isFinite(positions[o + 1]) || !Number.isFinite(positions[o + 2])) throw new PlyParseError('PLY position exceeds float32 range');
       if (colors && colorProps) {
         colors[o] = colorByte(readScalar(view, at + colorProps[0].offset, colorProps[0].type, little), colorProps[0].type);
         colors[o + 1] = colorByte(readScalar(view, at + colorProps[1].offset, colorProps[1].type, little), colorProps[1].type);
@@ -327,6 +344,7 @@ async function readBinary(
 async function readAscii(
   source: ByteSource,
   bodyStart: number,
+  preceding: ElementDef[],
   vertex: ElementDef,
   colorProps: [Prop, Prop, Prop] | null,
   stride: number,
@@ -336,73 +354,55 @@ async function readAscii(
   report?: (loaded: number) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const col = new Map(vertex.props.map((prop, index) => [prop.name, index]));
-  const xi = col.get('x');
-  const yi = col.get('y');
-  const zi = col.get('z');
-  if (xi === undefined || yi === undefined || zi === undefined) {
-    throw new PlyParseError('PLY vertex is missing x/y/z');
-  }
-  const cr = colorProps ? col.get(colorProps[0].name) : undefined;
-  const cg = colorProps ? col.get(colorProps[1].name) : undefined;
-  const cb = colorProps ? col.get(colorProps[2].name) : undefined;
+  const elements = [...preceding, vertex];
+  let elementIndex = 0;
+  let record = 0;
+  let out = 0;
+  const consume = (line: string) => {
+    if (line.length > 1024 * 1024) throw new PlyParseError('ASCII PLY record is too long');
+    if (!line.trim()) return;
+    while (elementIndex < elements.length && record === elements[elementIndex].count) {
+      elementIndex += 1; record = 0;
+    }
+    const element = elements[elementIndex];
+    if (!element) return;
+    const parts = line.trim().split(/\s+/);
+    if (parts.length !== element.props.length) throw new PlyParseError('Incomplete or unsupported ASCII PLY record');
+    const values = parts.map(Number);
+    if (!values.every(Number.isFinite)) throw new PlyParseError('Nonfinite ASCII PLY value');
+    if (element === vertex) {
+      const value = (name: string) => values[element.props.findIndex((p) => p.name === name)];
+      const px = value('x'); const py = value('y'); const pz = value('z');
+      noteOrigin(origin, px, py, pz);
+      if (record % stride === 0) {
+        const o = out * 3;
+        positions[o] = px - origin.x; positions[o + 1] = py - origin.y; positions[o + 2] = pz - origin.z;
+        if (!Number.isFinite(positions[o]) || !Number.isFinite(positions[o + 1]) || !Number.isFinite(positions[o + 2])) throw new PlyParseError('PLY position exceeds float32 range');
+        if (colors && colorProps) {
+          for (let c = 0; c < 3; c += 1) colors[o + c] = colorByte(value(colorProps[c].name), colorProps[c].type);
+        }
+        out += 1;
+      }
+      report?.(record + 1);
+    }
+    record += 1;
+  };
+  const complete = () => elementIndex === elements.length - 1 && record === vertex.count;
   let pos = bodyStart;
   let carry = '';
-  let index = 0;
-  let out = 0;
   const decoder = new TextDecoder('latin1');
-  while (pos < source.size && index < vertex.count) {
+  while (pos < source.size && !complete()) {
     if (signal) throwIfAborted(signal);
     const buf = await source.read(pos, Math.min(source.size, pos + CHUNK));
+    if (!buf.byteLength) throw new PlyParseError('PLY data is truncated');
     pos += buf.byteLength;
-    const text = carry + decoder.decode(buf, { stream: pos < source.size });
-    const lines = text.split(/\r?\n/);
-    carry = pos < source.size ? (lines.pop() ?? '') : '';
-    for (const line of lines) {
-      if (index >= vertex.count) break;
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (!origin.ready || index % stride === 0) {
-        const parts = trimmed.split(/\s+/);
-        const px = Number(parts[xi]);
-        const py = Number(parts[yi]);
-        const pz = Number(parts[zi]);
-        noteOrigin(origin, px, py, pz);
-        if (index % stride === 0) {
-          const o = out * 3;
-          positions[o] = px - origin.x;
-          positions[o + 1] = py - origin.y;
-          positions[o + 2] = pz - origin.z;
-          if (colors && cr !== undefined && cg !== undefined && cb !== undefined && colorProps) {
-            colors[o] = colorByte(Number(parts[cr]), colorProps[0].type);
-            colors[o + 1] = colorByte(Number(parts[cg]), colorProps[1].type);
-            colors[o + 2] = colorByte(Number(parts[cb]), colorProps[2].type);
-          }
-          out += 1;
-        }
-      }
-      index += 1;
-    }
-    report?.(index);
+    const lines = (carry + decoder.decode(buf)).split(/\r?\n/);
+    carry = lines.pop() ?? '';
+    for (const line of lines) { consume(line); if (complete()) break; }
+    if (!complete() && carry.length > 1024 * 1024) throw new PlyParseError('ASCII PLY record is too long');
   }
-  if (carry.trim() && index < vertex.count) {
-    const parts = carry.trim().split(/\s+/);
-    const px = Number(parts[xi]);
-    const py = Number(parts[yi]);
-    const pz = Number(parts[zi]);
-    noteOrigin(origin, px, py, pz);
-    if (index % stride === 0) {
-      const o = out * 3;
-      positions[o] = px - origin.x;
-      positions[o + 1] = py - origin.y;
-      positions[o + 2] = pz - origin.z;
-      if (colors && cr !== undefined && cg !== undefined && cb !== undefined && colorProps) {
-        colors[o] = colorByte(Number(parts[cr]), colorProps[0].type);
-        colors[o + 1] = colorByte(Number(parts[cg]), colorProps[1].type);
-        colors[o + 2] = colorByte(Number(parts[cb]), colorProps[2].type);
-      }
-    }
-  }
+  if (!complete() && carry.trim()) consume(carry);
+  if (!complete()) throw new PlyParseError('PLY vertex data is truncated');
 }
 
 export function colorizeByHeight(positions: Float32Array, upAxis: 'y' | 'z'): Uint8Array {

@@ -1,0 +1,3 @@
+newmtl one
+Kd 1 1 1
+map_Kd -s 1 tex.png

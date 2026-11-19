@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, test, type Page, type Request } from './test';
 
 const origin = 'http://127.0.0.1:4173/3Dviewer/';
 
@@ -73,7 +73,7 @@ async function armHang(
   });
   await page.route('**/*', (route) => {
     const request = route.request();
-    if (!isHung(request.url())) return route.continue();
+    if (!isHung(request.url())) return route.fallback();
     if (request.method() === 'HEAD') {
       return route.fulfill(
         fulfillHead({

@@ -1,3 +1,5 @@
+import { plyHeaderBoundary } from '../../core/plyHeader';
+import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { epsgCode } from '../../core/epsg';
 import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
@@ -21,7 +23,7 @@ import {
 } from './packSplat';
 
 const SH_C0 = 0.28209479177387814;
-const HEADER_PROBE = 1024 * 1024;
+const HEADER_PROBE = PLY_HEADER_LIMIT;
 const DEFAULT_CHUNK = 8 * 1024 * 1024;
 const RESERVOIR = 65_536;
 
@@ -214,13 +216,10 @@ export async function readGaussianPlyHeader(source: ByteSource): Promise<Gaussia
   if (!text.trimStart().toLowerCase().startsWith('ply')) {
     throw new GaussianPlyUnsupported('Not a PLY file.');
   }
-  const marker = 'end_header';
-  const idx = text.indexOf(marker);
-  if (idx < 0) throw new GaussianPlyError('PLY header is missing end_header.');
-  let byteLength = idx + marker.length;
-  if (text.charCodeAt(byteLength) === 13) byteLength += 1;
-  if (text.charCodeAt(byteLength) === 10) byteLength += 1;
-  const header = text.slice(0, idx + marker.length);
+  const boundary = plyHeaderBoundary(text);
+  if (!boundary) throw new GaussianPlyError('PLY header is missing end_header.');
+  const byteLength = boundary.bodyStart;
+  const header = text.slice(0, boundary.headerEnd);
   const lower = header.toLowerCase();
   if (lower.includes('element chunk') || lower.includes('element sh')) {
     throw new GaussianPlyUnsupported('Compressed or chunked gaussian PLY is decoded by Spark.');

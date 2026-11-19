@@ -37,6 +37,7 @@ export class MeshRenderable implements Renderable {
   readonly kind = 'mesh' as const;
   readonly object: THREE.Object3D;
   private readonly slots: MeshSlot[] = [];
+  private readonly textureVersions = new Map<THREE.Texture, number>();
   private triangleCount = 0;
   private vertexCount = 0;
   private lastShading: RenderSettings['shading'] | null = null;
@@ -58,6 +59,11 @@ export class MeshRenderable implements Renderable {
       if (position) this.vertexCount += position.count;
       const index = mesh.geometry.getIndex();
       this.triangleCount += index ? index.count / 3 : position ? position.count / 3 : 0;
+      for (const material of asMaterials(mesh.material)) {
+        for (const value of Object.values(material)) {
+          if (value instanceof THREE.Texture) this.textureVersions.set(value, value.version);
+        }
+      }
       this.slots.push({
         mesh,
         original: asMaterials(mesh.material),
@@ -66,7 +72,13 @@ export class MeshRenderable implements Renderable {
     });
   }
 
-  update(): void {}
+  update(): boolean {
+    let dirty = false;
+    for (const [texture, version] of this.textureVersions) {
+      if (texture.version !== version) { dirty = true; this.textureVersions.set(texture, texture.version); }
+    }
+    return dirty;
+  }
 
   applySettings(settings: RenderSettings): void {
     if (this.lastShading === settings.shading && this.lastWireframe === settings.wireframe) return;
@@ -74,7 +86,6 @@ export class MeshRenderable implements Renderable {
     this.lastWireframe = settings.wireframe;
     for (const slot of this.slots) {
       this.disposeGenerated(slot);
-      const source = slot.original[0];
       if (settings.shading === 'normals') {
         const material = new THREE.MeshNormalMaterial({ wireframe: settings.wireframe });
         slot.generated = [material];
@@ -82,15 +93,19 @@ export class MeshRenderable implements Renderable {
         continue;
       }
       if (settings.shading === 'flat') {
-        const material = new THREE.MeshBasicMaterial({
-          color: materialColor(source),
-          map: materialMap(source),
-          vertexColors: hasVertexColors(slot.mesh),
-          wireframe: settings.wireframe,
-          side: THREE.DoubleSide,
+        slot.generated = slot.original.map((source) => {
+          const mapped = source as THREE.MeshStandardMaterial;
+          return new THREE.MeshBasicMaterial({
+            color: materialColor(source), map: materialMap(source), alphaMap: mapped.alphaMap ?? null,
+            vertexColors: source.vertexColors && hasVertexColors(slot.mesh), wireframe: settings.wireframe,
+            side: source.side, transparent: source.transparent, opacity: source.opacity,
+            alphaTest: source.alphaTest, alphaHash: source.alphaHash, alphaToCoverage: source.alphaToCoverage,
+            depthWrite: source.depthWrite, depthTest: source.depthTest, blending: source.blending,
+            blendSrc: source.blendSrc, blendDst: source.blendDst, blendEquation: source.blendEquation,
+            premultipliedAlpha: source.premultipliedAlpha,
+          });
         });
-        slot.generated = [material];
-        slot.mesh.material = material;
+        slot.mesh.material = slot.generated.length === 1 ? slot.generated[0] : slot.generated;
         continue;
       }
       const clones = slot.original.map((material) => {

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('start screen scrolls compact sample cards in one row', async ({ page }) => {
   await page.goto('/');
