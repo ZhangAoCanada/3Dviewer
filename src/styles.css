@@ -926,11 +926,47 @@ body.is-leveling #view { cursor: crosshair; }
 
 .empty {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
+  inset:
+    calc(var(--safe-top) + var(--inset) + var(--island-h) + var(--gap))
+    calc(var(--safe-right) + var(--inset))
+    calc(var(--safe-bottom) + var(--inset) + var(--island-h) + var(--gap))
+    calc(var(--safe-left) + var(--inset));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
   z-index: 2;
   pointer-events: none;
+}
+/* Empty content and notices share available space rather than covering each other.
+   Viewport, header, drawer and loaded-scene controls keep their existing geometry. */
+#app:has(> #empty:not([hidden])) {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--gap);
+  padding:
+    calc(var(--safe-top) + var(--inset) + var(--island-h) + var(--gap))
+    calc(var(--safe-right) + var(--inset))
+    calc(var(--safe-bottom) + var(--inset) + var(--island-h) + var(--gap))
+    calc(var(--safe-left) + var(--inset));
+}
+#empty:not([hidden]) {
+  position: relative;
+  inset: auto;
+  grid-area: 1 / 1;
+}
+#app:has(> #empty:not([hidden])) > .toast-stack {
+  position: relative;
+  grid-area: 2 / 1;
+  justify-self: center;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  width: min(520px, 100%);
+  max-height: min(35dvh, 180px);
+  overflow: auto;
+  pointer-events: auto;
 }
 .problem .empty-card { text-align: left; }
 .problem-icon { color: var(--color-danger); margin-bottom: var(--space-3); }
@@ -958,7 +994,12 @@ body.is-leveling #view { cursor: crosshair; }
 #toast-action { align-self: center; flex: none; }
 .empty-card {
   pointer-events: auto;
-  width: min(480px, calc(100% - 2 * var(--inset)));
+  width: min(480px, 100%);
+  min-width: 0;
+  max-height: 100%;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
   padding: var(--space-8);
   border-radius: var(--radius-xl);
   text-align: center;
@@ -994,6 +1035,11 @@ body.is-leveling #view { cursor: crosshair; }
   justify-content: center;
   gap: var(--space-2);
   margin-top: var(--space-6);
+}
+@media (max-height: 600px) {
+  .empty-card { padding: var(--space-4); }
+  .empty-logo, .empty-brand { display: none; }
+  .empty-actions { margin-top: var(--space-3); }
 }
 @media (max-width: 640px) {
   .empty-actions .btn { flex: 1 1 100%; }
