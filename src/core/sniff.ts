@@ -38,14 +38,15 @@ export function classifyPly(header: string): PlyKind {
   ) {
     return 'gaussian';
   }
-  if (
-    h.includes('property float x') ||
-    h.includes('property double x') ||
-    h.includes('property float64 x') ||
-    h.includes('property float32 x')
-  ) {
-    return 'points';
+  let vertex = false;
+  const coordinates = new Set<string>();
+  for (const line of h.split(/\r?\n/)) {
+    const element = /^\s*element\s+(\S+)/.exec(line);
+    if (element) vertex = element[1] === 'vertex';
+    const prop = /^\s*property\s+(char|uchar|short|ushort|int|uint|int8|uint8|int16|uint16|int32|uint32|float|float32|double|float64)\s+([xyz])\s*$/.exec(line);
+    if (vertex && prop) coordinates.add(prop[2]);
   }
+  if (coordinates.size === 3) return 'points';
   return 'not-ply';
 }
 

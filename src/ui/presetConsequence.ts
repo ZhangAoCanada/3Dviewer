@@ -31,7 +31,10 @@ export function presetConsequence(input: PresetConsequenceInput): string | null 
   if (kind === 'mesh') return 'Presets only change the pixel ratio for meshes.';
   if (kind === 'points') {
     const count = detail?.sourceCount ?? detail?.retainedCount ?? 0;
-    return `This point cloud: ${formatGrouped(count)} points, all shown.`;
+    const retained = detail?.retainedCount ?? count;
+    return retained < count
+      ? `This point cloud: ${formatGrouped(retained)} of ${formatGrouped(count)} points shown.`
+      : `This point cloud: ${formatGrouped(count)} points, all shown.`;
   }
   if (kind !== 'splats') return null;
   if (detail == null) return 'This file is decoded by Spark, so only the rendered SH and pixel ratio change.';
