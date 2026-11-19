@@ -1,4 +1,5 @@
 import { expect, test } from './test';
+import path from 'node:path';
 
 test('quarter turns undo, survive a reload, and reset', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
@@ -96,8 +97,10 @@ test.describe('touch', () => {
   });
 });
 
-test('clicking the ground of a level slab reports already level', async ({ page }) => {
-  await page.goto('/?demo=slab&n=50000');
+test('clicking a truly level plane reports already level', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#file-input').setInputFiles(path.resolve('tests-e2e/fixtures/level-plane.glb'));
+  await expect(page.locator('#file-name')).toHaveText('level-plane.glb');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
   // SwiftShader warns on every fresh load. That toast sits on the canvas center.
   // It can hide itself after isVisible() and before the click, and a click waits
