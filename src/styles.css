@@ -951,6 +951,8 @@ body.is-leveling #view { cursor: crosshair; }
     calc(var(--safe-bottom) + var(--inset) + var(--island-h) + var(--gap))
     calc(var(--safe-left) + var(--inset));
 }
+/* Performance stats belong to a scene, not the start card. Preserve the HUD preference. */
+#app:has(> #empty:not([hidden])) > #hud { display: none; }
 #empty:not([hidden]) {
   position: relative;
   inset: auto;

@@ -91,10 +91,14 @@ for (const size of sizes) {
 
 test('short empty screen supports Enter and keyboard focus scrolling to guidance', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 420 });
+  // Register before navigation so Chromium chooser interception precedes fast keyboard activation.
+  const fileChooser = page.waitForEvent('filechooser');
   await page.goto('/');
   await expect(page.locator('#empty')).toBeVisible();
   await page.locator('#empty-open').focus();
-  const [file] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Enter')]);
+  await expect(page.locator('#empty-open')).toBeFocused();
+  await page.keyboard.press('Enter');
+  const file = await fileChooser;
   await file.setFiles([]);
   await page.keyboard.press('Tab');
   await expect(page.locator('#empty-url')).toBeFocused();
