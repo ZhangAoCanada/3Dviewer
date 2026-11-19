@@ -88,6 +88,12 @@ interface InflightRecord {
   at: number;
 }
 
+interface LoadOptions {
+  restore?: NavSnapshot | null;
+  flipY?: boolean;
+  ownerSignal?: AbortSignal;
+}
+
 interface ToastAction {
   label: string;
   run: () => void;
@@ -133,6 +139,7 @@ export class ViewerApp {
   private surface: 'empty' | 'problem' | 'none' = 'none';
   private bootFinishedWithoutGraphics = false;
   private startupPending = true;
+  private pendingGraphicsLoad: { source: AssetSource; options?: LoadOptions } | null = null;
   private loadedPreset: QualityPreset | null = null;
   private softwareNotified = false;
   private contextTimer = 0;
@@ -205,7 +212,12 @@ export class ViewerApp {
       else if (this.surface === 'problem') this.setSurface('none');
       this.syncGraphicsBanner();
       this.syncApplicable();
-      if (this.bootFinishedWithoutGraphics) void this.boot();
+      const pending = this.pendingGraphicsLoad;
+      this.pendingGraphicsLoad = null;
+      if (pending) {
+        this.bootFinishedWithoutGraphics = false;
+        void this.load(pending.source, pending.options);
+      } else if (this.bootFinishedWithoutGraphics) void this.boot();
       return true;
     } catch (error) {
       this.host = null;
@@ -1016,13 +1028,15 @@ export class ViewerApp {
     await this.load(sourceFromUrl(url, 'sample'), { flipY: Boolean(sample.flipY) });
   }
 
-  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null; flipY?: boolean; ownerSignal?: AbortSignal }): Promise<void> {
+  private async load(source: AssetSource, options?: LoadOptions): Promise<void> {
     const ownerSignal = options?.ownerSignal;
     ownerSignal?.throwIfAborted();
     if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
     this.startupPending = false;
     this.crashEntry = null;
     if (!this.host) {
+      // Automatic boot is consumed, but the latest explicit request survives a graphics retry.
+      if (!ownerSignal) this.pendingGraphicsLoad = { source, options };
       this.loadingSource = source;
       this.failureSource = source;
       const failure =
@@ -2386,6 +2400,7 @@ export class ViewerApp {
 
   private dismissBreadcrumb(): void {
     this.startupPending = false;
+    this.pendingGraphicsLoad = null;
     this.setQuery(null);
     this.clearInflight();
     this.crashEntry = null;
