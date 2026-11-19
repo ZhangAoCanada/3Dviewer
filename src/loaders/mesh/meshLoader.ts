@@ -4,8 +4,7 @@ import {
   companionBaseDir,
   gltfRefs,
   missingCompanions,
-  mtlRefs,
-  normalizeMtl,
+  prepareMtl,
   objRefs,
   resolveCompanion,
 } from '../../core/fileSet';
@@ -208,9 +207,9 @@ async function loadObj(
     const owners = new Map<string, ReturnType<InstanceType<typeof MTLLoader>['parse']>>();
     const missingTextures: string[] = [];
     for (const item of found) {
-      const normalized = normalizeMtl(item.text);
-      const materials = new MTLLoader(manager).setResourcePath(item.base).parse(normalized, item.base);
-      if (isLocal(source)) missingTextures.push(...missingCompanions(mtlRefs(normalized), item.localBase ?? '', files).map((ref) => `${item.name}: ${ref}`));
+      const prepared = prepareMtl(item.text);
+      const materials = new MTLLoader(manager).setResourcePath(item.base).parse(prepared.text, item.base);
+      if (isLocal(source)) missingTextures.push(...missingCompanions(prepared.refs, item.localBase ?? '', files).map((ref) => `${item.name}: ${ref}`));
       // Later libraries explicitly win duplicate material names, as a single merged library did.
       for (const name of Object.keys(materials.materialsInfo)) owners.set(name, materials);
     }

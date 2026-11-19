@@ -163,7 +163,7 @@ function refTokens(text: string): string[] {
   let token = ''; let quote = '';
   for (const char of text) {
     if (quote) { if (char === quote) quote = ''; else token += char; }
-    else if (char === '"' || char === "'") quote = char;
+    else if (!token && (char === '"' || char === "'")) quote = char;
     else if (char === '#') break;
     else if (/\s/.test(char)) { if (token) tokens.push(token); token = ''; }
     else token += char;
@@ -207,22 +207,28 @@ function mapReference(tokens: string[]): { ref: string; value: string } {
   }
   const ref = tokens.slice(i).join(' ');
   if (!ref || ref.startsWith('-')) throw new Error('MTL texture filename is missing or ambiguous');
-  return { ref, value: [...normalized, ref].join(' ') };
+  // Three's MTLLoader expects an unquoted URL, not our reference grammar.
+  const urlRef = ref.replace(/['"#]/g, (char) => char === "'" ? '%27' : char === '"' ? '%22' : '%23');
+  return { ref, value: [...normalized, urlRef].join(' ') };
+}
+
+export function prepareMtl(text: string): { text: string; refs: string[] } {
+  const refs: string[] = [];
+  const lines = text.split(/\r?\n/).map((line) => {
+    const tokens = refTokens(line); const key = tokens.shift()?.toLowerCase();
+    if (!key) return '';
+    if (!MTL_MAPS.has(key)) return [key, ...tokens].join(' ');
+    const map = mapReference(tokens);
+    refs.push(map.ref);
+    return `${key} ${map.value}`;
+  });
+  return { text: lines.join('\n'), refs };
 }
 
 export function normalizeMtl(text: string): string {
-  return text.split(/\r?\n/).map((line) => {
-    const tokens = refTokens(line); const key = tokens.shift()?.toLowerCase();
-    if (!key) return '';
-    return MTL_MAPS.has(key) ? `${key} ${mapReference(tokens).value}` : [key, ...tokens].join(' ');
-  }).join('\n');
+  return prepareMtl(text).text;
 }
 
 export function mtlRefs(text: string): string[] {
-  const refs: string[] = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const tokens = refTokens(raw); const key = tokens.shift()?.toLowerCase();
-    if (key && MTL_MAPS.has(key)) refs.push(mapReference(tokens).ref);
-  }
-  return refs;
+  return prepareMtl(text).refs;
 }
