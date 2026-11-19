@@ -129,9 +129,12 @@ export class NavigationController {
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('visibilitychange', this.onBlur);
+    document.addEventListener('focusin', this.onFocusChange);
   }
 
   setMode(mode: NavMode): void {
+    if (mode === this.mode) return;
+    this.onBlur();
     this.zoomPending = 0;
     this.pivotHideAt = 0;
     this.yawVel = 0;
@@ -241,6 +244,7 @@ export class NavigationController {
   }
 
   update(dt: number): void {
+    if (!this.ownsKeyboard(document.activeElement)) this.keys.clear();
     if (this.animating) {
       this.animT += dt;
       const u = smoothstep(this.animT / this.animDuration);
@@ -283,6 +287,7 @@ export class NavigationController {
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('visibilitychange', this.onBlur);
+    document.removeEventListener('focusin', this.onFocusChange);
   }
 
   private minDistance(): number {
@@ -335,6 +340,7 @@ export class NavigationController {
   };
 
   private onPointerDown = (event: PointerEvent): void => {
+    this.dom.focus({ preventScroll: true });
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, type: event.pointerType });
     this.animating = false;
     this.zoomPending = 0;
@@ -665,9 +671,23 @@ export class NavigationController {
     }
   }
 
+  private ownsKeyboard(target: EventTarget | null): boolean {
+    return !document.querySelector('dialog[open], [role="menu"]:not([hidden])') &&
+      (target === this.dom || target === document.body);
+  }
+
+  private onFocusChange = (): void => {
+    if (!this.ownsKeyboard(document.activeElement)) this.onBlur();
+  };
+
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (isTypingTarget(event.target)) return;
-    if (event.metaKey || event.ctrlKey) return;
+    if (event.defaultPrevented || !this.ownsKeyboard(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+      this.keys.clear();
+      return;
+    }
+    if (event.repeat && !this.keys.has(event.code)) return;
+    if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ArrowUp', 'ArrowDown',
+      'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight'].includes(event.code)) return;
     this.keys.add(event.code);
     if (this.mode === 'fly' && ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
       event.preventDefault();
@@ -683,6 +703,10 @@ export class NavigationController {
   };
 
   private onBlur = (): void => {
+    this.yawVel = 0;
+    this.pitchVel = 0;
+    this.zoomPending = 0;
+    this.animating = false;
     this.keys.clear();
     this.pointers.clear();
     this.endDrag();
@@ -693,4 +717,9 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+export function isControlTarget(target: EventTarget | null): boolean {
+  return isTypingTarget(target) || (target instanceof HTMLElement &&
+    target.closest('button, a[href], summary, [role="menu"], [role="radio"]') !== null);
 }

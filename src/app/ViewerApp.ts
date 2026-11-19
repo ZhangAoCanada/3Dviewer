@@ -32,7 +32,7 @@ import { createDefaultRegistry } from '../loaders';
 import type { FrameStats, Refinement } from '../render/SceneHost';
 import { SceneHost } from '../render/SceneHost';
 import type { NavMode, NavSnapshot, UpMode } from '../render/Navigation';
-import { isTypingTarget } from '../render/Navigation';
+import { isControlTarget, isTypingTarget } from '../render/Navigation';
 import { createDemoSlab } from '../render/demoSlab';
 import {
   FLIP_Y,
@@ -131,6 +131,7 @@ export class ViewerApp {
   private reloadGraphics = false;
   private surface: 'empty' | 'problem' | 'none' = 'none';
   private bootFinishedWithoutGraphics = false;
+  private startupPending = true;
   private loadedPreset: QualityPreset | null = null;
   private softwareNotified = false;
   private contextTimer = 0;
@@ -420,8 +421,8 @@ export class ViewerApp {
         }
         return;
       }
-      if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (document.querySelector('dialog[open]')) return;
+      if (event.defaultPrevented || isControlTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('dialog[open], [role="menu"]:not([hidden])')) return;
       if (event.key === '?') {
         this.openHelp();
         return;
@@ -588,6 +589,8 @@ export class ViewerApp {
   }
 
   private async loadDemoSlab(count?: number): Promise<void> {
+    this.startupPending = false;
+    this.crashEntry = null;
     if (!this.host) {
       const failure =
         this.graphicsFailure ??
@@ -946,6 +949,11 @@ export class ViewerApp {
   }
 
   async boot(): Promise<void> {
+    if (!this.startupPending) return;
+    if (this.crashEntry) {
+      this.startupPending = false;
+      return;
+    }
     try {
       const params = new URLSearchParams(location.search);
       const url = params.get('url');
@@ -959,6 +967,7 @@ export class ViewerApp {
         return;
       }
       this.bootFinishedWithoutGraphics = false;
+      this.startupPending = false;
       if (params.get('demo') === 'slab') {
         const raw = params.get('n');
         const requested = raw == null || raw === '' ? Number.NaN : Number(raw);
@@ -992,6 +1001,8 @@ export class ViewerApp {
   }
 
   private async load(source: AssetSource, options?: { restore?: NavSnapshot | null }): Promise<void> {
+    this.startupPending = false;
+    this.crashEntry = null;
     if (!this.host) {
       this.loadingSource = source;
       this.failureSource = source;
@@ -1138,6 +1149,7 @@ export class ViewerApp {
   private setMode(mode: NavMode): void {
     this.host?.setMode(mode);
     this.syncModeButtons(mode);
+    must<HTMLCanvasElement>('#view').focus({ preventScroll: true });
   }
 
   private syncModeButtons(mode: NavMode): void {
@@ -2340,6 +2352,8 @@ export class ViewerApp {
   }
 
   private dismissBreadcrumb(): void {
+    this.startupPending = false;
+    this.setQuery(null);
     this.clearInflight();
     this.crashEntry = null;
     this.showingBreadcrumb = false;
