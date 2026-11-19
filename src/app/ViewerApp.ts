@@ -99,6 +99,7 @@ export class ViewerApp {
   private readonly budget: MemoryBudget;
   private readonly settings: RenderSettings;
   private generation = 0;
+  private sceneIntent = 0;
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
   private toastAction: ToastAction | null = null;
@@ -461,7 +462,19 @@ export class ViewerApp {
 
   private bindSettings(): void {
     for (const preset of ['auto', 'quality', 'memory'] as const) {
-      must<HTMLButtonElement>(`#quality-${preset}`).addEventListener('click', () => this.selectPreset(preset));
+      const button = must<HTMLButtonElement>(`#quality-${preset}`);
+      button.addEventListener('click', () => this.selectPreset(preset));
+      button.addEventListener('keydown', (event) => {
+        const presets = ['auto', 'quality', 'memory'] as const;
+        const index = presets.indexOf(preset);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2
+          : event.key === 'ArrowRight' || event.key === 'ArrowDown' ? (index + 1) % 3
+          : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? (index + 2) % 3 : null;
+        if (next === null) return;
+        event.preventDefault(); event.stopPropagation();
+        this.selectPreset(presets[next]);
+        must<HTMLButtonElement>(`#quality-${presets[next]}`).focus();
+      });
     }
     must('#quality-reopen').addEventListener('click', () => {
       const source = this.lastSource;
@@ -588,7 +601,9 @@ export class ViewerApp {
     must('#up-using').textContent = this.host.upAxis === 'z' ? 'Z-up' : 'Y-up';
   }
 
-  private async loadDemoSlab(count?: number): Promise<void> {
+  private async loadDemoSlab(count?: number, ownerSignal?: AbortSignal): Promise<void> {
+    ownerSignal?.throwIfAborted();
+    if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
     this.startupPending = false;
     this.crashEntry = null;
     if (!this.host) {
@@ -607,6 +622,7 @@ export class ViewerApp {
     this.loadAbort?.abort();
     const abort = new AbortController();
     this.loadAbort = abort;
+    const unbindOwner = this.watchLoadOwner(ownerSignal, abort);
     this.loadingSource = null;
     this.failureSource = null;
     this.benchDemo = count;
@@ -639,6 +655,7 @@ export class ViewerApp {
       this.showProblem(classifyFailure(error, { stage: this.loadingStage ?? undefined }));
       this.setEmpty(this.items.length === 0);
     } finally {
+      unbindOwner();
       if (this.loadAbort === abort) this.loadAbort = null;
       if (generation === this.generation) {
         this.setLoading(false);
@@ -677,6 +694,7 @@ export class ViewerApp {
       const on = this.settings.quality === preset;
       button.classList.toggle('is-on', on);
       button.setAttribute('aria-checked', on ? 'true' : 'false');
+      button.tabIndex = on ? 0 : -1;
     }
     must('#quality-summary').textContent = plan.summary;
     must('#quality-details-text').textContent = plan.details;
@@ -998,7 +1016,10 @@ export class ViewerApp {
     await this.load(sourceFromUrl(url, 'sample'), { flipY: Boolean(sample.flipY) });
   }
 
-  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null; flipY?: boolean }): Promise<void> {
+  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null; flipY?: boolean; ownerSignal?: AbortSignal }): Promise<void> {
+    const ownerSignal = options?.ownerSignal;
+    ownerSignal?.throwIfAborted();
+    if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
     this.startupPending = false;
     this.crashEntry = null;
     if (!this.host) {
@@ -1020,6 +1041,7 @@ export class ViewerApp {
     this.loadAbort?.abort();
     const abort = new AbortController();
     this.loadAbort = abort;
+    const unbindOwner = this.watchLoadOwner(ownerSignal, abort);
     const stallFor = (stage?: string) => (stage === 'gpu' ? 10 * 60_000 : 90_000);
     let stallMs = stallFor();
     const stall = () => {
@@ -1078,8 +1100,8 @@ export class ViewerApp {
         extendedPrecision,
         overrides,
         onProgress: (progress) => {
-          arm(progress.stage);
           if (generation !== this.generation) return;
+          arm(progress.stage);
           this.noteProgress(progress);
           this.setLoading(true, progress);
         },
@@ -1139,6 +1161,7 @@ export class ViewerApp {
       this.setEmpty(this.items.length === 0);
     } finally {
       watchdog.clear();
+      unbindOwner();
       if (this.loadAbort === abort) this.loadAbort = null;
       if (generation === this.generation) {
         this.clearInflight();
@@ -1146,6 +1169,12 @@ export class ViewerApp {
         if (loaded) this.maybeShowHint();
       }
     }
+  }
+
+  private watchLoadOwner(owner: AbortSignal | undefined, load: AbortController): () => void {
+    const cancel = () => { if (this.loadAbort === load) this.cancelLoad(); };
+    owner?.addEventListener('abort', cancel, { once: true });
+    return () => owner?.removeEventListener('abort', cancel);
   }
 
   private setMode(mode: NavMode): void {
@@ -1825,6 +1854,7 @@ export class ViewerApp {
     must('#bench-report').textContent = '';
     must('#bench-status').textContent = 'Starting…';
     const host = this.host;
+    const intent = this.sceneIntent;
     try {
       const { runBench, formatBenchMarkdown } = await import('../bench/runBench');
       if (abort.signal.aborted || this.host !== host) return;
@@ -1837,7 +1867,8 @@ export class ViewerApp {
             this.noteFrameMarks();
             return { ...this.loadTimings };
           },
-          reload: () => this.reloadForBench(),
+          reload: (signal) => this.reloadForBench(signal),
+          canRestore: () => this.sceneIntent === intent,
           scene: () => benchScene(this.items[0]),
           environment: () => this.benchEnvironment(),
         },
@@ -1857,11 +1888,11 @@ export class ViewerApp {
     }
   }
 
-  private async reloadForBench(): Promise<boolean> {
-    if (this.benchDemo !== null) await this.loadDemoSlab(this.benchDemo);
-    else if (this.lastSource) await this.load(this.lastSource);
+  private async reloadForBench(signal: AbortSignal): Promise<boolean> {
+    if (this.benchDemo !== null) await this.loadDemoSlab(this.benchDemo, signal);
+    else if (this.lastSource) await this.load(this.lastSource, { ownerSignal: signal });
     else return false;
-    return this.loadSucceeded;
+    return !signal.aborted && this.loadSucceeded;
   }
 
   private benchEnvironment(): {

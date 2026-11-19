@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { raceAbort } from '../core/abortable';
 import type { NavSnapshot } from '../render/Navigation';
 import {
   BENCH_NOTE,
@@ -36,7 +37,8 @@ export interface BenchApp {
   onStatus(text: string): void;
   timings(): LoadTimings;
   /** Reload the open scene. Resolves true when the new scene is on screen. */
-  reload(): Promise<boolean>;
+  reload(signal: AbortSignal): Promise<boolean>;
+  canRestore?(): boolean;
   scene(): BenchSceneView | null;
   environment(): BenchEnvironment;
 }
@@ -114,7 +116,7 @@ export async function runBench(app: BenchApp, host: BenchHost, signal: AbortSign
     }
   }
 
-  host.navigation.restore(before);
+  if (app.canRestore?.() !== false) host.navigation.restore(before);
   const after = host.navigation.snapshot();
   heap.stop();
   const specific = await userAgentMemory();
@@ -192,7 +194,7 @@ async function oneReload(
 ): Promise<ReloadSample> {
   let ok = false;
   try {
-    ok = await app.reload();
+    ok = await raceAbort(app.reload(signal), signal, () => {});
   } catch {
     ok = false;
   }
@@ -234,7 +236,7 @@ async function scriptedOrbit(
   const renderMs: number[] = [];
   let seen = host.drawStamp.count;
   const t0 = performance.now();
-  let last = t0;
+  let lastDraw: number | undefined;
   let sortMark = host.sortState().lastSortTime;
   let stopped = false;
   await new Promise<void>((resolve) => {
@@ -246,8 +248,6 @@ async function scriptedOrbit(
         resolve();
         return;
       }
-      deltas.push(now - last);
-      last = now;
       const elapsed = now - t0;
       if (elapsed >= ORBIT_MS) {
         sortMark = host.sortState().lastSortTime;
@@ -261,7 +261,12 @@ async function scriptedOrbit(
       else holdSort(host);
       if (host.drawStamp.count !== seen) {
         seen = host.drawStamp.count;
-        renderMs.push(host.lastRenderMs);
+        if (elapsed < moveMs) {
+          const at = host.drawStamp.at;
+          if (lastDraw !== undefined && at > lastDraw) deltas.push(at - lastDraw);
+          lastDraw = at;
+          renderMs.push(host.lastRenderMs);
+        }
       }
       app.onStatus(`Orbiting… ${Math.max(0, Math.round(elapsed / 1000))} s`);
       if (signal.aborted) {

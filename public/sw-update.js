@@ -35,30 +35,6 @@ function clientCanPrompt(client) {
 // gaussian loader rejects. Serve HEAD and Range from those cached bytes.
 // Anything else must reach the network: claiming it and refetching from here
 // hides a failed download and can return the HTML shell as status 200.
-const precachePaths = new Set();
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(refreshPrecachePaths());
-});
-
-async function refreshPrecachePaths() {
-  try {
-    const names = await caches.keys();
-    const next = new Set();
-    for (const name of names) {
-      if (!name.startsWith('workbox-precache-')) continue;
-      const cache = await caches.open(name);
-      for (const cached of await cache.keys()) {
-        next.add(new URL(cached.url).pathname);
-      }
-    }
-    precachePaths.clear();
-    for (const path of next) precachePaths.add(path);
-  } catch {
-    /* Range requests then stay on the network. */
-  }
-}
-
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'HEAD' && request.method !== 'GET') return;
@@ -69,17 +45,21 @@ self.addEventListener('fetch', (event) => {
   } catch {
     return;
   }
-  if (!precachePaths.has(path)) return;
+  if (new URL(request.url).origin !== self.location.origin || !path) return;
   if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
   event.respondWith(serveCachedBytes(request));
 });
 
 async function serveCachedBytes(request) {
   try {
-    const cached = await caches.match(new Request(request.url, { method: 'GET' }), {
-      ignoreSearch: true,
-      ignoreVary: true,
-    });
+    // Cache membership must be read on fetch: a restarted worker has no activation event.
+    let cached;
+    for (const name of await caches.keys()) {
+      if (!name.startsWith('workbox-precache-')) continue;
+      const cache = await caches.open(name);
+      cached = await cache.match(new Request(request.url, { method: 'GET' }), { ignoreSearch: true, ignoreVary: true });
+      if (cached) break;
+    }
     if (!cached || cached.status !== 200) return fetch(request);
     if (new URL(cached.url || request.url).pathname !== new URL(request.url).pathname) return fetch(request);
     const blob = await cached.blob();

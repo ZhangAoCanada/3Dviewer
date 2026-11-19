@@ -55,38 +55,44 @@ const WHOLE_FILE_LIMIT = 64 * 1024 * 1024;
 export function rangeSource(url: string, size: number, signal: AbortSignal): ByteSource {
   let fileSize = size;
   let whole: ArrayBuffer | undefined;
+  let partialSeen = false;
+  let validator: string | null = null;
   return {
     get size() {
       return fileSize;
     },
     async read(start, end) {
       if (signal.aborted) throw abortError(signal);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > fileSize) throw new Error('Invalid byte range window');
+      if (start === end) return new ArrayBuffer(0);
       if (whole) return whole.slice(start, end);
       const res = await fetch(url, {
-        headers: { Range: `bytes=${start}-${end - 1}` },
+        headers: { Range: `bytes=${start}-${end - 1}`, ...(validator && !validator.startsWith('W/') ? { 'If-Range': validator } : {}) },
         signal,
       });
       if (signal.aborted) throw abortError(signal);
       if (res.status === 206) {
-        const buf = await res.arrayBuffer();
-        const requested = end - start;
-        if (buf.byteLength !== requested) {
-          throw new Error(
-            `Range response contained ${buf.byteLength} bytes; the requested window was ${requested} bytes.`,
-          );
-        }
+        const range = /^bytes (\d+)-(\d+)\/(\d+)$/i.exec(res.headers.get('content-range') ?? '');
+        const nextValidator = res.headers.get('etag') ?? res.headers.get('last-modified');
+        const error = !range ? 'Content-Range is missing or invalid; CORS servers must expose Content-Range.'
+          : Number(range[1]) !== start || Number(range[2]) !== end - 1 || Number(range[3]) !== fileSize ? 'Content-Range offset or resource size does not match the requested range.'
+          : contentEncoded(res.headers) ? 'Content-encoded partial byte ranges cannot be decoded safely.'
+          : partialSeen && nextValidator !== validator ? 'The ranged resource validator changed during loading.' : null;
+        if (error) { await res.body?.cancel().catch(() => undefined); throw new Error(error); }
+        const buf = await readLimitedBody(res, signal, end - start);
+        if (buf.byteLength !== end - start) throw new Error(`Range response contained ${buf.byteLength} bytes; the requested window was ${end - start} bytes.`);
+        validator = nextValidator;
+        partialSeen = true;
         return buf;
       }
       if (res.status === 200) {
+        if (partialSeen) { await res.body?.cancel().catch(() => undefined); throw new Error('The resource changed from partial to whole while loading; retry the scene.'); }
         const buf = await readLimitedBody(res, signal, WHOLE_FILE_LIMIT);
-        const requested = end - start;
         if (buf.byteLength < end) {
           throw new Error(`Download finished with ${buf.byteLength} bytes; the requested range ended at ${end}.`);
         }
-        if (buf.byteLength !== requested) {
-          fileSize = buf.byteLength;
-          whole = buf;
-        }
+        fileSize = buf.byteLength;
+        whole = buf;
         return buf.slice(start, end);
       }
       throw new Error(`Range request returned ${res.status}, expected 206.`);
