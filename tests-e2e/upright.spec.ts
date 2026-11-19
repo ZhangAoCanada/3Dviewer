@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('quarter turns undo, survive a reload, and reset', async ({ page }) => {
   await page.goto('/?sample=torus-ply');

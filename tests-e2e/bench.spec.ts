@@ -1,4 +1,4 @@
-import { chromium, expect, test } from '@playwright/test';
+import { chromium, expect, test } from './test';
 
 const origin = 'http://127.0.0.1:4173/3Dviewer/';
 

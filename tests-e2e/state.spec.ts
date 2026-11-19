@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 
 /** The panel stays open across a reload, so a blind toggle would close it. */
 async function openSettings(page: Page): Promise<void> {

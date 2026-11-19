@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 if (process.env.TAURI_ENV_PLATFORM) {
@@ -8,8 +8,9 @@ if (process.env.TAURI_ENV_PLATFORM) {
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const swPath = join(root, 'dist', 'sw.js');
-const assetsDir = join(root, 'dist', 'assets');
+const output = process.argv[2] ? resolve(root, process.argv[2]) : join(root, 'dist');
+const swPath = join(output, 'sw.js');
+const assetsDir = join(output, 'assets');
 
 let manifest;
 try {

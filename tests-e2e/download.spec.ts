@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 const release = 'https://github.com/ZhangAoCanada/3Dviewer/releases/latest';
 

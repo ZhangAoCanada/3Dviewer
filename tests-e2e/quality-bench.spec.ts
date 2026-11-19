@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import path from 'node:path';
 test.use({ serviceWorkers: 'block' });
 test.beforeEach(async ({ page }) => {

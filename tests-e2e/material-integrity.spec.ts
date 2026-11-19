@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './test';
 import sharp from 'sharp';
 import fs from 'node:fs/promises';
 import path from 'node:path';

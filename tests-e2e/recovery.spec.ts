@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('forced WebGL2 failure keeps the shell and the problem card', async ({ page, context }) => {
   const errors: string[] = [];

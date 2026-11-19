@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test';
 
 test('Fly leaves Space activation and menu arrows to focused controls', async ({ page }) => {
   await page.goto('/?sample=crate');
