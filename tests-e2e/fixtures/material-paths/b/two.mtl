@@ -1,0 +1,3 @@
+newmtl two
+Kd 1 1 1
+map_Kd tex.png

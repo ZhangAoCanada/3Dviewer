@@ -994,13 +994,11 @@ export class ViewerApp {
   }
 
   private async loadSample(sample: SampleAsset): Promise<void> {
-    this.settings.flipY = Boolean(sample.flipY);
-    must<HTMLInputElement>('#flip-y').checked = this.settings.flipY;
     const url = sampleUrl(sample, import.meta.env.BASE_URL);
-    await this.load(sourceFromUrl(url, 'sample'));
+    await this.load(sourceFromUrl(url, 'sample'), { flipY: Boolean(sample.flipY) });
   }
 
-  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null }): Promise<void> {
+  private async load(source: AssetSource, options?: { restore?: NavSnapshot | null; flipY?: boolean }): Promise<void> {
     this.startupPending = false;
     this.crashEntry = null;
     if (!this.host) {
@@ -1098,6 +1096,10 @@ export class ViewerApp {
       if (generation !== this.generation) {
         renderable.dispose();
         return;
+      }
+      if (options?.flipY !== undefined) {
+        this.settings.flipY = options.flipY;
+        must<HTMLInputElement>('#flip-y').checked = options.flipY;
       }
       host.clear();
       host.add(renderable, this.settings);

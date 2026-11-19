@@ -5,6 +5,7 @@ import {
   gltfRefs,
   missingCompanions,
   mtlRefs,
+  normalizeMtl,
   objRefs,
   resolveCompanion,
 } from '../../core/fileSet';
@@ -105,7 +106,7 @@ function installLocalModifier(
     if (cached) return cached;
     if (/^(blob:|data:|https?:)/i.test(url)) return url;
     const ref = url.startsWith(LOCAL_ROOT) ? url.slice(LOCAL_ROOT.length) : url;
-    const companion = resolveCompanion(ref, baseDir, files);
+    const companion = resolveCompanion(ref, url.startsWith(LOCAL_ROOT) ? '' : baseDir, files);
     let resolved = url;
     if (companion) {
       resolved = URL.createObjectURL(companion.file);
@@ -149,7 +150,7 @@ async function loadLocalGltf(
   facts.materials = 'From file';
   installLocalModifier(manager, baseDir, files, blobs);
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-  const gltf = await new GLTFLoader(manager).parseAsync(text, LOCAL_ROOT);
+  const gltf = await new GLTFLoader(manager).parseAsync(text, `${LOCAL_ROOT}${baseDir ? baseDir + '/' : ''}`);
   return gltf.scene;
 }
 
@@ -159,8 +160,14 @@ async function readMtl(
   url: string,
   manager: THREE.LoadingManager,
   signal: AbortSignal,
-): Promise<string | null> {
-  if (isLocal(source)) return (await resolveCompanion(ref, companionBaseDir(source), source.companions ?? [])?.file.text()) ?? null;
+): Promise<{ text: string; base: string; localBase?: string } | null> {
+  if (isLocal(source)) {
+    const file = resolveCompanion(ref, companionBaseDir(source), source.companions ?? []);
+    if (!file) return null;
+    const localBase = companionBaseDir({ name: file.file.name, file: file.file, companions: source.companions });
+    return { text: await file.file.text(), base: `${LOCAL_ROOT}${localBase ? localBase + '/' : ''}`, localBase };
+  }
+  /* remote library owns its texture directory */
   const base = THREE.LoaderUtils.extractUrlBase(url);
   let mtlUrl = base + ref;
   try {
@@ -168,7 +175,8 @@ async function readMtl(
   } catch {
     /* keep the joined URL */
   }
-  return readOptionalText(mtlUrl, manager, signal);
+  const text = await readOptionalText(mtlUrl, manager, signal);
+  return text == null ? null : { text, base: THREE.LoaderUtils.extractUrlBase(mtlUrl) };
 }
 
 async function loadObj(
@@ -181,33 +189,34 @@ async function loadObj(
 ): Promise<THREE.Object3D> {
   const objText = isLocal(source) ? await sourceText(source) : await loadText(url, manager);
   const libraries = objRefs(objText);
-  const base = isLocal(source) ? LOCAL_ROOT : THREE.LoaderUtils.extractUrlBase(url);
   const baseDir = companionBaseDir(source);
   const files = source.companions ?? [];
   if (isLocal(source)) installLocalModifier(manager, baseDir, files, blobs);
 
-  const found: { name: string; text: string }[] = [];
+  const found: { name: string; text: string; base: string; localBase?: string }[] = [];
   const missing: string[] = [];
   for (const ref of libraries) {
     const text = await readMtl(ref, source, url, manager, signal);
     if (text == null) missing.push(ref);
-    else found.push({ name: ref, text });
+    else found.push({ name: ref, ...text });
   }
 
   const { OBJLoader } = await import('three/addons/loaders/OBJLoader.js');
   const objLoader = new OBJLoader(manager);
   if (found.length > 0) {
     const { MTLLoader } = await import('three/addons/loaders/MTLLoader.js');
-    const materials = new MTLLoader(manager).setResourcePath(base).parse(found.map((item) => item.text).join('\n'), base);
-    const missingTextures = isLocal(source)
-      ? missingCompanions(
-          found.flatMap((item) => mtlRefs(item.text)),
-          baseDir,
-          files,
-        )
-      : [];
-    materials.preload();
-    objLoader.setMaterials(materials);
+    const owners = new Map<string, ReturnType<InstanceType<typeof MTLLoader>['parse']>>();
+    const missingTextures: string[] = [];
+    for (const item of found) {
+      const normalized = normalizeMtl(item.text);
+      const materials = new MTLLoader(manager).setResourcePath(item.base).parse(normalized, item.base);
+      if (isLocal(source)) missingTextures.push(...missingCompanions(mtlRefs(normalized), item.localBase ?? '', files).map((ref) => `${item.name}: ${ref}`));
+      // Later libraries explicitly win duplicate material names, as a single merged library did.
+      for (const name of Object.keys(materials.materialsInfo)) owners.set(name, materials);
+    }
+    const combined = new MTLLoader(manager).parse('', '');
+    combined.create = (name) => owners.get(name)?.create(name) ?? new THREE.MeshPhongMaterial({ name });
+    objLoader.setMaterials(combined);
     facts.materials = `From ${found.map((item) => item.name).join(', ')}`;
     appendNote(facts, textureNote(missingTextures));
     if (missing.length > 0) {

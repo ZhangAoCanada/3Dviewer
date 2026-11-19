@@ -575,7 +575,7 @@ export class SceneHost {
       this.navigation.update(dt);
       this.updatePivotMarker();
       this.updateNearPlane();
-      for (const item of this.renderables) item.update(dt);
+      for (const item of this.renderables) if (item.update(dt)) this.viewDirty = true;
       const draw = this.needsDraw();
       this.sortTimer.sample((this.spark as unknown as { lastSortTime?: number }).lastSortTime, time);
       if (this.indexAfter > 0 && this.pendingIndexBox && time >= this.indexAfter) {

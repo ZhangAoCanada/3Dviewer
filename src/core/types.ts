@@ -132,7 +132,7 @@ export interface Renderable {
   readonly name: string;
   readonly object: THREE.Object3D;
   readonly meta: RenderableMeta;
-  update(dt: number): void;
+  update(dt: number): void | boolean;
   applySettings(settings: RenderSettings): void;
   getStats(): RenderableStats;
   getBounds(): THREE.Box3 | null;

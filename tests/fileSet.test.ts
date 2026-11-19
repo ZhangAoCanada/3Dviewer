@@ -62,7 +62,7 @@ describe('resolveCompanion', () => {
     expect(resolveCompanion('./a.bin', '', files)?.path).toBe('a.bin');
     expect(resolveCompanion('textures%20dir/a.png', '', files)?.path).toBe('textures dir/a.png');
     expect(resolveCompanion('..\\tex\\A.PNG', 'models', files)?.path).toBe('tex/A.PNG');
-    expect(resolveCompanion('C:\\abs\\a.jpg', '', files)?.path).toBe('folder/a.jpg');
+    expect(resolveCompanion('C:\\abs\\a.jpg', '', files)).toBeNull();
   });
 });
 
