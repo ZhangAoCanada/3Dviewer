@@ -82,7 +82,7 @@ test('a corrupt ply shows the format card', async ({ page }) => {
 
 test('a failed download can be retried', async ({ page }) => {
   let hits = 0;
-  await page.route('**/gone.ply', (route) => {
+  await page.context().route('**/gone.ply', (route) => {
     hits += 1;
     return route.abort('failed');
   });
