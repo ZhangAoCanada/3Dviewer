@@ -27,6 +27,7 @@ import {
   type RenderSettings,
   type RepresentationKind,
   type ShadingMode,
+  type SourceDetail,
 } from '../core/types';
 import { createDefaultRegistry } from '../loaders';
 import type { FrameStats, Refinement } from '../render/SceneHost';
@@ -92,6 +93,7 @@ interface LoadOptions {
   restore?: NavSnapshot | null;
   flipY?: boolean;
   ownerSignal?: AbortSignal;
+  preserveScene?: boolean;
 }
 
 interface ToastAction {
@@ -112,6 +114,7 @@ export class ViewerApp {
   private lastSource: AssetSource | null = null;
   private loadingSource: AssetSource | null = null;
   private failureSource: AssetSource | null = null;
+  private failurePreserveScene = false;
   private lastError: unknown = null;
   private loadingStage: LoadProgress['stage'] | null = null;
   private loadingStarted = 0;
@@ -136,11 +139,15 @@ export class ViewerApp {
   private crashEntry: InflightRecord | null = null;
   private showingBreadcrumb = false;
   private reloadGraphics = false;
+  private recoveringFromFullDetail = false;
   private surface: 'empty' | 'problem' | 'none' = 'none';
   private bootFinishedWithoutGraphics = false;
   private startupPending = true;
   private pendingGraphicsLoad: { source: AssetSource; options?: LoadOptions } | null = null;
   private loadedPreset: QualityPreset | null = null;
+  private sourceDetail: SourceDetail = 'automatic';
+  private sourceDetailBlocker: string | null = null;
+  private loadedSourceDetail: SourceDetail = 'automatic';
   private softwareNotified = false;
   private contextTimer = 0;
   private uprightHistory: { q: THREE.Quaternion; up: 'y' | 'z' }[] = [];
@@ -170,7 +177,7 @@ export class ViewerApp {
       quality: readStoredPreset(),
     };
     bindRangeFills(document);
-    this.applyPreset(resolvePreset(this.settings.quality, this.budget));
+    this.applyPreset(resolvePreset(this.settings.quality, this.budget, this.sourceDetail));
     this.restoreNavPrefs();
     this.bind();
     this.syncThemeButton();
@@ -491,8 +498,9 @@ export class ViewerApp {
     must('#quality-reopen').addEventListener('click', () => {
       const source = this.lastSource;
       if (!source) return;
-      void this.load(source);
+      void this.load(source, { preserveScene: true, restore: this.host?.navigation.snapshot() });
     });
+    this.bindSourceDetail();
     const scale = must<HTMLInputElement>('#splat-scale');
     const points = must<HTMLInputElement>('#point-size');
     const lod = must<HTMLInputElement>('#lod-scale');
@@ -653,6 +661,7 @@ export class ViewerApp {
       host.add(renderable, this.settings);
       this.markSceneAdded();
       this.loadedPreset = this.settings.quality;
+      this.loadedSourceDetail = 'automatic';
       host.setFlip(false);
       this.uprightHistory = [];
       this.uprightStatus = this.orientationText();
@@ -676,15 +685,39 @@ export class ViewerApp {
     }
   }
 
+  private bindSourceDetail(): void {
+    const control = must<HTMLInputElement>('#source-detail');
+    const dialog = must<HTMLDialogElement>('#source-detail-dialog');
+    control.addEventListener('change', () => {
+      const enabling = control.checked;
+      control.checked = this.sourceDetail === 'full';
+      if (!enabling) {
+        this.sourceDetail = 'automatic';
+        this.applyPreset(resolvePreset(this.settings.quality, detectMemoryBudget()));
+        return;
+      }
+      dialog.returnValue = '';
+      dialog.showModal();
+    });
+    dialog.addEventListener('close', () => {
+      if (dialog.returnValue !== 'confirm') return;
+      this.sourceDetail = 'full';
+      this.sourceDetailBlocker = null;
+      this.applyPreset(resolvePreset(this.settings.quality, detectMemoryBudget(), this.sourceDetail));
+    });
+  }
+
   private selectPreset(preset: QualityPreset): void {
-    if (this.settings.quality === preset) return;
+    if (this.settings.quality === preset && this.sourceDetail === 'automatic') return;
+    this.sourceDetail = 'automatic';
+    this.sourceDetailBlocker = null;
     this.settings.quality = preset;
     writeStorage(QUALITY_KEY, preset);
     this.settings.splatScale = DEFAULT_SETTINGS.splatScale;
     this.settings.lodSplatScale = DEFAULT_SETTINGS.lodSplatScale;
     this.settings.enable2DGS = DEFAULT_SETTINGS.enable2DGS;
     this.settings.sortRadial = DEFAULT_SETTINGS.sortRadial;
-    this.applyPreset(resolvePreset(preset, detectMemoryBudget()));
+    this.applyPreset(resolvePreset(preset, detectMemoryBudget(), this.sourceDetail));
   }
 
   /** Apply a preset's render levers. Decode changes wait for a reopen. */
@@ -708,6 +741,14 @@ export class ViewerApp {
       button.setAttribute('aria-checked', on ? 'true' : 'false');
       button.tabIndex = on ? 0 : -1;
     }
+    const full = this.sourceDetail === 'full';
+    must<HTMLInputElement>('#source-detail').checked = full;
+    must<HTMLInputElement>('#extended').disabled = full;
+    const pending = this.items.length > 0 && this.loadedSourceDetail !== this.sourceDetail;
+    must('#source-detail-status').textContent = full && this.sourceDetailBlocker ? `Not loaded: ${this.sourceDetailBlocker}` : pending
+      ? 'Reopen required · the current scene is unchanged. Canceling a reopen keeps it.'
+      : full ? 'On for this session · all source SH bands and splats requested. Memory fit is not guaranteed.'
+      : 'Off · automatic memory safeguards. Enabling requires accepting the memory risk.';
     must('#quality-summary').textContent = plan.summary;
     must('#quality-details-text').textContent = plan.details;
     const consequence = must('#quality-consequence');
@@ -723,6 +764,9 @@ export class ViewerApp {
     return presetConsequence({
       preset: this.settings.quality,
       loadedPreset: this.loadedPreset,
+      sourceDetail: this.sourceDetail,
+      loadedSourceDetail: this.loadedSourceDetail,
+      memoryBytes: stats.memoryBytes,
       kind: item.kind,
       detail: detailForConsequence(stats),
       bytes: item.meta.bytes,
@@ -754,14 +798,14 @@ export class ViewerApp {
     if (!reopen) return;
     const needsDecode =
       this.loadedPreset != null &&
-      this.loadedPreset !== this.settings.quality &&
+      (this.loadedPreset !== this.settings.quality || this.loadedSourceDetail !== this.sourceDetail) &&
       this.lastSource != null &&
       this.items.length > 0;
     reopen.hidden = !needsDecode;
   }
 
   private syncControls(): void {
-    this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget()));
+    this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget(), this.sourceDetail));
     must<HTMLInputElement>('#splat-scale').value = String(this.settings.splatScale);
     must('#out-splat-scale').textContent = formatFixed(this.settings.splatScale);
     must<HTMLInputElement>('#point-size').value = String(this.settings.pointSize);
@@ -1082,10 +1126,14 @@ export class ViewerApp {
     this.noteInflight(source);
     const restore = options?.restore ?? null;
     const detected = detectMemoryBudget();
-    const plan = resolvePreset(this.settings.quality, detected);
+    const plan = resolvePreset(this.settings.quality, detected, this.sourceDetail);
     const overrides = mergePresetOverrides(this.settings.quality, plan, this.gaussianOverrides);
     const extendedPrecision = this.settings.extendedPrecision;
     const presetAtLoad = this.settings.quality;
+    const detailAtLoad = this.sourceDetail;
+    const preserveScene = options?.preserveScene === true || detailAtLoad === 'full';
+    this.failurePreserveScene = preserveScene;
+    this.sourceDetailBlocker = null;
     let loaded = false;
     try {
       const header = PROBE_EXTENSIONS.has(source.extension)
@@ -1102,7 +1150,7 @@ export class ViewerApp {
         plan.alwaysPreClear ||
         (source.sizeBytes ?? Infinity) >= LARGE_BYTES ||
         this.items.some((item) => (item.getStats().memoryBytes ?? 0) >= 256 * 1024 * 1024);
-      if (large) {
+      if (large && !preserveScene) {
         host.clear();
         this.renderSceneInfo();
       }
@@ -1111,6 +1159,7 @@ export class ViewerApp {
       const pending = loader.load(source, {
         signal: abort.signal,
         budget: plan.budget,
+        textureLimits: host.rendererInfo,
         extendedPrecision,
         overrides,
         onProgress: (progress) => {
@@ -1142,6 +1191,7 @@ export class ViewerApp {
       this.markSceneAdded();
       this.lastSource = source;
       this.loadedPreset = presetAtLoad;
+      this.loadedSourceDetail = detailAtLoad;
       const restored = this.applyStoredOrientation(host, source);
       if (restore) {
         host.navigation.restore(restore);
@@ -1170,6 +1220,10 @@ export class ViewerApp {
         this.toast('Loading cancelled.', 'info');
         this.setEmpty(this.items.length === 0);
         return;
+      }
+      if (detailAtLoad === 'full' && this.sourceDetail === 'full') {
+        this.sourceDetailBlocker = failure.body;
+        this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget(), this.sourceDetail));
       }
       this.showProblem(failure);
       this.setEmpty(this.items.length === 0);
@@ -2073,7 +2127,7 @@ export class ViewerApp {
     this.syncShDegree();
     this.syncApplicable();
     this.syncReopen();
-    this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget()));
+    this.syncQuality(resolvePreset(this.settings.quality, detectMemoryBudget(), this.sourceDetail));
     this.renderQuality();
     this.renderDetail();
   }
@@ -2095,14 +2149,22 @@ export class ViewerApp {
       this.settings.shDegree,
       this.pixelRatioNow(),
     );
-    const show = !must('#file-chip').hidden && state.reduced;
+    const pending = this.items.length > 0 && this.loadedSourceDetail !== this.sourceDetail;
+    const full = this.loadedSourceDetail === 'full' && this.items.some((item) => item.getStats().detail?.sourceSh != null);
+    const show = !must('#file-chip').hidden && (state.reduced || pending || full);
+    const label = pending ? 'Reopen required' : state.reduced ? 'Reduced detail' : 'Full source';
+    const badgeLabel = badge.querySelector('.badge-label');
+    if (badgeLabel) badgeLabel.textContent = label;
+    badge.classList.toggle('badge-full', full && !state.reduced && !pending);
     badge.hidden = !show;
     if (!show) {
       badge.removeAttribute('title');
       badge.removeAttribute('aria-label');
       return;
     }
-    const text = `Reduced detail: ${detailText(state)}`;
+    const text = pending ? `Reopen required: requested ${this.sourceDetail === 'full' ? 'full source detail' : 'automatic safeguards'} is not loaded. Current scene: ${state.reduced ? detailText(state) : 'all loaded source detail'}.`
+      : state.reduced ? `Reduced detail: ${detailText(state)}`
+      : 'Full source detail loaded: all source splats and SH bands; float32 centers. SH/color/scale/rotation still use Spark encoding, not lossless precision.';
     badge.title = text;
     badge.setAttribute('aria-label', text);
   }
@@ -2294,6 +2356,14 @@ export class ViewerApp {
   }
 
   private onGpuLost(): void {
+    if (this.sourceDetail === 'full' || this.loadedSourceDetail === 'full') {
+      this.recoveringFromFullDetail = true;
+      this.sourceDetail = 'automatic';
+      this.generation += 1;
+      this.loadAbort?.abort();
+      this.loadAbort = null;
+      this.setLoading(false);
+    }
     this.toast('The GPU reset. Reloading the scene…', 'warn');
     window.clearTimeout(this.contextTimer);
     this.contextTimer = window.setTimeout(() => {
@@ -2314,6 +2384,11 @@ export class ViewerApp {
     const source = this.lastSource;
     const snap = source ? host.navigation.snapshot() : null;
     host.clear();
+    if (this.recoveringFromFullDetail) {
+      this.applyPreset(resolvePreset(this.settings.quality, detectMemoryBudget()));
+    }
+    const fullRecovery = this.recoveringFromFullDetail;
+    this.recoveringFromFullDetail = false;
     this.renderSceneInfo();
     if (!source || (source.origin === 'url' && source.sizeBytes == null)) {
       this.setEmpty(true);
@@ -2325,7 +2400,7 @@ export class ViewerApp {
       }
       return;
     }
-    this.toast('The GPU reset. Reloading the scene… A multi-gigabyte file can take several minutes.', 'warn');
+    this.toast(fullRecovery ? 'The GPU reset. Full source detail was turned off; reloading with automatic memory safeguards.' : 'The GPU reset. Reloading the scene… A multi-gigabyte file can take several minutes.', 'warn');
     void this.load(source, { restore: snap });
   }
 
@@ -2428,7 +2503,7 @@ export class ViewerApp {
       this.chooseFile();
       return;
     }
-    void this.load(source, { restore: this.snapshotForRetry(source) });
+    void this.load(source, { restore: this.snapshotForRetry(source), preserveScene: this.failurePreserveScene });
   }
 
   private retryBreadcrumb(): void {

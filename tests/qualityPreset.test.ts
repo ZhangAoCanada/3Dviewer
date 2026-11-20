@@ -43,7 +43,7 @@ describe('resolvePreset', () => {
       'Lower memory keeps less detail so large scenes fit. Some changes require reopening the file.',
     );
     expect(memory.details).toContain('pixel ratio 1');
-    expect(memory.details).toContain('level of detail is never built');
+    expect(memory.details).toMatch(/level of detail is never built/i);
   });
 
   it('plans the 14,161,020 splat SH3 scan the same way Automatic does today', () => {

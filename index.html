@@ -276,6 +276,10 @@
               <p id="quality-summary" class="hint"></p>
               <p id="quality-consequence" class="hint" hidden></p>
               <details id="quality-details" class="sec-details"><summary>Details</summary><p id="quality-details-text" class="hint"></p></details>
+              <div data-applies="splats" data-preload>
+                <label class="switch-row"><span>Full source detail <small>(binary Gaussian PLY)</small></span><input id="source-detail" type="checkbox" class="switch" role="switch" aria-describedby="source-detail-status" /></label>
+                <p id="source-detail-status" class="hint" aria-live="polite">Off · automatic memory safeguards. Enabling requires accepting the memory risk.</p>
+              </div>
               <button id="quality-reopen" class="btn btn-secondary btn-sm" type="button" hidden>Reopen to apply memory changes</button>
             </div>
             <label class="field" data-applies="points"><span>Point size <output id="out-point-size">1.0</output></span><input id="point-size" type="range" min="0.25" max="4" step="0.05" value="1" /></label>
@@ -309,7 +313,7 @@
             <p class="hint">
               Large Gaussian PLY files are read in chunks and packed outside the WASM heap, so a multi-gigabyte
               file is never one ArrayBuffer. Spherical harmonics drop first, then splats are subsampled, if the
-              device budget cannot hold the whole cloud. Sorting still runs in a WASM worker.
+              device budget cannot hold the whole cloud (unless Full source detail was explicitly enabled). Sorting still runs in a WASM worker.
               Level of detail is off unless the address includes <code>?lod=force</code>, and only for a cloud of at
               least 400,000 splats. Lower memory never builds that tree.
               Compressed formats (<code>.spz</code>, <code>.sog</code>, <code>.splat</code>, <code>.ksplat</code>,
@@ -398,6 +402,15 @@
           <button id="update-reload" class="btn btn-primary btn-sm" type="button">Reload</button>
         </div>
       </div>
+      <dialog id="source-detail-dialog" class="dialog" aria-labelledby="source-detail-title" aria-describedby="source-detail-risk">
+        <form method="dialog">
+          <div class="dialog-head"><h2 id="source-detail-title">Load full source detail?</h2></div>
+          <p id="source-detail-risk">This bypasses conservative memory estimates, not browser or WebGL limits. It may exhaust RAM/VRAM, freeze this tab, or reset graphics. Available VRAM is unknown, even on high-end GPUs.</p>
+          <p class="hint">Standard binary Gaussian PLY only: all splats and source SH bands, float32 centers. SH, color, scale and rotation still use Spark encoding — this is not lossless source precision. Other Gaussian formats are refused while this is on.</p>
+          <p class="hint">The current scene stays until a successful replacement, so reopening temporarily needs memory for both scenes. Cancel keeps it. The original file is never changed. This session only; choose any quality preset to turn this off.</p>
+          <div class="dialog-actions"><button class="btn btn-secondary" type="submit" value="cancel" autofocus>Keep automatic safeguards</button><button id="source-detail-confirm" class="btn btn-primary" type="submit" value="confirm">Accept risk and enable</button></div>
+        </form>
+      </dialog>
       <dialog id="url-dialog" class="dialog" aria-labelledby="url-title">
         <form id="url-form" method="dialog">
           <div class="dialog-head">

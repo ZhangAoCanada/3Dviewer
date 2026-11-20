@@ -1489,3 +1489,9 @@ kbd {
   .toast,
   .menu-pop { animation: none; }
 }
+
+/* Source detail is an explicit loading policy, not a promise about available VRAM. */
+#source-detail-status { margin: var(--space-2) 0; }
+#source-detail-dialog { max-height: calc(100dvh - 2 * var(--inset)); overflow-y: auto; }
+#source-detail-dialog .dialog-actions { flex-wrap: wrap; }
+#file-detail.badge-full { color: var(--color-accent); }

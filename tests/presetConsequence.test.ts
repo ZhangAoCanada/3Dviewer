@@ -21,7 +21,7 @@ const scan = {
   sourceCount: 14_161_020,
   retainedCount: 14_161_020,
   sourceSh: 3,
-  loadedSh: 3,
+  loadedSh: 2,
 };
 
 describe('presetConsequence', () => {
