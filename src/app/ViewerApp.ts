@@ -59,13 +59,7 @@ import { controlState } from '../ui/applicability';
 import { collectDropped, toDropEntry, type DropEntry } from '../ui/dropEntries';
 import { copyText, renderProblem, supportedFormats } from '../ui/problem';
 import { presetConsequence, type PresetSceneDetail } from '../ui/presetConsequence';
-import {
-  chooseVersion,
-  displayVersion,
-  readCachedRelease,
-  refreshRelease,
-  writeCachedRelease,
-} from '../ui/releaseVersion';
+import { ReleaseVersion, type ReleaseVersionState } from '../ui/releaseVersion';
 import type { LoadTimings } from '../bench/benchStats';
 import { detailOf, detailSceneText, detailText, loadedDetailSummary } from '../ui/sceneDetail';
 
@@ -110,6 +104,7 @@ export class ViewerApp {
   private sceneIntent = 0;
   private loadAbort: AbortController | null = null;
   private toastTimer = 0;
+  private releaseVersion: ReleaseVersion | null = null;
   private toastAction: ToastAction | null = null;
   private lastSource: AssetSource | null = null;
   private loadingSource: AssetSource | null = null;
@@ -2009,40 +2004,39 @@ export class ViewerApp {
   }
 
   private syncDesktopVersion(): void {
-    const chosen = chooseVersion({
-      cached: readCachedRelease(safeStorage()),
-      now: Date.now(),
-      build: __APP_VERSION__,
+    if (this.releaseVersion || isDesktopApp()) return;
+    const release = new ReleaseVersion({
+      storage: { ...safeStorage(), setItem: (key, value) => writeStorage(key, value) },
+      render: (state) => this.renderDesktopVersion(state),
     });
-    this.renderDesktopVersion(chosen.version);
-    if (!chosen.stale || isDesktopApp()) return;
-    const run = () => {
-      void this.fetchDesktopVersion();
-    };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
-    else window.setTimeout(run, 3000);
+    this.releaseVersion = release;
+    const refresh = () => { void release.refresh(); };
+    window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refresh();
+    });
+    refresh();
   }
 
-  private async fetchDesktopVersion(): Promise<void> {
-    try {
-      const tag = await refreshRelease();
-      if (!tag) return;
-      const at = Date.now();
-      writeCachedRelease({ setItem: (key, value) => writeStorage(key, value) }, tag, at);
-      this.renderDesktopVersion(displayVersion(tag));
-    } catch {
-      /* offline, the rate limit, or CORS */
-    }
-  }
-
-  private renderDesktopVersion(version: string): void {
+  private renderDesktopVersion(state: ReleaseVersionState): void {
+    const text = state.kind === 'cached' ? `${state.version} (cached)` : state.version ?? '';
+    const title = state.kind === 'current' ? 'Latest desktop installer release.'
+      : state.kind === 'checking' ? 'Checking the latest desktop installer release. A previous version may appear until the check completes.'
+      : state.kind === 'cached' ? 'Last known desktop installer release. The latest check was unavailable.'
+      : 'The latest desktop installer version is unavailable. Use the Latest release link.';
     for (const id of ['download-version', 'download-menu-version', 'download-dialog-version']) {
       const node = document.getElementById(id);
-      if (node) node.textContent = version;
+      if (node) {
+        node.textContent = text;
+        node.title = title;
+        node.dataset.releaseState = state.kind;
+      }
     }
   }
 
   private openDownloadDialog(): void {
+    void this.releaseVersion?.refresh();
     const os = detectDesktopOs();
     for (const row of document.querySelectorAll<HTMLElement>('#download-dialog [data-os]')) {
       const current = row.dataset.os === os;
