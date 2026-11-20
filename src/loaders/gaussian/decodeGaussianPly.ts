@@ -1,8 +1,9 @@
+import { FullSourceDetailError } from '../../core/sourceDetail';
 import { plyHeaderBoundary } from '../../core/plyHeader';
 import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { epsgCode } from '../../core/epsg';
-import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
+import type { GaussianLoadOverrides, GaussianTextureLimits, MemoryBudget, ShReductionReason } from '../../core/types';
 import {
   paddedSplatCount,
   planGaussianDecode,
@@ -81,7 +82,7 @@ export interface GaussianPlyHeader {
   headerCount: number;
   stride: number;
   fast: boolean;
-  sourceSh: ShDegree;
+  sourceSh: number;
   /** f_rest floats per color channel. 0 when the file is DC only. */
   nRest: number;
   georef: GaussianGeoref;
@@ -169,6 +170,7 @@ export interface DecodeGaussianOptions {
   onProgress?: (progress: DecodeProgress) => void;
   limits?: SplatEncodingLimits;
   overrides?: GaussianLoadOverrides;
+  textureLimits?: GaussianTextureLimits;
 }
 
 export interface DecodedGaussian {
@@ -177,9 +179,10 @@ export interface DecodedGaussian {
   headerCount: number;
   stride: number;
   shDegree: ShDegree;
-  sourceSh: ShDegree;
+  sourceSh: number;
   extended: boolean;
   /** Float32 centers were requested and the plan fell back to half-float. */
+  shReduction?: ShReductionReason;
   precisionReduced: boolean;
   limits: SplatEncodingLimits;
   packedArray?: Uint32Array;
@@ -264,6 +267,7 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     budget: options.budget,
     preferExtended: options.preferExtended,
     overrides: options.overrides,
+    textureLimits: options.textureLimits,
   });
   if (plan.decodedCount <= 0) {
     throw new GaussianPlyError('Gaussian PLY contains no splats.');
@@ -293,6 +297,7 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     }
   } catch (error) {
     if (error instanceof RangeError) {
+      if (options.overrides?.fullDetail) throw new FullSourceDetailError(`Full detail allocation failed for ${plan.decodedCount.toLocaleString()} splats (about ${formatMiB(plan.estimatedBytes)} decoded buffers, before GPU/sort/previous-scene copies). Browser allocation limits still apply. No reduced scene was adopted.`);
       throw new GaussianPlyError(
         `Not enough memory to decode ${plan.decodedCount.toLocaleString()} splats (about ${formatMiB(plan.estimatedBytes)}). Close other tabs or load a smaller scene.`,
       );
@@ -411,6 +416,9 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
   }
   report(resolved.count, true);
 
+  if (options.overrides?.fullDetail && kept !== resolved.count) {
+    throw new FullSourceDetailError(`Full detail requires all ${resolved.count.toLocaleString()} source splats, but only ${kept.toLocaleString()} valid records were decoded. No reduced scene was adopted.`);
+  }
   const notes = [...plan.notes];
   if (accum.skippedNonFinite > 0) {
     const skipped = accum.skippedNonFinite;
@@ -435,6 +443,7 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     shDegree: plan.shDegree,
     sourceSh: header.sourceSh,
     extended: plan.extended,
+    shReduction: plan.shReduction,
     precisionReduced: options.preferExtended && !plan.extended,
     limits,
     packedArray,
@@ -1055,7 +1064,7 @@ function layoutOf(props: Prop[]): PropLayout | null {
   };
 }
 
-function shLayout(props: Prop[]): { degree: ShDegree; nRest: number } {
+function shLayout(props: Prop[]): { degree: number; nRest: number } {
   let rest = 0;
   const names = new Set(props.map((prop) => prop.name));
   while (names.has(`f_rest_${rest}`)) rest += 1;
@@ -1069,7 +1078,7 @@ function shLayout(props: Prop[]): { degree: ShDegree; nRest: number } {
   if (bands * bands !== coeffs) {
     throw new GaussianPlyUnsupported(`f_rest does not form a complete SH degree (${rest} floats).`);
   }
-  return { degree: Math.min(3, bands - 1) as ShDegree, nRest };
+  return { degree: bands - 1, nRest };
 }
 
 function parseGeoref(header: string): GaussianGeoref {

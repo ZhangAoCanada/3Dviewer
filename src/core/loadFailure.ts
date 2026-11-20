@@ -96,6 +96,10 @@ export function classifyFailure(error: unknown, context?: FailureContext): Failu
       raw,
     };
   }
+  const fullDetail = chain.find((entry) => entry instanceof Error && entry.name === 'FullSourceDetailError');
+  if (fullDetail instanceof Error) {
+    return { kind: 'format', title: 'Full source detail was not loaded', body: fullDetail.message, actions: ['retry-lower-memory', 'choose-file'], raw };
+  }
   if (chain.some(isMemory)) {
     return {
       kind: 'memory',

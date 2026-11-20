@@ -1,6 +1,6 @@
 import { EXTENDED_BYTES } from '../loaders/gaussian/gaussianLoader';
-import { planGaussianDecode, type ShDegree } from '../loaders/gaussian/gaussianPlan';
-import type { MemoryBudget, QualityPreset, RepresentationKind } from '../core/types';
+import { planGaussianDecode } from '../loaders/gaussian/gaussianPlan';
+import type { MemoryBudget, QualityPreset, RepresentationKind, SourceDetail } from '../core/types';
 import { resolvePreset } from '../core/qualityPreset';
 
 /** Counts and harmonics for the loaded scene. Built from stats when Batch B's detail is absent. */
@@ -19,6 +19,9 @@ export interface PresetConsequenceInput {
   /** File size. Gaussian PLY uses it to choose float32 centers. */
   bytes?: number;
   budget: MemoryBudget;
+  sourceDetail?: SourceDetail;
+  loadedSourceDetail?: SourceDetail;
+  memoryBytes?: number;
 }
 
 /**
@@ -39,11 +42,15 @@ export function presetConsequence(input: PresetConsequenceInput): string | null 
   if (kind !== 'splats') return null;
   if (detail == null) return 'This file is decoded by Spark, so only the rendered SH and pixel ratio change.';
 
-  const sourceSh = asSh(detail.sourceSh ?? detail.loadedSh ?? 3);
-  const loaded = decodeFor(loadedPreset ?? preset, detail.sourceCount, sourceSh, bytes, budget);
-  let text = `This scan: ${formatGrouped(detail.sourceCount)} splats at SH ${loaded.shDegree} of ${sourceSh}, about ${aboutBytes(loaded.estimatedBytes)}.`;
-  if (loadedPreset != null && preset !== loadedPreset) {
-    const next = decodeFor(preset, detail.sourceCount, sourceSh, bytes, budget);
+  const sourceSh = detail.sourceSh ?? detail.loadedSh ?? 3;
+  if (input.sourceDetail === 'full' && sourceSh > 3) {
+    return `Full source detail blocked: source SH ${sourceSh} exceeds the supported SH0–3 renderer. Current scan remains at SH ${detail.loadedSh ?? 'unknown'} of ${sourceSh}.`;
+  }
+  const loaded = decodeFor(loadedPreset ?? preset, detail.sourceCount, sourceSh, bytes, budget, input.loadedSourceDetail);
+  const count = detail.retainedCount === detail.sourceCount ? formatGrouped(detail.sourceCount) : `${formatGrouped(detail.retainedCount)} of ${formatGrouped(detail.sourceCount)}`;
+  let text = `This scan: ${count} splats at SH ${detail.loadedSh ?? loaded.shDegree} of ${sourceSh}, about ${aboutBytes(input.memoryBytes ?? loaded.estimatedBytes)}.`;
+  if (loadedPreset != null && (preset !== loadedPreset || input.sourceDetail !== input.loadedSourceDetail)) {
+    const next = decodeFor(preset, detail.sourceCount, sourceSh, bytes, budget, input.sourceDetail);
     const same =
       next.shDegree === loaded.shDegree &&
       next.estimatedBytes === loaded.estimatedBytes &&
@@ -60,11 +67,12 @@ export function presetConsequence(input: PresetConsequenceInput): string | null 
 function decodeFor(
   preset: QualityPreset,
   sourceCount: number,
-  sourceSh: ShDegree,
+  sourceSh: number,
   bytes: number | undefined,
   budget: MemoryBudget,
+  sourceDetail: SourceDetail = 'automatic',
 ) {
-  const plan = resolvePreset(preset, budget);
+  const plan = resolvePreset(preset, budget, sourceDetail);
   const preferExtended = plan.extendedPrecision || (bytes ?? 0) >= EXTENDED_BYTES;
   return planGaussianDecode({
     sourceCount,
@@ -73,13 +81,6 @@ function decodeFor(
     preferExtended,
     overrides: plan.overrides,
   });
-}
-
-function asSh(value: number): ShDegree {
-  if (value <= 0) return 0;
-  if (value === 1) return 1;
-  if (value === 2) return 2;
-  return 3;
 }
 
 function formatGrouped(value: number): string {

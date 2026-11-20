@@ -1,3 +1,4 @@
+import { FullSourceDetailError } from '../../core/sourceDetail';
 import { ExtSplats, PackedSplats, SplatFileType, SplatMesh, type SplatMeshOptions } from '@sparkjsdev/spark';
 import {
   blobSource,
@@ -126,7 +127,7 @@ function decodeInWorker(
     worker.onerror = (event) => {
       finish(new Error(event.message || 'Gaussian decode worker failed'));
     };
-    worker.postMessage(request);
+    worker.postMessage({ ...request, textureLimits: ctx.textureLimits });
   });
 }
 
@@ -138,6 +139,7 @@ function sceneInfo(decoded: DecodedGaussian, lodBuilt: boolean, lodCount = 0): G
     sourceSh: decoded.sourceSh,
     sampleStride: decoded.stride,
     extended: decoded.extended,
+    shReduction: decoded.shReduction,
     precisionReduced: decoded.precisionReduced,
     lod: lodBuilt,
     lodCount,
@@ -303,7 +305,7 @@ async function loadStandardPly(
       byteTotal,
     );
   } catch (error) {
-    if (ctx.signal.aborted) throw error;
+    if (ctx.signal.aborted || ctx.overrides?.fullDetail) throw error;
     const name = error instanceof Error ? error.name : '';
     if (name === 'GaussianPlyError' || name === 'GaussianPlyUnsupported') throw error;
     if (size > 64 * 1024 * 1024) throw new Error(explainLoadError(error), { cause: error });
@@ -311,6 +313,7 @@ async function loadStandardPly(
       budget: ctx.budget,
       preferExtended,
       overrides: ctx.overrides,
+      textureLimits: ctx.textureLimits,
       signal: ctx.signal,
       onProgress: (progress) => {
         emitDecodeProgress(ctx, progress, reading, byteTotal);
@@ -386,6 +389,9 @@ export const gaussianLoader: FormatLoader = {
       }
     }
 
+    if (ctx.overrides?.fullDetail) {
+      throw new FullSourceDetailError('Full source detail is supported only for standard binary Gaussian PLY (SH0–3). This format uses the Spark decoder, whose source count/SH/precision cannot be guaranteed here. Turn off Full source detail to open it normally.');
+    }
     return loadViaSpark(source, ctx, started, size);
   },
 };

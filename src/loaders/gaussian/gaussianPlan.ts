@@ -1,4 +1,5 @@
-import type { GaussianLoadOverrides, MemoryBudget } from '../../core/types';
+import { FullSourceDetailError, shReductionText } from '../../core/sourceDetail';
+import type { GaussianLoadOverrides, GaussianTextureLimits, MemoryBudget, ShReductionReason } from '../../core/types';
 
 /** Spark's splat texture width. Packed buffers must cover a whole texture. */
 export const SPLAT_TEX_WIDTH = 2048;
@@ -24,6 +25,7 @@ export type ShDegree = 0 | 1 | 2 | 3;
 
 export interface GaussianDecodePlan {
   shDegree: ShDegree;
+  shReduction?: ShReductionReason;
   /** Keep 1 of every `stride` source splats. */
   stride: number;
   decodedCount: number;
@@ -58,14 +60,32 @@ export function estimateDecodedBytes(count: number, sh: ShDegree, extended: bool
  */
 export function planGaussianDecode(args: {
   sourceCount: number;
-  sourceSh: ShDegree;
+  sourceSh: number;
   budget: MemoryBudget;
   preferExtended: boolean;
   overrides?: GaussianLoadOverrides;
+  textureLimits?: GaussianTextureLimits;
 }): GaussianDecodePlan {
   const sourceCount = Math.max(0, Math.floor(args.sourceCount));
   const sourceSh = args.sourceSh;
-  const shCap = Math.min(sourceSh, args.budget.maxSh, args.overrides?.maxSh ?? sourceSh) as ShDegree;
+  if (args.overrides?.fullDetail) {
+    if (sourceSh !== 0 && sourceSh !== 1 && sourceSh !== 2 && sourceSh !== 3) {
+      throw new FullSourceDetailError(`Full source detail is blocked: source SH ${sourceSh} exceeds the supported SH0–3 renderer. No reduced Full scene was loaded.`);
+    }
+    if (!Number.isSafeInteger(args.sourceCount) || args.sourceCount < 0) {
+      throw new FullSourceDetailError('Full detail cannot represent this source count safely.');
+    }
+    try {
+      validateSplatAllocation(sourceCount, args.textureLimits);
+    } catch (error) {
+      throw new FullSourceDetailError(error instanceof Error ? error.message : 'Full source detail exceeds allocation limits.');
+    }
+    return {
+      shDegree: sourceSh, stride: 1, decodedCount: sourceCount, extended: true,
+      estimatedBytes: estimateDecodedBytes(sourceCount, sourceSh, true), lod: false, notes: [],
+    };
+  }
+  const shCap = Math.min(3, sourceSh, args.budget.maxSh, args.overrides?.maxSh ?? sourceSh) as ShDegree;
   const usable = Math.floor(args.budget.cpuBytes * DECODE_FRACTION);
   const encodings = args.preferExtended ? [true, false] : [false];
   const targetCount =
@@ -108,14 +128,16 @@ export function planGaussianDecode(args: {
     }
   }
 
+  validateSplatAllocation(decodedCount, args.textureLimits);
   const estimatedBytes = estimateDecodedBytes(decodedCount, shDegree, extended);
   const lod = Boolean(args.overrides?.forceLod) && decodedCount >= LOD_ABOVE;
 
+  const shReduction: ShReductionReason | undefined = shDegree >= Math.min(3, sourceSh) ? undefined
+    : shDegree === shCap && args.overrides?.maxSh != null && args.overrides.maxSh <= args.budget.maxSh ? 'request' : 'budget';
   const notes: string[] = [];
-  if (shDegree < sourceSh) {
-    notes.push(
-      `Spherical harmonics reduced from degree ${sourceSh} to ${shDegree} to fit the ${args.budget.profile} memory budget.`,
-    );
+  if (sourceSh > 3) notes.push(`Source SH ${sourceSh} exceeds the supported SH0–3 renderer; higher bands are not loaded.`);
+  if (shDegree < Math.min(3, sourceSh)) {
+    notes.push(shReductionText(shDegree, sourceSh, shReduction));
   }
   if (args.preferExtended && !extended) {
     notes.push('Using half-float centers because float32 centers did not fit in memory.');
@@ -128,6 +150,7 @@ export function planGaussianDecode(args: {
 
   return {
     shDegree,
+    shReduction,
     stride,
     decodedCount,
     extended,
@@ -158,4 +181,18 @@ function fitCount(
     count = Math.ceil(sourceCount / stride);
   }
   return { count, stride };
+}
+
+/** Spark uses fixed-width 2D array textures and Uint32 splat indices. Never a VRAM probe. */
+function validateSplatAllocation(count: number, limits?: GaussianTextureLimits): void {
+  const padded = paddedSplatCount(count);
+  if (!Number.isSafeInteger(padded) || padded > 0xffff_ffff) {
+    throw new Error('Source exceeds Spark Uint32 splat indexing/allocation limits. Use a smaller or paged scene.');
+  }
+  if (count === 0 || !limits) return;
+  const height = Math.max(1, Math.min(SPLAT_TEX_WIDTH, Math.ceil(count / SPLAT_TEX_WIDTH)));
+  const layers = Math.ceil(count / (SPLAT_TEX_WIDTH * height));
+  if (SPLAT_TEX_WIDTH > limits.maxTextureSize || height > limits.maxTextureSize || layers > limits.maxArrayTextureLayers) {
+    throw new Error(`Source needs a ${SPLAT_TEX_WIDTH} × ${height} × ${layers} splat texture; WebGL allows ${limits.maxTextureSize} per side and ${limits.maxArrayTextureLayers} array layers. Use a smaller or paged scene.`);
+  }
 }

@@ -56,8 +56,17 @@ export interface MemoryBudget {
   pixelRatioCap: number;
 }
 
-/** URL measurement overrides. Absent unless `?lod=force` or `?sh=N` was set. */
+export type SourceDetail = 'automatic' | 'full';
+
+/** Actual WebGL dimensions, not an estimate of available RAM/VRAM. */
+export interface GaussianTextureLimits {
+  maxTextureSize: number;
+  maxArrayTextureLayers: number;
+}
+
+/** Decode policy. Full detail is only set after explicit in-app risk acceptance. */
 export interface GaussianLoadOverrides {
+  fullDetail?: boolean;
   forceLod?: boolean;
   maxSh?: 0 | 1 | 2 | 3;
 }
@@ -68,6 +77,7 @@ export interface LoadContext {
   budget: MemoryBudget;
   /** When true, gaussian loads request extended (float32 center) encoding. */
   extendedPrecision: boolean;
+  textureLimits?: GaussianTextureLimits;
   /** Read once from the page URL and forwarded to the gaussian decode plan. */
   overrides?: GaussianLoadOverrides;
 }
@@ -93,11 +103,15 @@ export interface RenderSettings {
   extendedPrecision: boolean;
 }
 
+/** Recorded decode-policy cause; absence must not imply a memory reduction. */
+export type ShReductionReason = 'request' | 'budget';
+
 /** How much of the source file is actually on screen. Absent for Spark-decoded splats. */
 export interface SceneDetail {
   sourceCount: number;
   retainedCount: number;
   sourceSh?: number;
+  shReduction?: ShReductionReason;
   loadedSh?: number;
   /** True when float32 centers were requested and the budget only fit half-float. */
   precisionReduced?: boolean;

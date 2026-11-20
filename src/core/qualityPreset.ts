@@ -1,5 +1,5 @@
 import type { ShDegree } from '../loaders/gaussian/gaussianPlan';
-import type { GaussianLoadOverrides, MemoryBudget, QualityPreset, RenderSettings } from './types';
+import type { GaussianLoadOverrides, MemoryBudget, QualityPreset, RenderSettings, SourceDetail } from './types';
 
 export type { QualityPreset };
 
@@ -30,7 +30,16 @@ export function parseQualityPreset(value: unknown): QualityPreset {
  * Automatic returns `budget` unchanged and sets no overrides, so a desktop load
  * matches the policy that shipped before presets existed.
  */
-export function resolvePreset(preset: QualityPreset, budget: MemoryBudget): PresetPlan {
+export function resolvePreset(preset: QualityPreset, budget: MemoryBudget, sourceDetail: SourceDetail = 'automatic'): PresetPlan {
+  if (sourceDetail === 'full') {
+    const base = resolvePreset(preset, budget);
+    return {
+      ...base, renderSh: 3, extendedPrecision: true, alwaysPreClear: false,
+      overrides: { fullDetail: true },
+      summary: 'Full source detail requested. Reopen the current scan to apply; memory use may be much higher.',
+      details: 'Standard binary Gaussian PLY only: all source splats and SH bands, float32 centers, no budget step-down or LoD copy. SH/color/scale/rotation still use Spark encoding, not lossless source precision. Browser allocation and WebGL limits still apply. Available VRAM is unknown. Full detail overrides address-bar SH/LoD hints. This opt-in lasts only for this session; choosing a preset turns it off.',
+    };
+  }
   if (preset === 'quality') return betterQuality(budget);
   if (preset === 'memory') return lowerMemory(budget);
   return {
@@ -54,6 +63,7 @@ export function mergePresetOverrides(
   plan: Pick<PresetPlan, 'overrides'>,
   url: GaussianLoadOverrides | undefined,
 ): GaussianLoadOverrides | undefined {
+  if (plan.overrides?.fullDetail) return { fullDetail: true };
   const merged: GaussianLoadOverrides = { ...plan.overrides, ...url };
   if (preset === 'memory') delete merged.forceLod;
   if (merged.forceLod !== true && merged.maxSh == null) return undefined;
@@ -97,7 +107,7 @@ function lowerMemory(budget: MemoryBudget): PresetPlan {
     extendedPrecision: false,
     alwaysPreClear: true,
     summary: 'Lower memory keeps less detail so large scenes fit. Some changes require reopening the file.',
-    details: `${deviceLabel(budget)} · up to SH ${cap} · pixel ratio 1 · level of detail off. The previous scene is cleared before decode, and level of detail is never built. ${SPARK_HINT}`,
+    details: `${deviceLabel(budget)} · up to SH ${cap} · pixel ratio 1 · level of detail off. New-file loads clear the previous scene before decode; quality reopens keep it until success and temporarily need both copies. Level of detail is never built. ${SPARK_HINT}`,
   };
 }
 

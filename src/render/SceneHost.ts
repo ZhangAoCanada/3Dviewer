@@ -212,7 +212,7 @@ export class SceneHost {
     return this.creationStatus;
   }
 
-  get rendererInfo(): { renderer?: string; vendor?: string; maxTextureSize: number; software: boolean } {
+  get rendererInfo(): { renderer?: string; vendor?: string; maxTextureSize: number; maxArrayTextureLayers: number; software: boolean } {
     const gl = this.renderer.getContext();
     const debug = gl.getExtension('WEBGL_debug_renderer_info');
     let renderer: string | undefined;
@@ -224,8 +224,9 @@ export class SceneHost {
       if (typeof rawVendor === 'string') vendor = rawVendor;
     }
     const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    const layers = 'texImage3D' in gl ? gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) : 0;
     const software = renderer != null && /SwiftShader|llvmpipe|Software|Basic Render/i.test(renderer);
-    return { renderer, vendor, maxTextureSize: typeof max === 'number' ? max : 0, software };
+    return { renderer, vendor, maxTextureSize: typeof max === 'number' ? max : 0, maxArrayTextureLayers: typeof layers === 'number' ? layers : 0, software };
   }
 
   setBackground(color: string): void {

@@ -1,3 +1,4 @@
+import { shReductionText } from '../core/sourceDetail';
 import type { RenderableStats } from '../core/types';
 
 export interface DetailState {
@@ -47,7 +48,7 @@ export function detailOf(
     reasons.push(`Showing ${formatDetailCount(retained)} of ${formatDetailCount(source)} ${noun}`);
   }
   if (loadedSh != null && sourceSh != null && loadedSh < sourceSh) {
-    reasons.push(`SH ${loadedSh} of ${sourceSh} loaded to fit memory`);
+    reasons.push(shReductionText(loadedSh, sourceSh, stats.length === 1 ? stats[0]?.detail?.shReduction : undefined));
   }
   if (loadedSh != null && renderSh < loadedSh) {
     reasons.push(`Rendering SH ${renderSh} (set in Settings)`);
@@ -67,6 +68,20 @@ export function detailOf(
   };
 }
 
+/** Actual loaded state only; selecting a request must never make this claim Full. */
+export function loadedDetailSummary(stats: RenderableStats | undefined, state: DetailState, fullSourceLoaded: boolean): { label: string; reason: string } {
+  if (!stats) return { label: 'No scene yet', reason: 'Open a scene to see its actual loaded detail.' };
+  if (state.reduced) return { label: 'Reduced detail', reason: detailText(state) };
+  const detail = stats.detail;
+  if (detail?.sourceSh != null) return {
+    label: fullSourceLoaded ? 'Full source detail' : 'Full supported detail',
+    reason: `${detail.retainedCount.toLocaleString()} of ${detail.sourceCount.toLocaleString()} splats · SH ${state.activeSh} of ${detail.sourceSh} · ${stats.extra?.encoding ?? 'encoding unknown'}. Not lossless source precision.`,
+  };
+  if (stats.kind === 'splats') return { label: 'Source detail unknown', reason: 'Spark decoded this format; source SH/count preservation is not verified here.' };
+  const kind = stats.kind === 'mesh' ? 'Mesh' : stats.kind === 'points' ? 'Point cloud' : 'Scene';
+  return { label: `${kind} loaded`, reason: `${stats.primitives.toLocaleString()} primitives. Quality presets affect pixel ratio, not source geometry.` };
+}
+
 /** Badge title body. Reasons joined with a middle dot. */
 export function detailText(state: DetailState): string {
   return state.reasons.join(' · ');
@@ -77,8 +92,6 @@ export function detailSceneText(state: DetailState): string {
   if (!state.reduced) return 'Full';
   const parts = state.reasons.map((reason) => {
     if (reason.startsWith('Showing ')) return reason.slice('Showing '.length);
-    const loaded = /^SH (\d+ of \d+) loaded to fit memory$/.exec(reason);
-    if (loaded?.[1]) return `SH ${loaded[1]}`;
     return reason;
   });
   return `Reduced: ${parts.join(' · ')}`;

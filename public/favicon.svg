@@ -1,22 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" role="img" aria-labelledby="title">
   <title id="title">Omniview</title>
-  <!--
-    Simplified favicon. Fewer, larger blocks and dots than assets/brand/omniview.svg
-    so the mark still reads at 16 and 32 px. Same teal (#14b8a6) and the same
-    left-solid / upper-right voxel / lower-right splat structure.
-  -->
   <rect width="16" height="16" rx="3.52" fill="#f8fafc"/>
-  <path fill="#14b8a6" d="M 11.15 2.54 A 6.3 6.3 0 1 0 8 14.3 L 8 11.85 A 3.85 3.85 0 1 1 9.93 4.67 Z"/>
-  <g fill="#14b8a6">
-    <rect x="10.9" y="1.9" width="2.5" height="2.5" transform="rotate(-48 12.15 3.15)"/>
-    <rect x="12.45" y="3.9" width="2.5" height="2.5" transform="rotate(-28 13.7 5.15)"/>
-    <rect x="11.28" y="4.77" width="2.15" height="2.15" transform="rotate(-36 12.35 5.85)"/>
-  </g>
-  <g fill="#14b8a6">
-    <ellipse cx="13.7" cy="8.7" rx="1.15" ry="0.8" opacity="0.95" transform="rotate(80 13.7 8.7)"/>
-    <ellipse cx="12.7" cy="11.15" rx="1.05" ry="0.75" opacity="0.78" transform="rotate(110 12.7 11.15)"/>
-    <ellipse cx="10.55" cy="12.7" rx="0.9" ry="0.65" opacity="0.58" transform="rotate(140 10.55 12.7)"/>
-    <ellipse cx="14.05" cy="10.9" rx="0.8" ry="0.58" opacity="0.5" transform="rotate(100 14.05 10.9)"/>
-  </g>
+  <circle cx="8" cy="8" r="5.5" fill="none" stroke="#0d9488" stroke-width="2.5"/>
 </svg>
-

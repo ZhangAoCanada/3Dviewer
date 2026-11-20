@@ -28,7 +28,9 @@ Orbit is the default. Drag orbits the point under the cursor, the wheel zooms to
 | Zoom | Wheel or pinch toward the fingers | Wheel |
 | Move | Double-click flies in | WASD, Q/E, Space, Shift to sprint. Two-finger drag moves forward. |
 
-The side panel has scene info, splat size, spherical-harmonics degree, point size, LoD detail, shading, wireframe, 2D Gaussian axes, sort mode, and an FPS / memory readout. **Flip Y** turns OpenCV / COLMAP scenes right-side up. The butterfly sample enables it.
+Settings starts with **Quality & display**, including the actual loaded detail separately from a requested preset. **View and navigation** holds orientation and sensitivity; **Advanced** and **Scene & diagnostics** are collapsed by default. Source-loading changes show a reload action; rendering controls apply immediately. **Flip Y** turns OpenCV / COLMAP scenes right-side up. The butterfly sample enables it.
+
+**Full source detail** is an explicit, session-only risk opt-in for standard binary Gaussian PLY. It requests every splat and supported source SH band (SH0–3), with float32 local centers, bypassing conservative memory estimates—not allocation or WebGL texture limits. Available VRAM is unknown. Spark still encodes/quantizes other attributes: this is not lossless source precision. Unsupported source bands/formats are refused rather than silently reduced. Reload retains the current scene until success, temporarily requiring both scenes in memory; cancellation keeps the previous scene. A graphics reset returns to automatic safeguards, and choosing any preset turns the opt-in off.
 
 ## Develop
 

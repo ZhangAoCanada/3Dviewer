@@ -51,7 +51,7 @@ test('the render SH setting toggles reduced detail', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
   await openSettings(page);
-  await page.locator('#sec-advanced summary').click();
+  await page.locator('#sec-advanced > summary').click();
   await page.selectOption('#sh-degree', '0');
   await expect(page.locator('#file-detail')).toBeVisible();
   await expect(page.locator('#file-detail')).toHaveAttribute('title', /Rendering SH 0/);
