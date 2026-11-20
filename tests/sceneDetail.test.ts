@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderableStats, SceneDetail } from '../src/core/types';
-import { detailOf, detailSceneText, detailText } from '../src/ui/sceneDetail';
+import { detailOf, detailSceneText, detailText, loadedDetailSummary } from '../src/ui/sceneDetail';
 
 const samePixel = { used: 2, automatic: 2 };
 
@@ -45,6 +45,14 @@ describe('detailOf', () => {
     expect(state.reasons).toEqual(['SH 1 of 3 loaded to fit memory']);
     expect(state.activeSh).toBe(1);
     expect(detailSceneText(state)).toBe('Reduced: SH 1 of 3');
+  });
+
+  it.each([2, 3])('distinguishes unsupported source SH4 from memory/load-policy reduction (stored SH%i)', (loadedSh) => {
+    const state = detailOf([splats({ sourceCount: 8, retainedCount: 8, sourceSh: 4, loadedSh })], 3, samePixel);
+    expect(state.reduced).toBe(true);
+    expect(detailText(state)).toContain(`SH ${loadedSh} of 4 loaded; renderer supports up to SH 3`);
+    expect(detailText(state).includes('further load-policy reduction')).toBe(loadedSh < 3);
+    expect(detailText(state)).not.toContain('to fit memory');
   });
 
   it('describes an SH cap at render', () => {
@@ -144,5 +152,24 @@ describe('detailOf', () => {
       'Showing 674,335 of 14,161,020 splats · SH 1 of 3 loaded to fit memory',
     );
     expect(detailSceneText(state)).toBe('Reduced: 674,335 of 14,161,020 splats · SH 1 of 3');
+  });
+});
+
+
+describe('actual loaded summary compatibility', () => {
+  const gaussian = splats({ sourceCount: 8, retainedCount: 8, sourceSh: 3, loadedSh: 3 });
+  const cases: { name: string; stats?: RenderableStats; full: boolean; renderSh: number; label: string; reason: string }[] = [
+    { name: 'empty', full: false, renderSh: 3, label: 'No scene yet', reason: 'Open a scene' },
+    { name: 'mesh', stats: { kind: 'mesh', label: 'crate', primitives: 12 }, full: true, renderSh: 3, label: 'Mesh loaded', reason: 'not source geometry' },
+    { name: 'points', stats: points({ sourceCount: 8, retainedCount: 8 }), full: true, renderSh: 3, label: 'Point cloud loaded', reason: '8 primitives' },
+    { name: 'Spark unknown', stats: { kind: 'splats', label: 'Spark', primitives: 8 }, full: true, renderSh: 3, label: 'Source detail unknown', reason: 'not verified' },
+    { name: 'automatic', stats: gaussian, full: false, renderSh: 3, label: 'Full supported detail', reason: 'Not lossless source precision' },
+    { name: 'confirmed loaded Full', stats: gaussian, full: true, renderSh: 3, label: 'Full source detail', reason: '8 of 8 splats · SH 3 of 3' },
+    { name: 'render-reduced Full', stats: gaussian, full: true, renderSh: 1, label: 'Reduced detail', reason: 'Rendering SH 1' },
+  ];
+  it.each(cases)('$name is never mislabeled from a requested setting', ({ stats, full, renderSh, label, reason }) => {
+    const state = detailOf(stats ? [stats] : [], renderSh, samePixel);
+    const actual = loadedDetailSummary(stats, state, full);
+    expect(actual.label).toBe(label);expect(actual.reason).toContain(reason);
   });
 });

@@ -41,9 +41,14 @@ test('risk consent is explicit; pending is not mislabeled full; actual reopen lo
   await expect(page.locator('#source-detail')).not.toBeChecked();
 });
 
-for (const mode of ['full', 'memory'] as const) {
-  test(`canceling a ${mode} quality reopen keeps the previous actual scene; stale work cannot replace it`, async ({ page }) => {
-    const bytes = gaussianPlyFixture();let hold = false;let held = false;
+for (const [mode, large] of [['full', false], ['memory', false], ['memory', true]] as const) {
+  test(`canceling a ${mode} quality reopen${large ? ' of a real 64 MiB padded file' : ''} keeps the previous actual scene; stale work cannot replace it`, async ({ page }) => {
+    test.setTimeout(60_000);
+    const fixture = gaussianPlyFixture();
+    // Eight real splats plus legal trailing bytes exercise the size boundary, not GPU capacity.
+    const bytes = large ? Buffer.alloc(64 * 1024 * 1024) : fixture;
+    if (large) fixture.copy(bytes);
+    let hold = false;let held = false;
     let release = () => {};const gate = new Promise<void>((resolve) => { release = resolve; });
     await page.route('**/delayed-sh3.ply', async (route) => {
       const req = route.request();

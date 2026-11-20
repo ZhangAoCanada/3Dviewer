@@ -135,6 +135,8 @@ async function gpuObjects(page: Page): Promise<string> {
   if (await panel.evaluate((node) => node.classList.contains('is-collapsed'))) {
     await page.click('#panel-btn');
   }
+  const diagnostics = page.locator('#sec-scene');
+  if (!(await diagnostics.evaluate((node) => node instanceof HTMLDetailsElement && node.open))) await diagnostics.locator(':scope > summary').click();
   const section = page.locator('#sec-perf');
   if (!(await section.evaluate((node) => (node as HTMLDetailsElement).open))) {
     await section.locator('summary').click();

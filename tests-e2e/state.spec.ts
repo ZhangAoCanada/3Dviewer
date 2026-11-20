@@ -86,7 +86,7 @@ test('scene controls stay off until a scene is open', async ({ page }) => {
   for (const id of ['#sh-degree', '#splat-scale', '#lod-scale', '#gs-2d', '#sort-radial', '#extended']) {
     await expect(page.locator(id)).toBeEnabled();
   }
-  await page.locator('#sec-view summary').click();
+  await page.locator('#sec-view > summary').click();
   await page.click('#upright-open', { force: true });
   await expect(page.locator('#toast-msg')).toHaveText('Open a scene first');
   await expect(page.locator('#upright')).toBeHidden();
@@ -101,7 +101,7 @@ test('controls follow the loaded kind', async ({ page }) => {
   await expect(page.locator('#reset-btn')).toHaveAttribute('title', 'Reset view (R)');
   await expect(page.locator('#upright-btn')).toHaveAttribute('title', 'Make upright');
   await openSettings(page);
-  await page.locator('#sec-advanced summary').click();
+  await page.locator('#sec-advanced > summary').click();
   await expect(page.locator('#display-empty-hint')).toBeHidden();
   await expect(page.locator('#point-size')).toBeHidden();
   await expect(page.locator('#sh-degree')).toBeHidden();
@@ -121,7 +121,7 @@ test('controls follow the loaded kind', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
   await openSettings(page);
-  await page.locator('#sec-advanced summary').click();
+  await page.locator('#sec-advanced > summary').click();
   await expect(page.locator('#shading')).toBeHidden();
   await expect(page.locator('#wireframe')).toBeHidden();
   await expect(page.locator('#sh-degree')).toBeVisible();
@@ -129,6 +129,8 @@ test('controls follow the loaded kind', async ({ page }) => {
 });
 
 async function openPerformance(page: Page): Promise<void> {
+  const diagnostics = page.locator('#sec-scene');
+  if (!(await diagnostics.evaluate((node) => node instanceof HTMLDetailsElement && node.open))) await diagnostics.locator(':scope > summary').click();
   const section = page.locator('#sec-perf');
   if ((await section.getAttribute('open')) == null) await section.locator('summary').click();
 }

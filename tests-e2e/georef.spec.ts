@@ -66,6 +66,7 @@ test('epsg 0 hides the chip and epsg.io link but keeps the offset', async ({ pag
   await expect(page.locator('#geo-badge')).toBeHidden();
   await expect(page.locator('#file-chip')).not.toContainText('EPSG');
   await page.click('#panel-btn');
+  await page.locator('#sec-scene > summary').click();
   const geo = page.locator('#sec-geo');
   await expect(geo).toBeVisible();
   await expect(geo).toContainText('539022.51');
@@ -80,6 +81,7 @@ test('a positive EPSG code links to epsg.io', async ({ page }) => {
   await expect(page.locator('#geo-badge')).toBeVisible();
   await expect(page.locator('#geo-badge-text')).toHaveText('EPSG:4326');
   await page.click('#panel-btn');
+  await page.locator('#sec-scene > summary').click();
   await expect(page.locator('#geo-info')).toContainText('EPSG:4326');
   await expect(page.locator('#geo-info')).toContainText('3377206.74');
   const link = page.locator('#geo-epsg-link');

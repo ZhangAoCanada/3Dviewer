@@ -132,7 +132,8 @@ export function planGaussianDecode(args: {
   const lod = Boolean(args.overrides?.forceLod) && decodedCount >= LOD_ABOVE;
 
   const notes: string[] = [];
-  if (shDegree < sourceSh) {
+  if (sourceSh > 3) notes.push(`Source SH ${sourceSh} exceeds the supported SH0–3 renderer; higher bands are not loaded.`);
+  if (shDegree < Math.min(3, sourceSh)) {
     notes.push(
       `Spherical harmonics reduced from degree ${sourceSh} to ${shDegree} to fit the ${args.budget.profile} memory budget.`,
     );

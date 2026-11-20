@@ -67,7 +67,7 @@ import {
   writeCachedRelease,
 } from '../ui/releaseVersion';
 import type { LoadTimings } from '../bench/benchStats';
-import { detailOf, detailSceneText, detailText } from '../ui/sceneDetail';
+import { detailOf, detailSceneText, detailText, loadedDetailSummary } from '../ui/sceneDetail';
 
 const PROBE_EXTENSIONS = new Set(['ply', '']);
 const INFLIGHT_KEY = '3dviewer-inflight';
@@ -148,6 +148,7 @@ export class ViewerApp {
   private sourceDetail: SourceDetail = 'automatic';
   private sourceDetailBlocker: string | null = null;
   private loadedSourceDetail: SourceDetail = 'automatic';
+  private loadedExtendedPrecision: boolean | null = null;
   private softwareNotified = false;
   private contextTimer = 0;
   private uprightHistory: { q: THREE.Quaternion; up: 'y' | 'z' }[] = [];
@@ -366,6 +367,7 @@ export class ViewerApp {
     this.bindUprightDismiss(canvas);
     must('#theme-btn').addEventListener('click', () => this.toggleTheme());
     must('#panel-btn').addEventListener('click', () => this.togglePanel());
+    must('#settings-theme').addEventListener('click', () => this.toggleTheme());
     must('#panel-close').addEventListener('click', () => {
       this.togglePanel();
       must<HTMLButtonElement>('#panel-btn').focus();
@@ -553,6 +555,8 @@ export class ViewerApp {
     });
     bindCheck('#extended', (on) => {
       this.settings.extendedPrecision = on;
+      this.syncReopen();
+      this.renderDetail();
     });
     bindCheck('#flip-y', (on) => {
       this.settings.flipY = on;
@@ -744,8 +748,9 @@ export class ViewerApp {
     const full = this.sourceDetail === 'full';
     must<HTMLInputElement>('#source-detail').checked = full;
     must<HTMLInputElement>('#extended').disabled = full;
-    const pending = this.items.length > 0 && this.loadedSourceDetail !== this.sourceDetail;
-    must('#source-detail-status').textContent = full && this.sourceDetailBlocker ? `Not loaded: ${this.sourceDetailBlocker}` : pending
+    const pending = this.needsSourceReload();
+    const sourcePending = this.items.length > 0 && this.loadedSourceDetail !== this.sourceDetail;
+    must('#source-detail-status').textContent = full && this.sourceDetailBlocker ? `Not loaded: ${this.sourceDetailBlocker}` : sourcePending
       ? 'Reopen required · the current scene is unchanged. Canceling a reopen keeps it.'
       : full ? 'On for this session · all source SH bands and splats requested. Memory fit is not guaranteed.'
       : 'Off · automatic memory safeguards. Enabling requires accepting the memory risk.';
@@ -753,8 +758,8 @@ export class ViewerApp {
     must('#quality-details-text').textContent = plan.details;
     const consequence = must('#quality-consequence');
     const text = this.consequenceLine();
-    consequence.hidden = text == null;
-    consequence.textContent = text ?? '';
+    consequence.hidden = !pending || text == null;
+    consequence.textContent = pending ? text ?? '' : '';
   }
 
   private consequenceLine(): string | null {
@@ -793,15 +798,18 @@ export class ViewerApp {
     }
   }
 
+  private needsSourceReload(): boolean {
+    return this.items[0]?.kind === 'splats' && this.loadedPreset != null && this.lastSource != null &&
+      (this.loadedPreset !== this.settings.quality || this.loadedSourceDetail !== this.sourceDetail || this.loadedExtendedPrecision !== this.settings.extendedPrecision);
+  }
+
   private syncReopen(): void {
     const reopen = document.querySelector<HTMLButtonElement>('#quality-reopen');
     if (!reopen) return;
-    const needsDecode =
-      this.loadedPreset != null &&
-      (this.loadedPreset !== this.settings.quality || this.loadedSourceDetail !== this.sourceDetail) &&
-      this.lastSource != null &&
-      this.items.length > 0;
+    const needsDecode = this.needsSourceReload();
     reopen.hidden = !needsDecode;
+    const reload = document.getElementById('quality-reload');
+    if (reload) reload.hidden = !needsDecode;
   }
 
   private syncControls(): void {
@@ -1015,11 +1023,7 @@ export class ViewerApp {
   }
 
   private phoneSheet(): boolean {
-    const narrow = window.matchMedia('(max-width: 640px)').matches;
-    const landscapeDrawer = window.matchMedia(
-      '(max-width: 960px) and (max-height: 520px) and (pointer: coarse)',
-    ).matches;
-    return narrow && !landscapeDrawer;
+    return window.matchMedia('(max-width: 640px)').matches;
   }
 
   async boot(): Promise<void> {
@@ -1190,6 +1194,7 @@ export class ViewerApp {
       host.add(renderable, this.settings);
       this.markSceneAdded();
       this.lastSource = source;
+      this.loadedExtendedPrecision = extendedPrecision;
       this.loadedPreset = presetAtLoad;
       this.loadedSourceDetail = detailAtLoad;
       const restored = this.applyStoredOrientation(host, source);
@@ -1474,8 +1479,7 @@ export class ViewerApp {
   private syncThemeButton(): void {
     const light = document.documentElement.dataset.theme === 'light';
     must('#theme-btn').setAttribute('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
-    const label = document.querySelector('.theme-label');
-    if (label) label.textContent = light ? 'Dark theme' : 'Light theme';
+    for (const label of document.querySelectorAll('.theme-label')) label.textContent = light ? 'Dark theme' : 'Light theme';
   }
 
   private toggleHud(): void {
@@ -1496,8 +1500,17 @@ export class ViewerApp {
     panel.classList.toggle('is-collapsed');
     const open = !panel.classList.contains('is-collapsed');
     document.body.classList.toggle('panel-open', open);
+    this.placeSettingsNotices(open);
     must('#panel-btn').setAttribute('aria-expanded', String(open));
     writeStorage('3dviewer-panel', open ? 'open' : 'closed');
+  }
+
+  private placeSettingsNotices(open: boolean): void {
+    const destination = open ? must('#settings-notice-slot') : must('.toast-stack');
+    for (const id of ['#toast', '#update-toast']) {
+      const notice = must(id);
+      if (notice.parentElement !== destination) destination.append(notice);
+    }
   }
 
   private restorePanel(): void {
@@ -1510,6 +1523,7 @@ export class ViewerApp {
     const open = stored === 'open';
     must('#panel').classList.toggle('is-collapsed', !open);
     document.body.classList.toggle('panel-open', open);
+    this.placeSettingsNotices(open);
     must('#panel-btn').setAttribute('aria-expanded', String(open));
   }
 
@@ -2054,6 +2068,11 @@ export class ViewerApp {
     if (panel.classList.contains('is-collapsed')) this.togglePanel();
     const section = must<HTMLDetailsElement>(id);
     section.open = true;
+    let parent = section.parentElement;
+    while (parent && parent !== panel) {
+      if (parent instanceof HTMLDetailsElement) parent.open = true;
+      parent = parent.parentElement;
+    }
     section.scrollIntoView({ block: 'nearest' });
     section.querySelector('summary')?.focus();
   }
@@ -2149,8 +2168,13 @@ export class ViewerApp {
       this.settings.shDegree,
       this.pixelRatioNow(),
     );
-    const pending = this.items.length > 0 && this.loadedSourceDetail !== this.sourceDetail;
+    const pending = this.needsSourceReload();
     const full = this.loadedSourceDetail === 'full' && this.items.some((item) => item.getStats().detail?.sourceSh != null);
+    const item = this.items[0];
+    const stats = item?.getStats();
+    const summary = loadedDetailSummary(stats, state, full);
+    must('#quality-loaded-label').textContent = summary.label;
+    must('#quality-loaded-reason').textContent = summary.reason;
     const show = !must('#file-chip').hidden && (state.reduced || pending || full);
     const label = pending ? 'Reopen required' : state.reduced ? 'Reduced detail' : 'Full source';
     const badgeLabel = badge.querySelector('.badge-label');
@@ -2162,7 +2186,7 @@ export class ViewerApp {
       badge.removeAttribute('aria-label');
       return;
     }
-    const text = pending ? `Reopen required: requested ${this.sourceDetail === 'full' ? 'full source detail' : 'automatic safeguards'} is not loaded. Current scene: ${state.reduced ? detailText(state) : 'all loaded source detail'}.`
+    const text = pending ? `Reopen required: requested source-loading settings are not applied. Current scene: ${state.reduced ? detailText(state) : 'all loaded source detail'}.`
       : state.reduced ? `Reduced detail: ${detailText(state)}`
       : 'Full source detail loaded: all source splats and SH bands; float32 centers. SH/color/scale/rotation still use Spark encoding, not lossless precision.';
     badge.title = text;

@@ -250,37 +250,25 @@
             <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
           </button>
         </div>
+        <div id="settings-notice-slot"></div>
         <div class="panel-body">
-          <details id="sec-scene" class="sec" open>
-            <summary>Scene<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <dl id="scene-info" class="kv"></dl>
-          </details>
-          <details id="sec-geo" class="sec" open hidden>
-            <summary>Georeference<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <dl id="geo-info" class="kv"></dl>
-            <div class="sec-actions">
-              <button id="geo-copy" class="btn btn-secondary btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
-              <a id="geo-epsg-link" class="btn btn-ghost btn-sm" href="https://epsg.io/" target="_blank" rel="noopener" hidden><svg class="icon icon-sm" aria-hidden="true"><use href="#i-external-link"/></svg>epsg.io</a>
-            </div>
-          </details>
           <details id="sec-display" class="sec" open>
-            <summary>Display<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <summary>Quality &amp; display<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
             <p id="display-empty-hint" class="hint" hidden>Open a scene first</p>
             <div class="field" id="quality-field">
-              <span>Quality</span>
+              <span>Quality preset</span><p class="hint settings-timing">View changes apply now. Source changes require a reload.</p>
               <div class="segment" role="radiogroup" aria-label="Quality">
-                <button id="quality-auto" class="seg is-on" type="button" role="radio" aria-checked="true">Automatic</button>
-                <button id="quality-quality" class="seg" type="button" role="radio" aria-checked="false">Better quality</button>
-                <button id="quality-memory" class="seg" type="button" role="radio" aria-checked="false">Lower memory</button>
+                <button id="quality-auto" class="seg is-on" type="button" role="radio" aria-checked="true" aria-label="Automatic"><strong>Automatic</strong><small aria-hidden="true">Balanced detail and memory</small></button>
+                <button id="quality-quality" class="seg" type="button" role="radio" aria-checked="false" aria-label="Better quality"><strong>Better quality</strong><small aria-hidden="true">Sharper centers; more memory</small></button>
+                <button id="quality-memory" class="seg" type="button" role="radio" aria-checked="false" aria-label="Lower memory"><strong>Lower memory</strong><small aria-hidden="true">Reduce detail and memory</small></button>
               </div>
-              <p id="quality-summary" class="hint"></p>
+              <div id="quality-loaded" class="quality-loaded" aria-live="polite"><span class="settings-kicker">Currently loaded</span><strong id="quality-loaded-label">No scene yet</strong><p id="quality-loaded-reason" class="hint">Open a scene to see its actual loaded detail.</p></div>
               <p id="quality-consequence" class="hint" hidden></p>
-              <details id="quality-details" class="sec-details"><summary>Details</summary><p id="quality-details-text" class="hint"></p></details>
+              <details id="quality-details" class="sec-details"><summary>How presets work</summary><p id="quality-summary" class="hint"></p><p id="quality-details-text" class="hint"></p></details>
               <div data-applies="splats" data-preload>
                 <label class="switch-row"><span>Full source detail <small>(binary Gaussian PLY)</small></span><input id="source-detail" type="checkbox" class="switch" role="switch" aria-describedby="source-detail-status" /></label>
                 <p id="source-detail-status" class="hint" aria-live="polite">Off · automatic memory safeguards. Enabling requires accepting the memory risk.</p>
               </div>
-              <button id="quality-reopen" class="btn btn-secondary btn-sm" type="button" hidden>Reopen to apply memory changes</button>
             </div>
             <label class="field" data-applies="points"><span>Point size <output id="out-point-size">1.0</output></span><input id="point-size" type="range" min="0.25" max="4" step="0.05" value="1" /></label>
             <label class="field-row" data-applies="mesh"><span>Shading</span><span class="select"><select id="shading"><option value="lit" selected>Lit</option><option value="flat">Unlit</option><option value="normals">Normals</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
@@ -290,26 +278,24 @@
           <details id="sec-view" class="sec">
             <summary>View and navigation<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
             <div class="field">
-              <button id="upright-open" class="btn btn-secondary btn-sm" type="button" data-scene>Make upright…</button>
+              <p class="hint settings-timing">Applies now · orientation and navigation</p><button id="upright-open" class="btn btn-secondary btn-sm" type="button" data-scene>Make upright…</button>
             </div>
             <label class="field"><span>Sensitivity <output id="out-sensitivity">1.0</output></span><input id="sensitivity" type="range" min="0.4" max="2" step="0.05" value="1" /></label>
-          </details>
-          <details id="sec-perf" class="sec">
-            <summary>Performance<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <label class="switch-row"><span>Show stats overlay</span><input id="hud-switch" type="checkbox" class="switch" role="switch" /></label>
-            <dl id="perf-info" class="kv"></dl>
+            <label class="field-row"><span>Up axis <output id="up-using">Auto</output></span><span class="select"><select id="up-axis"><option value="auto" selected>Auto (detect)</option><option value="y">Y-up</option><option value="z">Z-up</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
+            <label class="switch-row"><span>Flip Y (OpenCV / COLMAP)</span><input id="flip-y" type="checkbox" class="switch" role="switch" /></label>
           </details>
           <details id="sec-advanced" class="sec">
             <summary>Advanced<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
-            <label class="field-row"><span>Up axis <output id="up-using">Auto</output></span><span class="select"><select id="up-axis"><option value="auto" selected>Auto (flat scans use Z-up)</option><option value="y">Y-up</option><option value="z">Z-up</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
-            <label class="switch-row"><span>Flip Y (OpenCV / COLMAP)</span><input id="flip-y" type="checkbox" class="switch" role="switch" /></label>
-            <label class="field-row" data-applies="splats" data-preload><span>SH degree</span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
+            <p class="hint settings-timing">Applies now, except center precision requires a reload.</p>
+            <label class="field-row" data-applies="splats" data-preload><span>SH degree <small>(rendered)</small></span><span class="select"><select id="sh-degree"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="field" data-applies="splats" data-preload><span>Splat cutoff <output id="out-splat-scale">1.0</output></span><input id="splat-scale" type="range" min="0.75" max="1.15" step="0.05" value="1" /></label>
             <label class="field" data-applies="splats" data-preload><span>LOD detail <output id="out-lod">1.0</output></span><input id="lod-scale" type="range" min="0.35" max="2" step="0.05" value="1" /></label>
             <label class="field-row"><span>Pixel ratio</span><span class="select"><select id="pixel-ratio"><option value="auto" selected>Auto</option><option value="1">1</option><option value="1.5">1.5</option><option value="2">2</option></select><svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-down"/></svg></span></label>
             <label class="switch-row" data-applies="splats" data-preload><span>2D Gaussian axes</span><input id="gs-2d" type="checkbox" class="switch" role="switch" checked /></label>
             <label class="switch-row" data-applies="splats" data-preload><span>Radial depth sort</span><input id="sort-radial" type="checkbox" class="switch" role="switch" checked /></label>
-            <label class="switch-row" data-applies="splats" data-preload><span>Extended precision on next load</span><input id="extended" type="checkbox" class="switch" role="switch" /></label>
+            <label class="switch-row" data-applies="splats" data-preload><span>Float32 centers <small>Requires reload</small></span><input id="extended" type="checkbox" class="switch" role="switch" /></label>
+            <p class="hint">Specialist rendering controls. The SH menu changes only bands already loaded; it cannot restore discarded source data.</p>
+            <details class="sec-details"><summary>Learn more about loading &amp; memory</summary>
             <p class="hint">
               Large Gaussian PLY files are read in chunks and packed outside the WASM heap, so a multi-gigabyte
               file is never one ArrayBuffer. Spherical harmonics drop first, then splats are subsampled, if the
@@ -317,19 +303,42 @@
               Level of detail is off unless the address includes <code>?lod=force</code>, and only for a cloud of at
               least 400,000 splats. Lower memory never builds that tree.
               Compressed formats (<code>.spz</code>, <code>.sog</code>, <code>.splat</code>, <code>.ksplat</code>,
-              <code>.rad</code>) only follow the rendered harmonics, the pixel ratio, and whether the previous scene
-              is cleared, because Spark decodes them itself.
+              <code>.rad</code>) are decoded by Spark itself, outside the SH/count budget planner. Rendered
+              harmonics and pixel ratio apply now; the float32-center request is passed to Spark on reload.
+              Source SH/count preservation is not verified for these formats, so Full source detail refuses them.
               A paged <code>.rad</code> is the bounded-memory route, and the format that loads instantly next time;
               baking one is a Spark <code>build-lod</code> step, not a download from this page.
             </p>
+            </details>
           </details>
-          <details id="sec-about" class="sec">
-            <summary>About<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+          <details id="sec-scene" class="sec">
+            <summary>Scene &amp; diagnostics<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <dl id="scene-info" class="kv"></dl>
+          <details id="sec-geo" class="sec" open hidden>
+            <summary>Georeference<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <dl id="geo-info" class="kv"></dl>
+            <div class="sec-actions">
+              <button id="geo-copy" class="btn btn-secondary btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
+              <a id="geo-epsg-link" class="btn btn-ghost btn-sm" href="https://epsg.io/" target="_blank" rel="noopener" hidden><svg class="icon icon-sm" aria-hidden="true"><use href="#i-external-link"/></svg>epsg.io</a>
+            </div>
+          </details>
+          <details id="sec-perf" class="sec">
+            <summary>Performance &amp; stats<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+            <label class="switch-row"><span>Show stats overlay</span><input id="hud-switch" type="checkbox" class="switch" role="switch" /></label>
+            <dl id="perf-info" class="kv"></dl>
+          </details>
+          </details>
+          <footer class="settings-footer">
+            <div class="field-row"><span>Appearance</span><button id="settings-theme" class="btn btn-secondary btn-sm" type="button"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-sun"/></svg><span class="theme-label">Light theme</span></button></div>
+          <details id="sec-about" class="sec-details">
+            <summary>About Omniview<svg class="icon icon-sm sec-chev" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
             <dl class="kv"><dt>Build</dt><dd id="build-id">dev</dd></dl>
             <p class="hint">Omniview is a real-time viewer for Gaussian splats, meshes, and point clouds.</p>
             <p class="hint"><a href="https://github.com/ZhangAoCanada/3Dviewer" target="_blank" rel="noopener">Source on GitHub</a> · Icons by Lucide (ISC)</p>
           </details>
+          </footer>
         </div>
+        <div id="quality-reload" class="quality-reload" hidden><p class="hint" role="status">Source changes are pending. The current scene stays until a successful reload.</p><button id="quality-reopen" class="btn btn-primary" type="button" hidden>Reload current scene</button></div>
       </aside>
 
       <div id="loading" class="loading">
@@ -405,9 +414,11 @@
       <dialog id="source-detail-dialog" class="dialog" aria-labelledby="source-detail-title" aria-describedby="source-detail-risk">
         <form method="dialog">
           <div class="dialog-head"><h2 id="source-detail-title">Load full source detail?</h2></div>
+          <div class="source-detail-copy">
           <p id="source-detail-risk">This bypasses conservative memory estimates, not browser or WebGL limits. It may exhaust RAM/VRAM, freeze this tab, or reset graphics. Available VRAM is unknown, even on high-end GPUs.</p>
           <p class="hint">Standard binary Gaussian PLY only: all splats and source SH bands, float32 centers. SH, color, scale and rotation still use Spark encoding — this is not lossless source precision. Other Gaussian formats are refused while this is on.</p>
           <p class="hint">The current scene stays until a successful replacement, so reopening temporarily needs memory for both scenes. Cancel keeps it. The original file is never changed. This session only; choose any quality preset to turn this off.</p>
+          </div>
           <div class="dialog-actions"><button class="btn btn-secondary" type="submit" value="cancel" autofocus>Keep automatic safeguards</button><button id="source-detail-confirm" class="btn btn-primary" type="submit" value="confirm">Accept risk and enable</button></div>
         </form>
       </dialog>

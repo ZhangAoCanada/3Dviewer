@@ -54,7 +54,7 @@ test('automatic uses a plain sentence and keeps the technical line closed', asyn
 test('the torus sample names this scan and what Lower memory would reopen', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
-  await expect(page.locator('#quality-consequence')).toContainText('This scan: 4,800 splats at SH 3 of 3');
+  await expect(page.locator('#quality-loaded-reason')).toContainText('4,800 of 4,800 splats · SH 3 of 3');
   await page.click('#panel-btn');
   await page.click('#quality-memory');
   await expect(page.locator('#quality-consequence')).toContainText('Reopen to apply: SH 1 of 3');

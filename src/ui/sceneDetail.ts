@@ -47,7 +47,9 @@ export function detailOf(
     reasons.push(`Showing ${formatDetailCount(retained)} of ${formatDetailCount(source)} ${noun}`);
   }
   if (loadedSh != null && sourceSh != null && loadedSh < sourceSh) {
-    reasons.push(`SH ${loadedSh} of ${sourceSh} loaded to fit memory`);
+    reasons.push(sourceSh > 3
+      ? `SH ${loadedSh} of ${sourceSh} loaded; renderer supports up to SH 3${loadedSh < 3 ? ', with further load-policy reduction' : ''}`
+      : `SH ${loadedSh} of ${sourceSh} loaded to fit memory`);
   }
   if (loadedSh != null && renderSh < loadedSh) {
     reasons.push(`Rendering SH ${renderSh} (set in Settings)`);
@@ -65,6 +67,20 @@ export function detailOf(
     sourceSh,
     reasons,
   };
+}
+
+/** Actual loaded state only; selecting a request must never make this claim Full. */
+export function loadedDetailSummary(stats: RenderableStats | undefined, state: DetailState, fullSourceLoaded: boolean): { label: string; reason: string } {
+  if (!stats) return { label: 'No scene yet', reason: 'Open a scene to see its actual loaded detail.' };
+  if (state.reduced) return { label: 'Reduced detail', reason: detailText(state) };
+  const detail = stats.detail;
+  if (detail?.sourceSh != null) return {
+    label: fullSourceLoaded ? 'Full source detail' : 'Full supported detail',
+    reason: `${detail.retainedCount.toLocaleString()} of ${detail.sourceCount.toLocaleString()} splats · SH ${state.activeSh} of ${detail.sourceSh} · ${stats.extra?.encoding ?? 'encoding unknown'}. Not lossless source precision.`,
+  };
+  if (stats.kind === 'splats') return { label: 'Source detail unknown', reason: 'Spark decoded this format; source SH/count preservation is not verified here.' };
+  const kind = stats.kind === 'mesh' ? 'Mesh' : stats.kind === 'points' ? 'Point cloud' : 'Scene';
+  return { label: `${kind} loaded`, reason: `${stats.primitives.toLocaleString()} primitives. Quality presets affect pixel ratio, not source geometry.` };
 }
 
 /** Badge title body. Reasons joined with a middle dot. */
