@@ -428,6 +428,8 @@ button.is-disabled:hover { background: transparent; }
 body:not(.is-fullscreen) .when-fullscreen,
 body.is-fullscreen .when-windowed { display: none; }
 @media (min-width: 641px) {
+  /* Desktop header menus float over the drawer; the phone sheet still covers chrome. */
+  .topbar { z-index: calc(var(--z-panel) + 1); }
   /* Keep bottom chrome on the viewport center. A side drawer used to recenter
      it in the leftover space, which made the toolbar jump. Shift only when the
      open drawer would cover the island, and only by that overlap. */
@@ -471,6 +473,7 @@ body.is-fullscreen .when-windowed { display: none; }
   .topbar #download-btn { width: var(--control-h); padding: 0; }
 }
 @media (max-width: 900px) {
+  .file-size, #file-detail .badge-label, #geo-badge-text { display: none; }
   .topbar #samples-btn { width: var(--control-h); padding: 0; }
   .top-actions .btn-label,
   .top-actions .btn-meta { display: none; }
@@ -497,6 +500,12 @@ body.is-fullscreen .when-windowed { display: none; }
   .toolbar { gap: 2px; padding: 2px; height: auto; }
   .toolbar > .divider { display: none; }
   .toolbar .seg { min-height: 44px; padding-inline: 8px; }
+}
+
+@media (max-width: 350px) and (pointer: coarse) {
+  .toolbar { gap: 0; padding-inline: 1px; }
+  .toolbar .segment { gap: 0; }
+  .toolbar .seg { padding-inline: 3px; }
 }
 
 .banner-slot {

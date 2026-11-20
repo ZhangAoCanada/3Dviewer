@@ -2,6 +2,9 @@ import { expect, test, type Page } from './test';
 import { gaussianPlyFixture } from '../tests/fixtures/gaussianPlyFixture';
 
 const profiles = [
+  { width: 320, height: 420, hasTouch: true },
+  { width: 641, height: 600, hasTouch: false },
+  { width: 641, height: 600, hasTouch: true },
   { width: 1280, height: 800, hasTouch: false },
   { width: 1920, height: 1080, hasTouch: false },
   { width: 360, height: 420, hasTouch: true },
@@ -77,3 +80,14 @@ for (const theme of ['light', 'dark'] as const) for (const profile of profiles) 
     });
   });
 }
+
+
+test('desktop Samples stays pointer reachable above an open Settings drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });await page.goto('/');
+  await page.click('#panel-btn');await expect(page.locator('#panel')).not.toHaveClass(/is-collapsed/);
+  await page.click('#samples-btn');
+  const crate = page.locator('#samples-menu').getByRole('menuitem', { name: 'Mesh crate (.glb)' });
+  await expect(crate).toBeInViewport();await crate.click(); // native hit testing, no force or DOM click
+  await expect(page.locator('#file-name')).toHaveText('crate.glb');await expect(page.locator('#hud-tris')).toHaveText('12');
+  await expect(page.locator('#panel')).not.toHaveClass(/is-collapsed/);
+});
