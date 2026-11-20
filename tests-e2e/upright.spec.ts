@@ -5,6 +5,7 @@ test('quarter turns undo, survive a reload, and reset', async ({ page }) => {
   await page.goto('/?sample=torus-ply');
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
   await page.click('#panel-btn');
+  await page.locator('#sec-scene > summary').click();
   await expect(page.locator('#scene-info')).toBeVisible();
 
   await page.click('#upright-btn');
@@ -19,6 +20,8 @@ test('quarter turns undo, survive a reload, and reset', async ({ page }) => {
   await page.click('#upright-x-cw');
   await page.reload();
   await expect(page.locator('#loading')).toBeHidden({ timeout: 60_000 });
+  await page.locator('#sec-scene > summary').click();
+  await expect(page.locator('#scene-info')).toBeVisible();
   await expect(page.locator('#scene-info')).toContainText('Turned 90°');
   await expect(page.locator('#toast-msg')).toHaveText('Restored your upright setting for this file.');
 

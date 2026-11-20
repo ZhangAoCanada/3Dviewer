@@ -666,6 +666,8 @@ export class ViewerApp {
       this.markSceneAdded();
       this.loadedPreset = this.settings.quality;
       this.loadedSourceDetail = 'automatic';
+      this.lastSource = null;
+      this.loadedExtendedPrecision = null;
       host.setFlip(false);
       this.uprightHistory = [];
       this.uprightStatus = this.orientationText();
@@ -747,6 +749,7 @@ export class ViewerApp {
     }
     const full = this.sourceDetail === 'full';
     must<HTMLInputElement>('#source-detail').checked = full;
+    must('#source-detail-field').hidden = this.items.length > 0 && (this.items[0]?.kind !== 'splats' || this.lastSource == null);
     must<HTMLInputElement>('#extended').disabled = full;
     const pending = this.needsSourceReload();
     const sourcePending = this.items.length > 0 && this.loadedSourceDetail !== this.sourceDetail;

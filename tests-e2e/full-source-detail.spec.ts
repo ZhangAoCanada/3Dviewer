@@ -117,3 +117,14 @@ test('a real WebGL context reset disables Full before bounded recovery rather th
   await expect(page.locator('#scene-info')).toContainText('2 of 3');
   await expect(page.locator('#file-detail')).toHaveAttribute('title', /SH 2 of 3/);
 });
+
+
+test('full detail can be requested before a first source import without claiming an unloaded scene', async ({ page }) => {
+  await page.goto('/');await enable(page);
+  await expect(page.locator('#quality-loaded-label')).toHaveText('No scene yet');
+  await expect(page.locator('#quality-reopen')).toBeHidden();
+  await page.locator('#file-input').setInputFiles({ name: 'first-source-sh3.ply', mimeType: 'application/octet-stream', buffer: gaussianPlyFixture({ degree: 3 }) });
+  await expect(page.locator('#loading')).toBeHidden();await expect(page.locator('#hud-splats')).toHaveText('8');
+  await expect(page.locator('#file-detail')).toHaveText(/Full source/);
+  await expect(page.locator('#scene-info')).toContainText('3 of 3');
+});

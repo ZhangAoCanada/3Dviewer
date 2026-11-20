@@ -98,3 +98,13 @@ test('short narrow full-detail consent keeps safe default focus, Escape cancel a
   await expect(page.locator('#quality-loaded-label')).not.toHaveText('Full source');
   await expect(page.locator('#file-detail')).toHaveText(/Reopen required/);
 });
+
+
+test('generated scenes have no reloadable source and do not offer a misleading full-source operation', async ({ page }) => {
+  await page.goto('/?demo=slab&n=1000');await expect(page.locator('#loading')).toBeHidden();
+  await expect(page.locator('#file-name')).toHaveText('synthetic-slab.ply');await page.click('#panel-btn');
+  await expect(page.locator('#source-detail')).toBeHidden();
+  await page.click('#quality-memory');await expect(page.locator('#quality-reopen')).toBeHidden();
+  await expect(page.locator('#file-detail')).not.toHaveText(/Reopen required/);
+  await expect(page.locator('#file-name')).toHaveText('synthetic-slab.ply');
+});
