@@ -67,7 +67,10 @@ for (const theme of ['light', 'dark'] as const) for (const profile of profiles) 
       await expect(page.locator('#panel')).not.toHaveClass(/is-collapsed/);
       await expect(page.locator('#quality-loaded-reason')).toContainText('requested load cap');
       const opened = await geometry(page);
-      expect(opened.panel.width).toBe(profile.width <= 640 ? profile.width - 16 : 400);
+      const expectedWidth = profile.width <= 640 ? profile.width - 16 : 400;
+      await expect(page.locator('#panel')).toHaveCSS('width', `${expectedWidth}px`);
+      // Intro translation can round DOMRect coordinates by ~0.00003px.
+      expect(opened.panel.width).toBeCloseTo(expectedWidth, 3);
       if (profile.width > 640) expect(opened.panel.y).toBeGreaterThanOrEqual(opened.actions.bottom + 7);
       expect(await page.locator('.panel-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       await page.keyboard.press('Escape');await expect(page.locator('#panel-btn')).toBeFocused();
