@@ -2,6 +2,24 @@
 
 Release availability and assets are determined by GitHub Releases, not by this file.
 
+## 0.3.3
+
+## What changed
+
+- Keep queued pick-index work pending during the existing orientation debounce. This prevents premature Ready/benchmark-complete reports followed by renewed index progress; the final Ready badge still hides on its original timer after work actually settles. No timeout increase, retry loop or slower index scheduling.
+- Applied the exact user-selected Gaussian polish **v5** Omniview identity, not aligned-v6: solid teal, seven Gaussian ellipsoids, mesh and points in one static O. The full outlined-wordmark vector is retained as the canonical source; faithful symbol derivatives cover header, favicon, PWA and Windows/macOS/Linux desktop icons. Dark full-lockup variant changes only wordmark color. No animation or application rename.
+- Balanced content-sized header groups with consistent padding/heights and quieter shadows. Desktop download callout compacts at narrower widths; empty phones retain the wordmark and loaded phones prioritize filename space. Header controls remain34px fine-pointer /44px coarse-pointer without shrinking14px labels.
+- Fixed narrow coarse-pointer document overflow and shifted header insets; preserved reachable44px phone navigation controls, long-name detail access, the approved Settings layout and Samples pointer access above an open desktop Settings drawer.
+- Unified icon generation on the exact approved master, with fidelity, transparency, format and mask-safe-area regressions. Tiny16–24px rasterization naturally merges fine mesh/point detail; no alternate solid-ring motif was substituted.
+
+## Verification and limits
+
+The integrated candidate passed **380 unit tests**, **167 default browser tests** and **24 exact-production-preview tests**. **51 optional tests were skipped, not passed**:50 opt-in UI-shot cases and1 live-release API lookup. Actual light/dark desktop/narrow captures and50 matched geometry states preserve the reviewed toolbar layout. Native icon PNG/ICO/ICNS assets were decoded and inspected; that is not native installation proof. Release-head CI and publication checks are recorded separately with the release evidence.
+
+Installers remain **unsigned/not notarized** (macOS uses ad-hoc signing). Windows SmartScreen/macOS Gatekeeper may warn or block; existing system WebView dependencies remain (WebView2, WKWebView, WebKitGTK). Native installation, runtime, upgrade, signing/notarization, installed-PWA/icon-cache behavior, physical touch, assistive-technology acceptance and actual-GPU capacity/performance have not been certified. No updater/security-policy changes. Existing tabs/installations may require normal reload/update; no upgrade-path acceptance is claimed.
+
+The existing Full-source feature remains session-only for supported binary Gaussian PLY and is not lossless Spark precision or a VRAM/RTX5090-fit guarantee. No new quality/planner behavior is introduced in this patch.
+
 ## 0.3.2
 
 ## What changed

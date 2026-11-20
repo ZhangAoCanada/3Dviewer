@@ -119,11 +119,33 @@ test('slab badge reaches ready and then hides', async () => {
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-dev-shm-usage'],
   });
   const page = await browser.newPage({ baseURL: origin });
+  const marks: { hidden: boolean; label: string; title: string }[] = [];
+  await page.exposeFunction('__qualityMark', (hidden: unknown, label: unknown, title: unknown) => {
+    if (typeof hidden !== 'boolean' || typeof label !== 'string' || typeof title !== 'string') throw new Error('Invalid quality trace');
+    marks.push({ hidden, label, title });
+  });
+  await page.addInitScript(() => {
+    addEventListener('DOMContentLoaded', () => {
+      const badge = document.getElementById('file-quality');
+      if (!badge) throw new Error('Missing quality badge');
+      const sample = () => {
+        const send = Reflect.get(window, '__qualityMark');
+        if (typeof send === 'function') void send(badge.hidden, document.getElementById('file-quality-label')?.textContent ?? '', badge.title);
+      };
+      new MutationObserver(sample).observe(badge, { attributes: true, childList: true, subtree: true, characterData: true });
+      sample();
+    }, { once: true });
+  });
   try {
     await page.goto('/?demo=slab&n=300000');
     const badge = page.locator('#file-quality');
     await expect(badge).toHaveText('Ready', { timeout: 45_000 });
     await expect(badge).toBeHidden({ timeout: 10_000 });
+    await expect.poll(() => marks.some(mark => !mark.hidden && mark.label === 'Ready')).toBe(true);
+    const firstReady = marks.findIndex(mark => !mark.hidden && mark.label === 'Ready');
+    expect(marks.some(mark => !mark.hidden && mark.title.startsWith('Building pick index'))).toBe(true);
+    expect(marks.slice(firstReady).filter(mark => !mark.hidden).every(mark => mark.label === 'Ready')).toBe(true);
+    await test.info().attach('quality-lifecycle.json', { body: JSON.stringify(marks, null, 2), contentType: 'application/json' });
     // Close the owned browser directly; unloading a busy SwiftShader page can wedge navigation.
   } finally {
     await browser.close();

@@ -77,6 +77,8 @@
   --inset: 12px;
   --gap: 8px;
   --island-h: calc(var(--control-h) + 2 * var(--cluster-pad));
+  --header-control-h: 34px;
+  --header-h: calc(var(--header-control-h) + 2 * var(--cluster-pad) + 2px);
   --panel-w: 400px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
@@ -136,6 +138,7 @@
 @media (pointer: coarse) {
   :root {
     --control-h: 44px;
+    --header-control-h: 44px;
     --control-h-sm: 36px;
     --control-h-lg: 48px;
     --icon-size: 20px;
@@ -334,6 +337,8 @@ button.is-disabled:hover { background: transparent; }
 @media (pointer: fine) { .hint-touch { display: none; } }
 
 .topbar {
+  --control-h: var(--header-control-h);
+  --island-h: var(--header-h);
   position: absolute;
   z-index: var(--z-topbar);
   top: calc(var(--safe-top) + var(--inset));
@@ -341,11 +346,13 @@ button.is-disabled:hover { background: transparent; }
   right: calc(var(--safe-right) + var(--inset));
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--gap);
   pointer-events: none;
 }
 .topbar > * { pointer-events: auto; }
+.topbar > .island { border-radius: 12px; box-shadow: var(--shadow-sm); }
+.topbar .btn:not(.btn-icon) { padding-inline: 10px; }
 .brand,
 .top-actions,
 .toolbar {
@@ -353,10 +360,10 @@ button.is-disabled:hover { background: transparent; }
 }
 .brand {
   min-width: 0;
-  padding-inline: 10px var(--cluster-pad);
+  padding-inline: 12px;
   gap: var(--space-2);
 }
-.brand-name { font-weight: 600; letter-spacing: var(--tracking-tight); }
+.brand-name { flex: none; white-space: nowrap; font-weight: 600; letter-spacing: var(--tracking-tight); }
 .mark {
   width: 20px;
   height: 20px;
@@ -366,12 +373,14 @@ button.is-disabled:hover { background: transparent; }
 }
 .mark.lg { width: 42px; height: 42px; }
 .file-chip {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
 }
 .file-name {
+  min-width: 0;
   max-width: 32ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -407,6 +416,7 @@ button.is-disabled:hover { background: transparent; }
 .badge-geo { border: 0; cursor: pointer; }
 .badge-geo:hover { background: var(--color-active); }
 .top-actions { flex: none; }
+.topbar #file-detail, .topbar #geo-badge { height: var(--control-h); min-width: var(--control-h); justify-content: center; }
 
 .toolbar {
   position: absolute;
@@ -418,6 +428,8 @@ button.is-disabled:hover { background: transparent; }
 body:not(.is-fullscreen) .when-fullscreen,
 body.is-fullscreen .when-windowed { display: none; }
 @media (min-width: 641px) {
+  /* Desktop header menus float over the drawer; the phone sheet still covers chrome. */
+  .topbar { z-index: calc(var(--z-panel) + 1); }
   /* Keep bottom chrome on the viewport center. A side drawer used to recenter
      it in the leftover space, which made the toolbar jump. Shift only when the
      open drawer would cover the island, and only by that overlap. */
@@ -455,7 +467,14 @@ body.is-fullscreen .when-windowed { display: none; }
   }
 }
 
+/* Keep primary action labels, without the long download callout consuming half a laptop header. */
+@media (max-width: 1440px) {
+  #download-btn .btn-label, #download-btn .btn-meta { display: none; }
+  .topbar #download-btn { width: var(--control-h); padding: 0; }
+}
 @media (max-width: 900px) {
+  .file-size, #file-detail .badge-label, #geo-badge-text { display: none; }
+  .topbar #samples-btn { width: var(--control-h); padding: 0; }
   .top-actions .btn-label,
   .top-actions .btn-meta { display: none; }
   #open-btn .btn-label { display: inline; }
@@ -464,11 +483,29 @@ body.is-fullscreen .when-windowed { display: none; }
 }
 @media (max-width: 640px) {
   .brand-name { display: none; }
+  .brand:has(#file-chip[hidden]) .brand-name { display: inline; }
+  #file-kind, #geo-badge-text { display: none; }
+  #file-quality { flex: 0 4 auto; min-width: 0; }
+  #file-quality-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   #open-btn .btn-label { display: none; }
   #open-btn { width: var(--control-h); padding: 0; }
   .file-size { display: none; }
   .file-name { max-width: none; flex: 1 1 auto; }
   .badge-label { display: none; }
+}
+
+/* Coarse navigation used to overflow 360px and scroll both header islands sideways. */
+@media (max-width: 640px) and (pointer: coarse) {
+  :root { --island-h: calc(var(--control-h) + 2 * var(--cluster-pad) + 2px); }
+  .toolbar { gap: 2px; padding: 2px; height: auto; }
+  .toolbar > .divider { display: none; }
+  .toolbar .seg { min-height: 44px; padding-inline: 8px; }
+}
+
+@media (max-width: 350px) and (pointer: coarse) {
+  .toolbar { gap: 0; padding-inline: 1px; }
+  .toolbar .segment { gap: 0; }
+  .toolbar .seg { padding-inline: 3px; }
 }
 
 .banner-slot {
@@ -483,7 +520,7 @@ body.is-fullscreen .when-windowed { display: none; }
 }
 .banner {
   position: relative;
-  top: calc(var(--safe-top) + var(--inset) + 48px);
+  top: calc(var(--safe-top) + var(--inset) + var(--header-h) + var(--gap));
   max-width: 520px;
   height: auto;
   gap: var(--space-2);
@@ -552,7 +589,7 @@ body.is-fullscreen .when-windowed { display: none; }
 .hud {
   position: absolute;
   z-index: var(--z-hud);
-  top: calc(var(--safe-top) + var(--inset) + var(--island-h) + var(--gap));
+  top: calc(var(--safe-top) + var(--inset) + var(--header-h) + var(--gap));
   left: calc(var(--safe-left) + var(--inset));
   flex-direction: column;
   align-items: stretch;
@@ -721,7 +758,7 @@ input[type='range']::-moz-range-thumb {
 .panel {
   position: absolute;
   z-index: var(--z-panel);
-  top: calc(var(--safe-top) + var(--inset) + var(--island-h) + var(--gap));
+  top: calc(var(--safe-top) + var(--inset) + var(--header-h) + var(--gap));
   right: calc(var(--safe-right) + var(--inset));
   bottom: calc(var(--safe-bottom) + var(--inset));
   width: min(var(--panel-w), calc(100vw - 2 * var(--inset)));
@@ -888,7 +925,7 @@ body.is-leveling #view { cursor: crosshair; }
 .empty {
   position: absolute;
   inset:
-    calc(var(--safe-top) + var(--inset) + var(--island-h) + var(--gap))
+    calc(var(--safe-top) + var(--inset) + var(--header-h) + var(--gap))
     calc(var(--safe-right) + var(--inset))
     calc(var(--safe-bottom) + var(--inset) + var(--island-h) + var(--gap))
     calc(var(--safe-left) + var(--inset));
@@ -900,14 +937,14 @@ body.is-leveling #view { cursor: crosshair; }
   z-index: 2;
   pointer-events: none;
 }
-/* Empty content and notices share available space rather than covering each other.
-   Viewport, header, drawer and loaded-scene controls keep their existing geometry. */
+/* Empty content and notices share space; header and bottom-control extents are
+   reserved independently so the start card stays clear of both. */
 #app:has(> #empty:not([hidden])) {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   gap: var(--gap);
   padding:
-    calc(var(--safe-top) + var(--inset) + var(--island-h) + var(--gap))
+    calc(var(--safe-top) + var(--inset) + var(--header-h) + var(--gap))
     calc(var(--safe-right) + var(--inset))
     calc(var(--safe-bottom) + var(--inset) + var(--island-h) + var(--gap))
     calc(var(--safe-left) + var(--inset));
