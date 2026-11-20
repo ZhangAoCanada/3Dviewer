@@ -72,15 +72,26 @@ test('rate-limited cached metadata is honest, does not overflow phone UI, and re
   const start = new Date('2026-11-20T11:00:00Z');
   await page.clock.install({ time: start });
   await page.setViewportSize({ width: 360, height: 420 });
-  await page.addInitScript(() => localStorage.setItem('3dviewer-release', JSON.stringify({ tag: 'v0.3.2', at: Date.now() })));
+  await page.addInitScript(() => {
+    localStorage.setItem('3dviewer-release', JSON.stringify({ tag: 'v0.3.2', at: Date.now() }));
+    const fetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (typeof input === 'string' && input.endsWith('/releases/latest')) {
+        const root = document.documentElement;
+        root.dataset.releaseFetches = String(Number(root.dataset.releaseFetches ?? 0) + 1);
+      }
+      return fetch(input, init);
+    };
+  });
   let hits = 0;
   await page.route(api, (route) => ++hits === 1
-    ? route.fulfill({ status: 429, headers: { 'Retry-After': '120' }, body: '{}' })
+    ? route.fulfill({ status: 429, headers: { 'Retry-After': '120', 'Access-Control-Expose-Headers': 'Retry-After' }, body: '{}' })
     : route.fulfill({ json: { tag_name: 'v0.3.3' } }));
   await page.goto('/');
   await expect(page.locator('#download-menu-version')).toHaveText('v0.3.2 (cached)');
   await page.clock.setSystemTime(new Date(start.getTime() + 61_000));
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(page.locator('html')).toHaveAttribute('data-release-fetches', '1');
   expect(hits).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.clock.setSystemTime(new Date(start.getTime() + 121_000));
