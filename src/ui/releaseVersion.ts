@@ -105,17 +105,18 @@ export function writeCachedRelease(storage: StorageLike, tag: string, at: number
 }
 
 function retryDelay(response: Response): number {
+  let delay = 0;
   const retry = response.headers.get('retry-after');
   if (retry) {
     const seconds = Number(retry);
-    const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retry) - Date.now();
-    if (Number.isFinite(delay) && delay >= 0) return delay;
+    const retryMs = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retry) - Date.now();
+    if (Number.isFinite(retryMs) && retryMs > 0) delay = retryMs;
   }
   if (response.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000 - Date.now();
-    if (Number.isFinite(reset) && reset > 0) return reset;
+    if (Number.isFinite(reset) && reset > 0) delay = Math.max(delay, reset);
   }
-  return 0;
+  return delay;
 }
 
 export async function refreshRelease(signal?: AbortSignal): Promise<ReleaseCheck> {

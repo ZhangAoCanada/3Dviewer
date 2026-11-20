@@ -47,3 +47,9 @@ it('aborts a stalled optional request after five seconds', async () => {
   const pending = refreshRelease(); await vi.advanceTimersByTimeAsync(5000);
   expect(await pending).toEqual({ kind: 'unavailable', retryAfterMs: 0 });
 });
+
+it('respects the longer cooldown when GitHub exposes both retry and quota-reset headers', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-20T11:00:00Z'));
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403, headers: { 'Retry-After': '120', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Date.now() / 1000 + 600) } })));
+  expect(await refreshRelease()).toEqual({ kind: 'unavailable', retryAfterMs: 600_000 });
+});
