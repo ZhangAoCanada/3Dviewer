@@ -1,5 +1,10 @@
 # Omniview
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/omniview-lockup-dark.svg">
+  <img src="assets/brand/omniview-lockup.svg" width="240" height="240" alt="Omniview: solid, Gaussian, mesh and point representations in one O">
+</picture>
+
 A real-time viewer for 3D Gaussian splats, meshes, and point clouds. It runs in the browser on desktop, phones, and iPads, and is set up for [GitHub Pages](https://zhangaocanada.github.io/3Dviewer/).
 
 Phase 1 loads a file and draws it. A standard Gaussian `.ply` is decoded in a worker, in chunks, straight into Spark's packed splats, so a multi-gigabyte file is not one `ArrayBuffer` and does not have to fit in the WASM heap. A header `element vertex` count that does not match the body is replaced by the body size when the stride divides it. SH degree drops, then splats are subsampled, when the device budget is too small. Paged `.rad` (Spark `build-lod`) is what to open the next time; that bake is not done in the browser. Details are in [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -49,7 +54,7 @@ npm run build
 npm run preview   # http://localhost:4173/3Dviewer/
 ```
 
-`npm run generate:assets` rebuilds the small files in `public/samples/`. `npm run build:icons` rebuilds the favicon, PWA icons, header mark, and Tauri icons from `assets/brand/omniview.svg`. The app is an installable PWA. A new deploy shows a Reload toast; the build id in the About section is the commit (or `VITE_BUILD_LABEL`) baked into that build.
+`npm run generate:assets` rebuilds the small files in `public/samples/`. `npm run build:icons` rebuilds the favicon, PWA icons, header mark, and Tauri icons from the exact approved v5 master `assets/brand/omniview.svg`; see [brand sources and derivation](assets/brand/README.md). The app is an installable PWA. A new deploy shows a Reload toast; the build id in the About section is the commit (or `VITE_BUILD_LABEL`) baked into that build.
 
 Production `base` is `/3Dviewer/` so asset URLs match GitHub Pages. The desktop build sets `base` to `./` when the Tauri CLI is the one invoking it.
 
