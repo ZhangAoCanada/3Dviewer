@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { expect, test } from './test';
 
 const release = 'https://github.com/ZhangAoCanada/3Dviewer/releases/latest';
@@ -65,8 +64,7 @@ test('shows the latest release tag on Download', async ({ page }) => {
   await expect(page.locator('#download-version')).toHaveText('v9.9.9', { timeout: 10_000 });
 });
 
-test('falls back to the packaged version when the release API fails', async ({ page }) => {
-  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
+test('does not advertise a packaged website version when installer metadata is unavailable', async ({ page }) => {
   let hits = 0;
   await page.route(releaseApi, (route) => {
     hits += 1;
@@ -74,10 +72,11 @@ test('falls back to the packaged version when the release API fails', async ({ p
   });
   await page.goto('/');
   await expect.poll(() => hits, { timeout: 8_000 }).toBeGreaterThan(0);
-  await expect(page.locator('#download-version')).toHaveText(`v${version}`);
+  await expect(page.locator('#download-version')).toHaveText('');
+  await expect(page.locator('#download-version')).toHaveAttribute('data-release-state', 'unavailable');
 });
 
-test('a fresh release cache does not ask GitHub again', async ({ page }) => {
+test('a fresh release cache is revalidated and marked cached if that check fails', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('3dviewer-release', JSON.stringify({ tag: 'v1.2.3', at: Date.now() }));
   });
@@ -87,9 +86,8 @@ test('a fresh release cache does not ask GitHub again', async ({ page }) => {
     return route.abort();
   });
   await page.goto('/');
-  await expect(page.locator('#download-version')).toHaveText('v1.2.3');
-  await page.waitForTimeout(1000);
-  expect(hits).toBe(0);
+  await expect(page.locator('#download-version')).toHaveText('v1.2.3 (cached)');
+  expect(hits).toBe(1);
 });
 
 test('the desktop app does not ask for the latest release', async ({ page }) => {
