@@ -18,7 +18,7 @@ const INDEX_AFTER_MS = 600;
 /** What is still refining after the loading card closes. */
 export interface Refinement {
   pending: boolean;
-  /** Pick-index build fraction, or null when no index job is running. */
+  /** Pick-index fraction; zero includes queued work, null means none pending. */
   index: number | null;
   paging: boolean;
   sorting: boolean;
@@ -280,7 +280,7 @@ export class SceneHost {
    * Meshes and clouds that finish before the next stats sample report nothing pending.
    */
   refinement(): Refinement {
-    const index = this.indexJob ? this.indexJob.progress : null;
+    const index = this.indexJob ? this.indexJob.progress : this.pendingIndexBox ? 0 : null;
     const paging = this.pagerPending();
     const sorting = this.sortingPending();
     return { pending: index != null || paging || sorting, index, paging, sorting };
