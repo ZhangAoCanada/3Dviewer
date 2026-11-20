@@ -3,7 +3,7 @@ import { plyHeaderBoundary } from '../../core/plyHeader';
 import { PLY_HEADER_LIMIT } from '../../core/plyLimits';
 import type { ByteSource } from '../../core/byteSource';
 import { epsgCode } from '../../core/epsg';
-import type { GaussianLoadOverrides, GaussianTextureLimits, MemoryBudget } from '../../core/types';
+import type { GaussianLoadOverrides, GaussianTextureLimits, MemoryBudget, ShReductionReason } from '../../core/types';
 import {
   paddedSplatCount,
   planGaussianDecode,
@@ -182,6 +182,7 @@ export interface DecodedGaussian {
   sourceSh: number;
   extended: boolean;
   /** Float32 centers were requested and the plan fell back to half-float. */
+  shReduction?: ShReductionReason;
   precisionReduced: boolean;
   limits: SplatEncodingLimits;
   packedArray?: Uint32Array;
@@ -442,6 +443,7 @@ export async function decodeGaussianPly(source: ByteSource, options: DecodeGauss
     shDegree: plan.shDegree,
     sourceSh: header.sourceSh,
     extended: plan.extended,
+    shReduction: plan.shReduction,
     precisionReduced: options.preferExtended && !plan.extended,
     limits,
     packedArray,

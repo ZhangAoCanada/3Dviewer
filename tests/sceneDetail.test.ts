@@ -42,9 +42,9 @@ describe('detailOf', () => {
       1,
       samePixel,
     );
-    expect(state.reasons).toEqual(['SH 1 of 3 loaded to fit memory']);
+    expect(state.reasons).toEqual(['SH 1 of 3 loaded']);
     expect(state.activeSh).toBe(1);
-    expect(detailSceneText(state)).toBe('Reduced: SH 1 of 3');
+    expect(detailSceneText(state)).toBe('Reduced: SH 1 of 3 loaded');
   });
 
   it.each([2, 3])('distinguishes unsupported source SH4 from memory/load-policy reduction (stored SH%i)', (loadedSh) => {
@@ -131,14 +131,14 @@ describe('detailOf', () => {
     expect(state.sourceSh).toBe(3);
     expect(state.reasons).toEqual([
       'Showing 674,435 of 14,161,120 splats',
-      'SH 1 of 3 loaded to fit memory',
+      'SH 1 of 3 loaded',
       'Rendering SH 0 (set in Settings)',
       'Half-float centers to fit memory',
       'Pixel ratio 1 instead of 2',
     ]);
     expect(detailText(state)).toBe(state.reasons.join(' · '));
     expect(detailSceneText(state)).toBe(
-      'Reduced: 674,435 of 14,161,120 splats · SH 1 of 3 · Rendering SH 0 (set in Settings) · Half-float centers to fit memory · Pixel ratio 1 instead of 2',
+      'Reduced: 674,435 of 14,161,120 splats · SH 1 of 3 loaded · Rendering SH 0 (set in Settings) · Half-float centers to fit memory · Pixel ratio 1 instead of 2',
     );
   });
 
@@ -149,9 +149,9 @@ describe('detailOf', () => {
       samePixel,
     );
     expect(detailText(state)).toBe(
-      'Showing 674,335 of 14,161,020 splats · SH 1 of 3 loaded to fit memory',
+      'Showing 674,335 of 14,161,020 splats · SH 1 of 3 loaded',
     );
-    expect(detailSceneText(state)).toBe('Reduced: 674,335 of 14,161,020 splats · SH 1 of 3');
+    expect(detailSceneText(state)).toBe('Reduced: 674,335 of 14,161,020 splats · SH 1 of 3 loaded');
   });
 });
 
@@ -171,5 +171,32 @@ describe('actual loaded summary compatibility', () => {
     const state = detailOf(stats ? [stats] : [], renderSh, samePixel);
     const actual = loadedDetailSummary(stats, state, full);
     expect(actual.label).toBe(label);expect(actual.reason).toContain(reason);
+  });
+});
+
+
+describe('load evidence versus request and rendering', () => {
+  it.each([
+    { reason: undefined, suffix: 'SH 2 of 3 loaded' },
+    { reason: 'request' as const, suffix: 'SH 2 of 3 loaded (requested load cap)' },
+    { reason: 'budget' as const, suffix: 'SH 2 of 3 loaded (memory budget)' },
+  ])('uses recorded $reason evidence, neutral for legacy/unknown metadata', ({ reason, suffix }) => {
+    const stats = splats({ sourceCount: 8, retainedCount: 8, sourceSh: 3, loadedSh: 2, shReduction: reason });
+    const state = detailOf([stats], 1, samePixel);
+    expect(state.reasons).toEqual([suffix, 'Rendering SH 1 (set in Settings)']);
+    expect(loadedDetailSummary(stats, state, false).reason).toContain(suffix);
+    if (reason !== 'budget') expect(detailSceneText(state)).not.toContain('fit memory');
+  });
+  it('does not infer a common memory cause for a mixed aggregate', () => {
+    const state = detailOf([
+      splats({ sourceCount: 8, retainedCount: 8, sourceSh: 3, loadedSh: 2, shReduction: 'budget' }),
+      splats({ sourceCount: 8, retainedCount: 8, sourceSh: 3, loadedSh: 2, shReduction: 'request' }),
+    ], 3, samePixel);
+    expect(state.reasons).toEqual(['SH 2 of 3 loaded']);
+  });
+  it.each(['request', 'budget'] as const)('preserves unsupported-source ceiling plus known further %s restriction', (shReduction) => {
+    const state = detailOf([splats({ sourceCount: 8, retainedCount: 8, sourceSh: 4, loadedSh: 2, shReduction })], 3, samePixel);
+    expect(detailText(state)).toContain('renderer supports up to SH 3');
+    expect(detailText(state)).toContain(shReduction === 'request' ? 'requested load cap' : 'memory-budget reduction');
   });
 });

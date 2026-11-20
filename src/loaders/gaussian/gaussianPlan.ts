@@ -1,5 +1,5 @@
-import { FullSourceDetailError } from '../../core/sourceDetail';
-import type { GaussianLoadOverrides, GaussianTextureLimits, MemoryBudget } from '../../core/types';
+import { FullSourceDetailError, shReductionText } from '../../core/sourceDetail';
+import type { GaussianLoadOverrides, GaussianTextureLimits, MemoryBudget, ShReductionReason } from '../../core/types';
 
 /** Spark's splat texture width. Packed buffers must cover a whole texture. */
 export const SPLAT_TEX_WIDTH = 2048;
@@ -25,6 +25,7 @@ export type ShDegree = 0 | 1 | 2 | 3;
 
 export interface GaussianDecodePlan {
   shDegree: ShDegree;
+  shReduction?: ShReductionReason;
   /** Keep 1 of every `stride` source splats. */
   stride: number;
   decodedCount: number;
@@ -131,12 +132,12 @@ export function planGaussianDecode(args: {
   const estimatedBytes = estimateDecodedBytes(decodedCount, shDegree, extended);
   const lod = Boolean(args.overrides?.forceLod) && decodedCount >= LOD_ABOVE;
 
+  const shReduction: ShReductionReason | undefined = shDegree >= Math.min(3, sourceSh) ? undefined
+    : shDegree === shCap && args.overrides?.maxSh != null && args.overrides.maxSh <= args.budget.maxSh ? 'request' : 'budget';
   const notes: string[] = [];
   if (sourceSh > 3) notes.push(`Source SH ${sourceSh} exceeds the supported SH0–3 renderer; higher bands are not loaded.`);
   if (shDegree < Math.min(3, sourceSh)) {
-    notes.push(
-      `Spherical harmonics reduced from degree ${sourceSh} to ${shDegree} to fit the ${args.budget.profile} memory budget.`,
-    );
+    notes.push(shReductionText(shDegree, sourceSh, shReduction));
   }
   if (args.preferExtended && !extended) {
     notes.push('Using half-float centers because float32 centers did not fit in memory.');
@@ -149,6 +150,7 @@ export function planGaussianDecode(args: {
 
   return {
     shDegree,
+    shReduction,
     stride,
     decodedCount,
     extended,

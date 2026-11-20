@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blobSource } from '../src/core/byteSource';
 import { classifyFailure } from '../src/core/loadFailure';
-import { FullSourceDetailError } from '../src/core/sourceDetail';
+import { FullSourceDetailError, shReductionText } from '../src/core/sourceDetail';
 import { detectMemoryBudget } from '../src/core/memoryBudget';
 import { resolvePreset, mergePresetOverrides } from '../src/core/qualityPreset';
 import { decodeGaussianPly } from '../src/loaders/gaussian/decodeGaussianPly';
@@ -91,5 +91,31 @@ describe('explicit full source detail', () => {
       if (m.type === 'error') throw new Error(m.message);
     });
     expect(results).toEqual(['result']);
+  });
+});
+
+
+describe('recorded SH load-reduction provenance', () => {
+  const cases = [
+    { name: 'explicit cap with ample budget', budget: desktop, overrides: { maxSh: 2 as const }, degree: 2, reason: 'request' },
+    { name: 'real buffer-budget step-down', budget: tiny, overrides: undefined, degree: 2, reason: 'budget' },
+    { name: 'budget cap stricter than explicit cap', budget: { ...desktop, maxSh: 1 as const }, overrides: { maxSh: 2 as const }, degree: 1, reason: 'budget' },
+    { name: 'explicit cap stricter than budget cap', budget: { ...desktop, maxSh: 2 as const }, overrides: { maxSh: 1 as const }, degree: 1, reason: 'request' },
+    { name: 'buffer step-down below explicit cap', budget: { ...desktop, cpuBytes: 80_000 }, overrides: { maxSh: 2 as const }, degree: 1, reason: 'budget' },
+    { name: 'source-equivalent cap is not blamed for further budget step-down', budget: tiny, overrides: { maxSh: 3 as const }, degree: 2, reason: 'budget' },
+  ];
+  it.each(cases)('$name', async ({ budget, overrides, degree, reason }) => {
+    const decoded = await decodeGaussianPly(blobSource(new Blob([gaussianPlyFixture()])), { budget, preferExtended: true, overrides });
+    expect([decoded.sourceSh, decoded.shDegree, decoded.count, decoded.shReduction]).toEqual([3, degree, 8, reason]);
+    expect(decoded.notes).toContain(shReductionText(degree, 3, decoded.shReduction));
+    if (reason === 'request') expect(decoded.notes.join(' ')).not.toContain('fit memory');
+  });
+  it('carries requested-cap evidence through the production worker response', async () => {
+    let seen = false;
+    await handleDecodeRequest({ blob: new Blob([gaussianPlyFixture()]), budget: desktop, preferExtended: false, overrides: { maxSh: 2 } }, (message) => {
+      if (message.type === 'error') throw new Error(message.message);
+      if (message.type === 'result') { seen = true;expect(message.data.shReduction).toBe('request');expect(message.data.notes.join(' ')).toContain('requested load cap'); }
+    });
+    expect(seen).toBe(true);
   });
 });

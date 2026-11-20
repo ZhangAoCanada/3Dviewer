@@ -21,7 +21,10 @@ async function file(page: Page, degree: 0 | 1 | 2 | 3 | 4 = 3): Promise<void> {
 
 test('risk consent is explicit; pending is not mislabeled full; actual reopen loads source SH3', async ({ page }) => {
   await file(page);await settings(page);
-  await expect(page.locator('#file-detail')).toHaveAttribute('title', /SH 2 of 3/);
+  await expect(page.locator('#file-detail')).toHaveAttribute('title', /SH 2 of 3 loaded \(requested load cap\)/);
+  await expect(page.locator('#quality-loaded-reason')).toContainText('requested load cap');
+  await expect(page.locator('#quality-loaded-reason')).not.toContainText('fit memory');
+  await expect(page.locator('#scene-info')).toContainText('requested load cap');
   await page.click('#source-detail');
   await page.getByRole('button', { name: 'Keep automatic safeguards', exact: true }).click();
   await expect(page.locator('#source-detail')).not.toBeChecked();
@@ -29,11 +32,14 @@ test('risk consent is explicit; pending is not mislabeled full; actual reopen lo
   await enable(page);
   await expect(page.locator('#file-detail')).toHaveText(/Reopen required/);
   await expect(page.locator('#scene-info')).toContainText('2 of 3');
+  await expect(page.locator('#quality-loaded-reason')).toContainText('requested load cap');
+  await expect(page.locator('#file-detail')).toHaveAttribute('title', /requested load cap/);
   await page.click('#quality-reopen');
   await expect(page.locator('#loading')).toBeHidden();
   await expect(page.locator('#scene-info')).toContainText('3 of 3');
   await expect(page.locator('#scene-info')).toContainText('float32 centers');
   await expect(page.locator('#file-detail')).toHaveText(/Full source/);
+  await expect(page.locator('#quality-loaded-reason')).not.toContainText('requested load cap');
   await expect(page.locator('#file-detail')).toHaveAttribute('title', /not lossless precision/);
   await expect(page.locator('#hud-splats')).toHaveText('8');
   await expect(page.locator('#quality-reopen')).toBeHidden();
@@ -115,7 +121,12 @@ test('a real WebGL context reset disables Full before bounded recovery rather th
   await expect(page.locator('#source-detail')).not.toBeChecked();
   await expect(page.locator('#hud-splats')).toHaveText('8');
   await expect(page.locator('#scene-info')).toContainText('2 of 3');
-  await expect(page.locator('#file-detail')).toHaveAttribute('title', /SH 2 of 3/);
+  await expect(page.locator('#quality-loaded-reason')).toContainText('requested load cap');
+  await expect(page.locator('#file-detail')).toHaveAttribute('title', /requested load cap/);
+  await expect(page.locator('#file-detail')).toHaveAttribute('title', /SH 2 of 3 loaded \(requested load cap\)/);
+  await expect(page.locator('#quality-loaded-reason')).toContainText('requested load cap');
+  await expect(page.locator('#quality-loaded-reason')).not.toContainText('fit memory');
+  await expect(page.locator('#scene-info')).toContainText('requested load cap');
 });
 
 
@@ -128,3 +139,18 @@ test('full detail can be requested before a first source import without claiming
   await expect(page.locator('#file-detail')).toHaveText(/Full source/);
   await expect(page.locator('#scene-info')).toContainText('3 of 3');
 });
+
+
+for (const query of ['', '?sh=2']) {
+  test(`recorded low-RAM policy, not an explicit ${query || 'absent URL'} cap, explains stricter stored SH`, async ({ page }) => {
+    // Synthetic policy hint only; not a hardware/VRAM/OOM simulation. Real production decode and worker run.
+    await page.addInitScript(() => Object.defineProperty(navigator, 'deviceMemory', { configurable: true, value: 4 }));
+    await page.goto(`/${query}`);
+    await page.locator('#file-input').setInputFiles({ name: 'policy-budget-sh3.ply', mimeType: 'application/octet-stream', buffer: gaussianPlyFixture() });
+    await expect(page.locator('#hud-splats')).toHaveText('8');await expect(page.locator('#loading')).toBeHidden();await settings(page);
+    await expect(page.locator('#quality-loaded-reason')).toHaveText('SH 1 of 3 loaded (memory budget)');
+    await expect(page.locator('#file-detail')).toHaveAttribute('title', /SH 1 of 3 loaded \(memory budget\)/);
+    await expect(page.locator('#scene-info')).toContainText('SH 1 of 3 loaded (memory budget)');
+    await expect(page.locator('#quality-loaded-reason')).not.toContainText('requested load cap');
+  });
+}

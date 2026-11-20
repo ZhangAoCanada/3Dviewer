@@ -1,3 +1,4 @@
+import { shReductionText } from '../core/sourceDetail';
 import type { RenderableStats } from '../core/types';
 
 export interface DetailState {
@@ -47,9 +48,7 @@ export function detailOf(
     reasons.push(`Showing ${formatDetailCount(retained)} of ${formatDetailCount(source)} ${noun}`);
   }
   if (loadedSh != null && sourceSh != null && loadedSh < sourceSh) {
-    reasons.push(sourceSh > 3
-      ? `SH ${loadedSh} of ${sourceSh} loaded; renderer supports up to SH 3${loadedSh < 3 ? ', with further load-policy reduction' : ''}`
-      : `SH ${loadedSh} of ${sourceSh} loaded to fit memory`);
+    reasons.push(shReductionText(loadedSh, sourceSh, stats.length === 1 ? stats[0]?.detail?.shReduction : undefined));
   }
   if (loadedSh != null && renderSh < loadedSh) {
     reasons.push(`Rendering SH ${renderSh} (set in Settings)`);
@@ -93,8 +92,6 @@ export function detailSceneText(state: DetailState): string {
   if (!state.reduced) return 'Full';
   const parts = state.reasons.map((reason) => {
     if (reason.startsWith('Showing ')) return reason.slice('Showing '.length);
-    const loaded = /^SH (\d+ of \d+) loaded to fit memory$/.exec(reason);
-    if (loaded?.[1]) return `SH ${loaded[1]}`;
     return reason;
   });
   return `Reduced: ${parts.join(' · ')}`;

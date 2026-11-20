@@ -1,7 +1,7 @@
 import { SplatMesh, type SplatMesh as SplatMeshType } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import { epsgCode } from '../core/epsg';
-import type { Renderable, RenderableMeta, RenderableStats, RenderSettings } from '../core/types';
+import type { Renderable, RenderableMeta, RenderableStats, RenderSettings, ShReductionReason } from '../core/types';
 import type { GaussianBounds, GaussianGeoref } from '../loaders/gaussian/decodeGaussianPly';
 import { estimateDecodedBytes, type ShDegree } from '../loaders/gaussian/gaussianPlan';
 import { nextId } from './ids';
@@ -16,6 +16,7 @@ export interface GaussianSceneInfo {
   sampleStride: number;
   extended: boolean;
   /** Float32 centers were requested and half-float was used instead. */
+  shReduction?: ShReductionReason;
   precisionReduced: boolean;
   lod: boolean;
   /** Splats in the LoD tree. Zero when LoD was not built. */
@@ -109,6 +110,7 @@ export class GaussianRenderable implements Renderable {
             retainedCount: count,
             sourceSh: info.sourceSh,
             loadedSh: info.shDegree,
+            shReduction: info.shReduction,
             precisionReduced: info.precisionReduced,
           }
         : undefined,

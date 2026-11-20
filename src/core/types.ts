@@ -103,11 +103,15 @@ export interface RenderSettings {
   extendedPrecision: boolean;
 }
 
+/** Recorded decode-policy cause; absence must not imply a memory reduction. */
+export type ShReductionReason = 'request' | 'budget';
+
 /** How much of the source file is actually on screen. Absent for Spark-decoded splats. */
 export interface SceneDetail {
   sourceCount: number;
   retainedCount: number;
   sourceSh?: number;
+  shReduction?: ShReductionReason;
   loadedSh?: number;
   /** True when float32 centers were requested and the budget only fit half-float. */
   precisionReduced?: boolean;
