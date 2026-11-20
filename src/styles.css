@@ -467,11 +467,6 @@ body.is-fullscreen .when-windowed { display: none; }
   }
 }
 
-/* Keep primary action labels, without the long download callout consuming half a laptop header. */
-@media (max-width: 1440px) {
-  #download-btn .btn-label, #download-btn .btn-meta { display: none; }
-  .topbar #download-btn { width: var(--control-h); padding: 0; }
-}
 @media (max-width: 900px) {
   .file-size, #file-detail .badge-label, #geo-badge-text { display: none; }
   .topbar #samples-btn { width: var(--control-h); padding: 0; }

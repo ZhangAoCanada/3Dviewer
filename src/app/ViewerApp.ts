@@ -2025,6 +2025,8 @@ export class ViewerApp {
       : state.kind === 'checking' ? 'Checking the latest desktop installer release. A previous version may appear until the check completes.'
       : state.kind === 'cached' ? 'Last known desktop installer release. The latest check was unavailable.'
       : 'The latest desktop installer version is unavailable. Use the Latest release link.';
+    const button = document.getElementById('download-btn');
+    if (button) button.title = `Download desktop app${text ? ` — ${text}` : ''}. ${title}`;
     for (const id of ['download-version', 'download-menu-version', 'download-dialog-version']) {
       const node = document.getElementById(id);
       if (node) {
