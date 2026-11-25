@@ -317,8 +317,11 @@ export class GameSession {
   }
   private releaseLock(): void { if (document.pointerLockElement === this.host.canvas)
     document.exitPointerLock(); }
+  private hasOpenDialogOrMenu(): boolean {
+    return !!document.querySelector('dialog[open], [role="dialog"]:not([hidden]), [role="menu"]:not([hidden])');
+  }
   private ownsInput(): boolean {
-    return !document.querySelector('dialog[open], [role="menu"]:not([hidden])') &&
+    return !this.hasOpenDialogOrMenu() &&
       (document.activeElement === this.host.canvas || document.activeElement === document.body);
   }
   private onLock = (): void => {
@@ -346,6 +349,14 @@ export class GameSession {
   };
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.active) {
+      const target = event.target;
+      if (event.defaultPrevented || this.hasOpenDialogOrMenu() || (target instanceof HTMLElement &&
+        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)))) {
+        this.keys.clear();
+        this.pause('Paused while a control is open.');
+        return;
+      }
+
       event.preventDefault();
       event.stopImmediatePropagation();
       this.escape();

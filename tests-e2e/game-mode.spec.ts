@@ -91,6 +91,8 @@ test('manual virtual floor is explicit, keyboard look works and focus pauses mov
   await page.fill('#game-eye', '2');
   await page.keyboard.press('KeyW');
   await expect(page.locator('#game-eye')).toHaveValue('2');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#game-confirm')).toBeVisible();
   await page.click('#game-exit');
   await expect(page.locator('#mode-orbit')).toHaveAttribute('aria-pressed', 'true');
 });
@@ -138,6 +140,9 @@ for (const width of [360, 640, 1280])
       expect(panel.x + panel.width).toBeLessThanOrEqual(width);
       expect(panel.y + panel.height).toBeLessThanOrEqual(800);
     }
+    expect(await page.locator('#game-panel').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await page.locator('#game-start').scrollIntoViewIfNeeded();
+    await expect(page.locator('#game-start')).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   });
 

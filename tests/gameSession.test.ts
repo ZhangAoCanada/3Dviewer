@@ -128,6 +128,18 @@ describe('exclusive game session ownership', () => {
     expect(key('keydown', 'KeyW').defaultPrevented).toBe(false);
     expect(game.state.kind).toBe('paused');
   });
+  it('leaves Escape to editable fields and dialogs instead of exiting their game setup', async () => {
+    await ready();
+    const input = new ElementStub();
+    input.tagName = 'INPUT';
+    input.focus();
+    expect(key('keydown', 'Escape').defaultPrevented).toBe(false);
+    expect(game.state.kind).toBe('setup');
+    canvas.focus();
+    modal = true;
+    expect(key('keydown', 'Escape').defaultPrevented).toBe(false);
+    expect(game.state.kind).toBe('setup');
+  });
   it('pauses on modal even if no focus event, and never resumes by closing it', async () => {
     await ready();
     game.start('keyboard');
