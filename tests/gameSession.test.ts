@@ -359,3 +359,24 @@ it('late pointer capture cannot steal an editable focus or modal opened during a
   expect(game.state.kind).toBe('acquiring');const input=new ElementStub();input.tagName='INPUT';focusElement(input);lockElement(canvas);
   expect(game.state.kind).toBe('paused');expect(active).toBe(input);expect(lock).toBeNull();
 });
+
+describe('non-destructive refinement controls',()=>{
+ it('eye height and floor offset preserve explored XZ, look and independent speed',async()=>{
+  await ready();game.start('keyboard');key('keydown','KeyW');run();key('keyup','KeyW');
+  const before=foot(),q=host.camera.quaternion.clone();const s=game.state;if(s.kind!=='playing')throw Error('run');const speed=s.run.walker.baseSpeed;
+  game.pause();expect(game.setEyeHeight(1.9)).toBe(true);expect(foot().toArray()).toEqual(before.toArray());expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);expect(s.run.walker.baseSpeed).toBe(speed);
+  const origin=s.run.frame.origin.clone();expect(game.setFloorOffset(game.floorOffset+.3)).toBe(true);expect(s.run.frame.origin.y-origin.y).toBeCloseTo(.3);expect(foot().toArray()).toEqual(before.toArray());
+  game.start('keyboard');const resumed=foot();key('keydown','KeyD');run();key('keyup','KeyD');expect(foot().distanceTo(resumed)).toBeCloseTo(speed,5);
+ });
+ it('advanced setup keeps current camera and resumes unchanged position/look rather than original orbit',async()=>{
+  await ready();game.start('keyboard');key('keydown','KeyW');run();key('keyup','KeyW');const p=host.camera.position.clone(),q=host.camera.quaternion.clone(),f=foot();
+  game.pause();game.adjust();expect(game.ownsCamera).toBe(true);expect(host.camera.position.equals(p)).toBe(true);game.configure({eyeHeight:1.8});game.start('keyboard');expect(foot().distanceTo(f)).toBeLessThan(1e-7);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+ });
+ it('live resize/floor edits reject airborne/invalid changes without corrupting pose',async()=>{
+  await ready();game.start('keyboard');game.jump();game.update(.03);const p=foot(),q=host.camera.quaternion.clone();expect(game.setEyeHeight(NaN)).toBe(false);expect(game.setEyeHeight(2)).toBe(false);expect(game.setFloorOffset(.2)).toBe(false);expect(foot().equals(p)).toBe(true);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+ });
+ it('Space/Enter retained-button defaults are owned without implicit recapture or exit',async()=>{
+  await ready();game.start('locked');const button=new ElementStub();button.id='mode-game';button.tagName='BUTTON';focusElement(button);
+  for(const code of ['Space','Enter']) {expect(key('keydown',code).defaultPrevented).toBe(true);key('keyup',code);expect(game.playing).toBe(true);expect(lock).toBe(canvas);}
+ });
+});

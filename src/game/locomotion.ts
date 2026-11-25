@@ -26,19 +26,71 @@ export class Walker {
   readonly safe: THREE.Vector3;
   grounded = true;
   private velocity = 0;
+  private standing: PlayerScale;
+  private body: PlayerScale;
+  private readonly walkSpeed: number;
+  crouched = false;
+  speedScale = 1;
+  private eye = 0;
+  get baseSpeed(): number { return this.walkSpeed; }
+  get scale(): PlayerScale { return this.body; }
+  get standingScale(): Readonly<PlayerScale> { return this.standing; }
+  get cameraEyeHeight(): number { return this.eye; }
+  private fits(foot: THREE.Vector3, scale: PlayerScale): boolean {
+    if (this.world.kind === 'virtual') return insideFloor(this.world.footprint, foot, scale.radius);
+    const hit = this.world.collision.contacts(foot, scale);
+    return hit.kind === 'ok' && hit.contacts.every(c => c.depth <= scale.skin * 4);
+  }
+  private stance(scale: PlayerScale, crouched: boolean): PlayerScale {
+    return crouched ? { ...scale, eyeHeight: scale.eyeHeight * .62, height: scale.height * .62, step: scale.step * .62 } : { ...scale };
+  }
+  resize(scale: PlayerScale): boolean {
+    if (this.world.kind === 'mesh') this.world.collision.beginFrame();
+    const next = this.stance(scale, this.crouched);
+    if (!this.fits(this.foot, next) || !this.fits(this.spawn, next)) return false;
+    this.standing = { ...scale }; this.body = next;
+    this.eye = next.eyeHeight;
+    this.safe.copy(this.foot);
+    return true;
+  }
+  setCrouched(crouched: boolean): boolean {
+    if (crouched === this.crouched) return true;
+    if (this.world.kind === 'mesh') this.world.collision.beginFrame();
+    const next = this.stance(this.standing, crouched);
+    if (!this.fits(this.foot, next)) return false;
+    this.crouched = crouched; this.body = next;
+    // Shrink immediately: the camera must never remain above the new collision body.
+    this.eye = Math.min(this.eye, next.eyeHeight);
+    return true;
+  }
+  jump(): boolean {
+    if (!this.grounded) return false;
+    if (this.world.kind === 'mesh') {
+      this.world.collision.beginFrame();
+      if (!this.fits(this.foot.clone().add(new THREE.Vector3(0, this.standing.eyeHeight * .02, 0)), this.body)) return false;
+    }
+    this.velocity = Math.sqrt(2 * this.standing.gravity * this.standing.eyeHeight * .35);
+    this.grounded = false;
+    return true;
+  }
+  advanceEye(elapsed: number, reducedMotion: boolean): void {
+    this.eye = reducedMotion ? this.body.eyeHeight : THREE.MathUtils.lerp(this.eye, this.body.eyeHeight, Math.min(1, Math.max(0, elapsed) / .12));
+    if (Math.abs(this.eye - this.body.eyeHeight) < this.standing.eyeHeight * 1e-6) this.eye = this.body.eyeHeight;
+  }
   private accumulator = 0;
-  constructor(readonly world: WalkWorld, readonly scale: PlayerScale, spawn: THREE.Vector3) {
+  constructor(readonly world: WalkWorld, scale: PlayerScale, spawn: THREE.Vector3, walkSpeed = scale.speed) {
+    this.standing = { ...scale }; this.body = { ...scale }; this.walkSpeed = walkSpeed; this.eye = scale.eyeHeight;
     this.foot = spawn.clone();
     this.spawn = spawn.clone();
     this.safe = spawn.clone();
   }
-  static spawn(world: WalkWorld, scale: PlayerScale, requested: THREE.Vector3): Walker | null {
+  static spawn(world: WalkWorld, scale: PlayerScale, requested: THREE.Vector3, walkSpeed = scale.speed): Walker | null {
     const foot = requested.clone();
     if (!foot.toArray().every(Number.isFinite))
       return null;
     if (world.kind === 'virtual') {
       foot.y = 0;
-      return insideFloor(world.footprint, foot, scale.radius) ? new Walker(world, scale, foot) : null;
+      return insideFloor(world.footprint, foot, scale.radius) ? new Walker(world, scale, foot, walkSpeed) : null;
     }
     world.collision.beginFrame();
     const support = world.collision.support(foot.x, foot.z, foot.y + scale.step + scale.skin * 4, scale.step * 2 + scale.skin * 8);
@@ -48,10 +100,10 @@ export class Walker {
     const hit = world.collision.contacts(foot, scale);
     if (hit.kind !== 'ok' || hit.contacts.some(c => c.depth > scale.skin * 4))
       return null;
-    return new Walker(world, scale, foot);
+    return new Walker(world, scale, foot, walkSpeed);
   }
-  reset(): void { this.foot.copy(this.spawn); this.safe.copy(this.spawn); this.stop(); this.grounded = true; }
-  stop(): void { this.velocity = 0; this.accumulator = 0; }
+  reset(): void { this.foot.copy(this.spawn); this.safe.copy(this.spawn); this.velocity = 0; this.stop(); this.grounded = true; this.setCrouched(false); this.eye = this.body.eyeHeight; }
+  stop(): void { this.accumulator = 0; }
   update(elapsed: number, input: WalkInput): WalkResult {
     if (![elapsed, input.forward, input.right, input.yaw].every(Number.isFinite))
       return this.recover('Invalid player position.');
@@ -70,15 +122,17 @@ export class Walker {
     if (direction.lengthSq() > 1)
       direction.normalize();
     direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), input.yaw);
-    direction.multiplyScalar(this.scale.speed * (input.sprint ? 1.8 : 1) * dt);
+    direction.multiplyScalar(this.walkSpeed * this.speedScale * (this.crouched ? .55 : input.sprint ? 1.8 : 1) * dt);
     if (this.world.kind === 'virtual') {
       const f = this.world.footprint, r = this.scale.radius;
       this.foot.x = THREE.MathUtils.clamp(this.foot.x + direction.x, f.minX + r, f.maxX - r);
       this.foot.z = THREE.MathUtils.clamp(this.foot.z + direction.z, f.minZ + r, f.maxZ - r);
-      this.foot.y = 0;
-      this.safe.copy(this.foot);
+      this.velocity = Math.max(this.velocity - this.standing.gravity * dt, -this.standing.eyeHeight * 10);
+      this.foot.y = Math.max(0, this.foot.y + this.velocity * dt);
+      if (this.foot.y === 0) { this.velocity = 0; this.grounded = true; this.safe.copy(this.foot); }
       return { kind: 'ok' };
     }
+    const wasGrounded = this.grounded;
     this.velocity = Math.max(this.velocity - this.scale.gravity * dt, -this.scale.eyeHeight * 10);
     direction.y = this.velocity * dt;
     const count = Math.max(1, Math.ceil(direction.length() / (this.scale.radius * 0.2)));
@@ -91,7 +145,7 @@ export class Walker {
       const resolved = this.resolve();
       if (!resolved)
         return this.recover('Movement could not be resolved safely. Returned to the last safe position.');
-      if (this.grounded && this.foot.clone().sub(before).setY(0).length() < delta.clone().setY(0).length() * 0.5) {
+      if (wasGrounded && this.grounded && this.velocity <= 0 && this.foot.clone().sub(before).setY(0).length() < delta.clone().setY(0).length() * 0.5) {
         this.tryStep(before, delta);
       }
     }
@@ -162,6 +216,7 @@ export class Walker {
   }
   private recover(reason: string): WalkResult {
     this.foot.copy(this.safe);
+    this.velocity = 0;
     this.stop();
     this.grounded = true;
     return { kind: 'recover', reason };

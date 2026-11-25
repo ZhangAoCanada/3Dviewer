@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import type { Renderable } from '../core/types';
 import type { NavigationController } from '../render/Navigation';
 import { fitPlane } from '../render/upright';
-import { gameFrame, playerScale, toWorld, type GameFrame } from './frame';
+import { gameFrame, playerScale, toLocal, toWorld, type GameFrame } from './frame';
 import { Walker, type WalkWorld } from './locomotion';
+import { readPreferences, savePreferences, parsePreferences, type GamePreferences } from './preferences';
 import type { MeshCollision } from './meshCollision';
 import { defaultEyeHeight, directEntryPoint, entryLook, virtualEntryPoint, virtualFootprint } from './entryView';
 import { RelativeLookInput, type LookDecision } from './lookInput';
@@ -89,7 +90,7 @@ export class GameSession {
   private recordMouse(event: GameMouseTrace['event'], trusted: boolean, dx?: number, dy?: number, decision?: LookDecision): void {
     if (!this.inputTraceEnabled) return;
     if (event === 'capture') { this.trace.length = 0; this.mouseEventIndex = 0; }
-    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy, sensitivity: this.host.navigation.sensitivity, appliedDx: decision?.dx, appliedDy: decision?.dy, disposition: decision?.kind,
+    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy, sensitivity: this.host.navigation.sensitivity * this.preferences.sensitivity, appliedDx: decision?.dx, appliedDy: decision?.dy, disposition: decision?.kind,
       yawDegrees: THREE.MathUtils.radToDeg(this.yaw), pitchDegrees: THREE.MathUtils.radToDeg(this.pitch),
       width: this.host.canvas.clientWidth, height: this.host.canvas.clientHeight });
     if (this.trace.length > 32) {
@@ -108,6 +109,69 @@ export class GameSession {
   private readonly keys = new Set<string>();
   private readonly preview = new THREE.Group();
   private picking = false;
+  private editingRun: Run | null = null;
+  private useNewSpawn = false;
+  preferences = readPreferences();
+  feedback = '';
+  private feedbackTime = 0;
+  private get currentRun(): Run | null {
+    const s = this.state;
+    return s.kind === 'playing' || s.kind === 'paused' || s.kind === 'acquiring' ? s.run : s.kind === 'setup' ? this.editingRun : null;
+  }
+  get crouched(): boolean { return this.currentRun?.walker.crouched ?? false; }
+  get airborne(): boolean { return this.currentRun ? !this.currentRun.walker.grounded : false; }
+  private announce(message: string): void { this.feedback = message; this.feedbackTime = 2.4;if (this.state.kind === 'setup') this.state.message = message; this.changed(); }
+  setPreferences(change: Partial<GamePreferences>): boolean {
+    const value = parsePreferences({ version: 1, ...this.preferences, ...change });
+    if (!value) { this.announce('Choose speed 0.25–4× and look sensitivity 0.4–2×.'); return false; }
+    this.preferences = value; savePreferences(value);
+    const run = this.currentRun; if (run) run.walker.speedScale = value.speed;
+    this.changed(); return true;
+  }
+  setEyeHeight(value: number): boolean {
+    const run = this.currentRun, scale = playerScale(value);
+    if (!run || !scale) { this.announce('Eye height must be finite, 0.00001–100000000 scene units.'); return false; }
+    if (!run.walker.grounded) { this.announce('Land before changing body height.'); return false; }
+    if (!run.walker.resize(scale)) { this.announce('Body does not fit here or at the reset position. Height unchanged.'); return false; }
+    run.config.eyeHeight = value; this.paintCamera(run); this.refreshGuide(run);
+    this.announce(`Eye height ${Number(value.toPrecision(5))} scene units. Walk speed unchanged.`); return true;
+  }
+  get floorOffset(): number {
+    const c = this.config;return c ? c.point.clone().sub(c.geometry.anchor).dot(c.normal.clone().normalize()) : 0;
+  }
+  setFloorOffset(value: number): boolean {
+    const run = this.currentRun;
+    if (!run) return false;
+    if (run.walker.world.kind !== 'virtual') { this.announce('Floor follows static mesh; offset unchanged.'); return false; }
+    if (!run.walker.grounded) { this.announce('Land before moving the virtual floor.'); return false; }
+    const c = run.config, limit = Math.max(c.geometry.bounds.getSize(new THREE.Vector3()).length() * 10, c.eyeHeight * 100);
+    if (!Number.isFinite(value) || Math.abs(value) > limit) { this.announce('Floor offset is outside the finite scene-relative adjustment range.'); return false; }
+    const up = new THREE.Vector3(0,1,0).applyQuaternion(run.frame.rotation), delta = value - this.floorOffset;
+    c.point.addScaledVector(up, delta);run.frame.origin.addScaledVector(up, delta);
+    this.paintCamera(run);this.refreshGuide(run);this.announce(`Virtual floor offset ${Number(value.toPrecision(5))} scene units.`);return true;
+  }
+  toggleCrouch(): void {
+    const run = this.currentRun;if (!run) return;
+    if (!run.walker.setCrouched(!run.walker.crouched)) { this.announce('Low ceiling — staying crouched.'); return; }
+    run.walker.advanceEye(0,this.preferences.reducedMotion);this.paintCamera(run);
+    this.announce(run.walker.crouched ? 'Crouched. Slower movement; same body width.' : 'Standing.');
+  }
+  jump(): void {
+    const run = this.currentRun;if (!run) return;
+    if (run.walker.jump()) this.announce(run.walker.world.kind === 'virtual' ? 'Virtual-floor hop · no reconstructed walls or ceilings.' : 'Jumping.');
+    else this.announce(run.walker.grounded ? 'Not enough headroom to jump.' : 'Land before jumping again.');
+  }
+  private refreshGuide(run: Run): void {
+    this.clearPreview();
+    if (this.state.kind === 'setup') this.updatePreview();
+    else if (run.walker.world.kind === 'virtual' && run.config.showGuide) this.showVirtualGuide(run);
+  }
+  useSelectedSpawn(): void {
+    if (this.state.kind !== 'setup') return;
+    this.useNewSpawn = true;this.state.message = 'Selected spawn will be used explicitly. Exit still restores your original view.';this.changed();
+  }
+  showControls(): void { this.pause(); this.onControls?.(); }
+  onControls: (() => void) | null = null;
   private yaw = 0;
   private pitch = 0;
   private readonly look = new THREE.Quaternion();
@@ -125,7 +189,7 @@ export class GameSession {
   }
   get active(): boolean { return this.state.kind !== 'inactive'; }
   get playing(): boolean { return this.state.kind === 'playing'; }
-  get ownsCamera(): boolean { return this.state.kind === 'playing' || this.state.kind === 'paused' || this.state.kind === 'acquiring'; }
+  get ownsCamera(): boolean { return this.state.kind === 'playing' || this.state.kind === 'paused' || this.state.kind === 'acquiring' || this.state.kind === 'setup' && !!this.editingRun; }
   get config(): GameConfig | null {
     const state = this.state;
     return state.kind === 'setup' ? state.config : state.kind === 'playing' || state.kind === 'paused' || state.kind === 'acquiring' ? state.run.config : null;
@@ -271,6 +335,7 @@ export class GameSession {
   configure(change: Partial<Pick<GameConfig, 'normal' | 'point' | 'eyeHeight' | 'support' | 'confirmed' | 'showGuide'>>): void {
     if (this.state.kind !== 'setup')
       return;
+    if (this.editingRun && change.eyeHeight !== undefined && Object.keys(change).length === 1) { this.setEyeHeight(change.eyeHeight); return; }
     Object.assign(this.state.config, change);
     if (change.normal || change.point || change.eyeHeight !== undefined || change.support)
       this.state.config.confirmed = false;
@@ -316,23 +381,30 @@ export class GameSession {
         return;
       }
       const world: WalkWorld = collision ? { kind: 'mesh', collision } : { kind: 'virtual', footprint: virtualFootprint(config.geometry.bounds, frame, config.eyeHeight) };
-      const walker = Walker.spawn(world, scale, new THREE.Vector3());
+      const editing = this.editingRun;
+      const requested = editing && !this.useNewSpawn ? toLocal(frame, toWorld(editing.frame, editing.walker.foot)) : new THREE.Vector3();
+      const walker = Walker.spawn(world, scale, requested, editing?.walker.baseSpeed);
       if (!walker) {
-        this.state.message = 'Spawn has no floor, is outside the boundary, or lacks body clearance. Pick a different floor/spawn patch or reduce eye height.';
+        this.state.message = editing && !this.useNewSpawn ? 'Explored position has no safe support in this surface. Keep the previous surface or explicitly use the selected spawn.' : 'Spawn has no floor, is outside the boundary, or lacks body clearance. Pick a different floor/spawn patch or reduce eye height.';
         this.changed();
         return;
       }
       const initialLook = entryLook(frame, config.geometry.anchor, config.eyeHeight, new THREE.Vector3(0, 0, -1).applyQuaternion(config.saved.quaternion));
       run = { config, walker, frame, initialLook };
-      this.yaw = initialLook.yaw;
-      this.pitch = initialLook.pitch;
+      if (!editing || this.useNewSpawn) { this.yaw = initialLook.yaw; this.pitch = initialLook.pitch; }
+      else {
+        const look = editing.frame.rotation.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch,this.yaw,0,'YXZ')));
+        const local = frame.inverse.clone().multiply(look), euler = new THREE.Euler().setFromQuaternion(local,'YXZ');
+        this.yaw = euler.y;this.pitch = THREE.MathUtils.clamp(euler.x,-1.5,1.5);
+      }
+      this.editingRun = null;this.useNewSpawn = false;
     }
     else
       return;
     this.picking = false;
     this.motion = 'idle';
     this.keys.clear();
-    run.walker.stop();
+    run.walker.stop();run.walker.speedScale = this.preferences.speed;
     this.host.navigation.setSuspended(true);
     this.clearPreview();
     if (run.config.support === 'virtual' && run.config.showGuide) this.showVirtualGuide(run);
@@ -373,22 +445,21 @@ export class GameSession {
     const state = this.state;
     if (state.kind !== 'paused')
       return;
-    restoreGameView(state.run.config.saved, this.host.camera, this.host.navigation);
-    this.host.navigation.setSuspended(false);
-    state.run.config.confirmed = false;
+    this.editingRun = state.run;this.useNewSpawn = false;
+    this.host.navigation.setSuspended(true);
+    state.run.config.confirmed = true;
     this.state = { kind: 'setup', config: state.run.config, message: '' };
     this.updatePreview();
     this.changed();
     this.prepareCollision(state.run.config);
   }
   reset(): void {
-    const state = this.state;
-    if (state.kind !== 'playing' && state.kind !== 'paused')
-      return;
-    state.run.walker.reset();
-    this.yaw = state.run.initialLook.yaw;
-    this.pitch = state.run.initialLook.pitch;
-    this.paintCamera(state.run);
+    const run = this.currentRun;
+    if (!run) return;
+    run.walker.reset();this.feedback = '';this.feedbackTime = 0;
+    this.yaw = run.initialLook.yaw;
+    this.pitch = run.initialLook.pitch;
+    this.paintCamera(run);
     this.changed();
   }
   escape(): boolean {
@@ -424,6 +495,7 @@ export class GameSession {
     if (state.kind === 'preparing')
       state.abort.abort();
     this.state = { kind: 'inactive' };
+    this.editingRun = null;this.useNewSpawn = false;this.feedback = '';this.feedbackTime = 0;
     this.picking = false;
     this.keys.clear();
     this.releaseLock();
@@ -442,13 +514,17 @@ export class GameSession {
       return;
     }
     if (state.control === 'keyboard') {
-      this.yaw += ((this.keys.has('ArrowLeft') ? 1 : 0) - (this.keys.has('ArrowRight') ? 1 : 0)) * dt * 1.5;
-      this.pitch = THREE.MathUtils.clamp(this.pitch + ((this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('ArrowDown') ? 1 : 0)) * dt * 1.2, -1.5, 1.5);
+      this.yaw += ((this.keys.has('ArrowLeft') ? 1 : 0) - (this.keys.has('ArrowRight') ? 1 : 0)) * dt * 1.5 * this.preferences.sensitivity;
+      this.pitch = THREE.MathUtils.clamp(this.pitch + ((this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('ArrowDown') ? 1 : 0)) * dt * 1.2 * this.preferences.sensitivity, -1.5, 1.5);
     }
+    const wasAirborne = !state.run.walker.grounded;
     const before = state.run.walker.foot.clone();
     const result = state.run.walker.update(dt, { forward: (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0),
       right: (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0), yaw: this.yaw, sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') });
+    state.run.walker.advanceEye(dt,this.preferences.reducedMotion);
     this.paintCamera(state.run);
+    if (wasAirborne && state.run.walker.grounded) this.announce('Landed.');
+    if (this.feedbackTime > 0) { this.feedbackTime -= Math.min(dt,.05);if (this.feedbackTime <= 0) { this.feedback = '';this.changed(); } }
     const moving = this.keys.has('KeyW') !== this.keys.has('KeyS') || this.keys.has('KeyA') !== this.keys.has('KeyD');
     const translated = state.run.walker.foot.clone().sub(before).setY(0).length();
     const motion = !moving ? 'idle' : translated > state.run.walker.scale.speed * Math.min(dt, .05) * .05 ? 'walking' : state.run.walker.world.kind === 'virtual' ? 'boundary' : 'wall';
@@ -458,7 +534,7 @@ export class GameSession {
   }
   private paintCamera(run: Run): void {
     const camera = this.host.camera;
-    camera.position.copy(toWorld(run.frame, run.walker.foot.clone().add(new THREE.Vector3(0, run.walker.scale.eyeHeight, 0))));
+    camera.position.copy(toWorld(run.frame, run.walker.foot.clone().add(new THREE.Vector3(0, run.walker.cameraEyeHeight, 0))));
     this.look.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
     camera.quaternion.copy(run.frame.rotation).multiply(this.look);
     camera.up.set(0, 1, 0).applyQuaternion(run.frame.rotation);
@@ -507,9 +583,9 @@ export class GameSession {
     if (this.state.kind !== 'playing' || this.state.control !== 'locked' || document.pointerLockElement !== this.host.canvas)
       return;
     if (!Number.isFinite(event.movementX) || !Number.isFinite(event.movementY)) { this.recordMouse('ignored-nonfinite', event.isTrusted); return; }
-    const decision = this.mouseInput.consume(event.movementX, event.movementY, this.host.navigation.sensitivity);
-    this.yaw = THREE.MathUtils.euclideanModulo(this.yaw - decision.dx * .0025 * this.host.navigation.sensitivity + Math.PI, Math.PI * 2) - Math.PI;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - decision.dy * .0025 * this.host.navigation.sensitivity, -1.5, 1.5);
+    const decision = this.mouseInput.consume(event.movementX, event.movementY, this.host.navigation.sensitivity * this.preferences.sensitivity);
+    this.yaw = THREE.MathUtils.euclideanModulo(this.yaw - decision.dx * .0025 * this.host.navigation.sensitivity * this.preferences.sensitivity + Math.PI, Math.PI * 2) - Math.PI;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - decision.dy * .0025 * this.host.navigation.sensitivity * this.preferences.sensitivity, -1.5, 1.5);
     this.recordMouse('motion', event.isTrusted, event.movementX, event.movementY, decision);
   };
   private canUseSessionCommand(event: KeyboardEvent): boolean {
@@ -532,7 +608,7 @@ export class GameSession {
     }
     if ((this.state.kind === 'setup' || this.state.kind === 'paused') && event.code === 'KeyR' && this.canUseSessionCommand(event)) {
       event.preventDefault(); event.stopImmediatePropagation();
-      if (this.state.kind === 'setup') this.host.navigation.reset(true);
+      if (this.state.kind === 'setup' && !this.editingRun) this.host.navigation.reset(true);
       else this.reset();
       return;
     }
@@ -542,6 +618,7 @@ export class GameSession {
       this.keys.clear();
       return;
     }
+    if (event.code === 'Space' || event.code === 'Enter') { event.preventDefault();event.stopImmediatePropagation();return; }
     if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyR'].includes(event.code))
       return;
     if (event.repeat && !this.keys.has(event.code))

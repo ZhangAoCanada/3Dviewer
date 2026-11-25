@@ -1556,3 +1556,13 @@ kbd {
 
 .game-input-trace { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 8px; overflow: hidden; color: var(--color-text); background: var(--color-surface); font: 10px/1.4 monospace; white-space: pre-wrap; }
 #game-trace-paused { max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 10px; }
+
+.game-quick { display:grid; gap:8px; margin:12px 0; font-size:12px; }
+.game-stepper { display:grid; grid-template-columns:34px minmax(0,1fr) 34px auto; gap:6px; }
+.game-stepper input { min-width:0; width:100%; padding:6px; color:var(--color-text); background:var(--color-bg); border:1px solid var(--color-border-strong); border-radius:6px; }
+.game-stepper button { min-width:34px; min-height:34px; padding-inline:8px; }
+.game-quick .hint { margin:0; }
+.game-panel input[type="range"] { width:100%; min-width:0; accent-color:var(--color-accent); }
+.game-panel button:disabled, .game-panel input:disabled { opacity:.55; }
+@media(max-width:640px) { .game-instructions { gap:4px 8px; padding:6px 8px; } .game-instructions strong { display:none; } #game-look-help { flex-basis:100%; text-align:center; } }
+@media(pointer:coarse) { .game-stepper button, .game-panel .game-actions button, .game-panel summary { min-height:44px; } }
