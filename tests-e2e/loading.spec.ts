@@ -1,6 +1,5 @@
-import { chromium, expect, test, type Page } from './test';
+import { VIEWER_BASE_URL as origin, chromium, expect, test, type Page } from './test';
 
-const origin = 'http://127.0.0.1:4173/3Dviewer/';
 
 function hangUrl(): string {
   return new URL('hang.ply', origin).href;
