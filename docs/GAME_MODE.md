@@ -23,3 +23,9 @@ Unsupported static-collision sources include multi-material group layouts, trans
 Unit suites: `gameGroundDetection`, `gameGroundIntegration`, `gameGeometry`, `gameLocomotion`, `gameSession`. Browser suite: `game-mode.spec.ts` plus existing navigation, upright, cache, branding, presets and toolbar regressions.
 
 Browser pointer capture/release is exercised through real Chromium APIs. Headless CDP sends zero relative mouse deltas under pointer lock, so relative yaw/pitch tests explicitly inject a synthetic MouseEvent and check actual rendered changes; this is not proof of physical mouse/native-WebView behavior. Operator review must exercise real relative mouse input. No physical-device performance or universal reconstruction-floor accuracy is claimed.
+
+## Entry view and native-input investigation
+
+The artificial-floor default spawn stands back inside the finite boundary and initially faces the scene bounds center. Mesh entry avoids a vertical heading; the short gold floor tick previews its initial yaw. Reset restores this initial facing as well as position. These are composition/entry fixes, not proof of physical pointer-lock correctness.
+
+For a controlled operator retest, add `gameInputTrace=1` to the preview URL. The local-only HUD and paused details retain at most32 first/last relative mouse events, trusted flags and applied yaw/pitch. Nothing is sent or persisted; ordinary entry has tracing disabled. Positive X turns right and positive Y looks down. No speculative first-event rejection or delta cap has been applied: the reported genuine off-scene turn still needs raw-delta evidence to distinguish recenter/tool motion from a product input defect.

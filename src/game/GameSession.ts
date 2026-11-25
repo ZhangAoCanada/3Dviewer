@@ -387,13 +387,13 @@ export class GameSession {
     return !this.hasOpenDialogOrMenu() &&
       (document.activeElement === this.host.canvas || document.activeElement === document.body);
   }
-  private onLock = (): void => {
+  private onLock = (event: Event): void => {
     const state = this.state;
     if (document.pointerLockElement === this.host.canvas) {
       if (state.kind === 'acquiring') {
         this.state = { kind: 'playing', run: state.run, control: 'locked' };
         this.paintCamera(state.run);
-        this.recordMouse('capture', true);
+        this.recordMouse('capture', event.isTrusted);
         this.changed();
       }
       else if (state.kind !== 'playing')
