@@ -1553,3 +1553,6 @@ kbd {
 .game-crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-shadow: 0 1px 3px black; font-size: 22px; font-weight: 400; }
 .is-game-playing #nav-hint, .is-game-playing #toolbar, .is-game-playing .topbar, .is-game-playing #hud { visibility: hidden; }
 @media (max-width: 640px) { .toolbar .seg-label { display: none; } .game-panel { top: calc(var(--safe-top) + var(--inset) + var(--header-h) + 8px); right: 8px; width: min(340px, calc(100% - 16px)); max-height: calc(100% - var(--header-h) - 104px); padding: 12px; } .game-heading h2 { font-size: 16px; } }
+
+.game-input-trace { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 8px; overflow: hidden; color: var(--color-text); background: var(--color-surface); font: 10px/1.4 monospace; white-space: pre-wrap; }
+#game-trace-paused { max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 10px; }

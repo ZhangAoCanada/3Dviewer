@@ -5,6 +5,7 @@ import { fitPlane } from '../render/upright';
 import { gameFrame, playerScale, toWorld, type GameFrame } from './frame';
 import { Walker, type WalkWorld } from './locomotion';
 import type { MeshCollision } from './meshCollision';
+import { entryLook, virtualEntryPoint } from './entryView';
 import { collisionInFrameAsync, footprintInFrame, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
 import { captureGameView, restoreGameView, type GameViewSnapshot } from './viewSnapshot';
 export interface GroundSuggestion {
@@ -31,6 +32,7 @@ interface Run {
   config: GameConfig;
   walker: Walker;
   frame: GameFrame;
+  initialLook: { yaw: number; pitch: number };
 }
 export type GameState = {
   kind: 'inactive';
@@ -64,9 +66,29 @@ export interface GameHost {
   sampleGround: (x: number, y: number) => Float32Array;
   dirty: () => void;
 }
+export interface GameMouseTrace {
+  event: 'capture' | 'motion' | 'ignored-nonfinite';
+  index: number; trusted: boolean; dx?: number; dy?: number;
+  yawDegrees: number; pitchDegrees: number; width: number; height: number;
+}
 export class GameSession {
   state: GameState = { kind: 'inactive' };
   suggestions: GroundSuggestions | null = null;
+  /** Opt-in local diagnostics only. Bounded first/last events; no keys, files or network output. */
+  inputTraceEnabled = false;
+  onInputTrace: (() => void) | null = null;
+  private readonly trace: GameMouseTrace[] = [];
+  private mouseEventIndex = 0;
+  get inputTrace(): readonly GameMouseTrace[] { return this.trace.slice(); }
+  private recordMouse(event: GameMouseTrace['event'], trusted: boolean, dx?: number, dy?: number): void {
+    if (!this.inputTraceEnabled) return;
+    if (event === 'capture') { this.trace.length = 0; this.mouseEventIndex = 0; }
+    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy,
+      yawDegrees: THREE.MathUtils.radToDeg(this.yaw), pitchDegrees: THREE.MathUtils.radToDeg(this.pitch),
+      width: this.host.canvas.clientWidth, height: this.host.canvas.clientHeight });
+    if (this.trace.length > 32) this.trace.splice(9, 1);
+    this.onInputTrace?.();
+  }
   private revision = 0;
   private collisionAbort: AbortController | null = null;
   private collision: { config: GameConfig; frame: GameFrame; collider: MeshCollision } | null = null;
@@ -126,6 +148,10 @@ export class GameSession {
       const config: GameConfig = { geometry, saved, normal: suggestion?.normal.clone() ?? up, point: suggestion?.point.clone() ?? point,
         eyeHeight: span * .1, support: geometry.triangles ? 'mesh' : 'virtual', confirmed: false, collisionPreparing: false, suggestions,
         evidence: suggestion?.evidence ?? `${analysis.message} Manual floor: starting at scene bounds, not detected. Adjust or pick a flat patch.`.trim() };
+      if (config.support === 'virtual') {
+        config.point = virtualEntryPoint(geometry.bounds, gameFrame(config.point, config.normal),
+          this.host.camera.getWorldDirection(new THREE.Vector3()), playerScale(config.eyeHeight)?.radius ?? 0);
+      }
       this.state = { kind: 'setup', config, message: '' };
       this.updatePreview();
       this.changed();
@@ -198,7 +224,7 @@ export class GameSession {
     else if (this.state.kind === 'setup') {
       const config = this.state.config, scale = playerScale(config.eyeHeight);
       if (!config.confirmed || !scale) {
-        this.state.message = 'Confirm the floor and choose a finite positive eye height.';
+        this.state.message = !scale ? 'Eye height must be finite and between 0.00001 and 100000000 scene units.' : 'Check “I checked the floor, spawn and body scale” before starting.';
         this.changed();
         return;
       }
@@ -217,10 +243,10 @@ export class GameSession {
         this.changed();
         return;
       }
-      run = { config, walker, frame };
-      const forward = this.host.camera.getWorldDirection(new THREE.Vector3()).applyQuaternion(frame.inverse);
-      this.yaw = Math.atan2(-forward.x, -forward.z);
-      this.pitch = 0;
+      const initialLook = entryLook(frame, config.geometry.anchor, config.eyeHeight, new THREE.Vector3(0, 0, -1).applyQuaternion(config.saved.quaternion));
+      run = { config, walker, frame, initialLook };
+      this.yaw = initialLook.yaw;
+      this.pitch = initialLook.pitch;
     }
     else
       return;
@@ -277,6 +303,8 @@ export class GameSession {
     if (state.kind !== 'playing' && state.kind !== 'paused')
       return;
     state.run.walker.reset();
+    this.yaw = state.run.initialLook.yaw;
+    this.pitch = state.run.initialLook.pitch;
     this.paintCamera(state.run);
     this.changed();
   }
@@ -365,6 +393,7 @@ export class GameSession {
       if (state.kind === 'acquiring') {
         this.state = { kind: 'playing', run: state.run, control: 'locked' };
         this.paintCamera(state.run);
+        this.recordMouse('capture', true);
         this.changed();
       }
       else if (state.kind !== 'playing')
@@ -378,9 +407,10 @@ export class GameSession {
   private onMouse = (event: MouseEvent): void => {
     if (this.state.kind !== 'playing' || this.state.control !== 'locked' || document.pointerLockElement !== this.host.canvas)
       return;
-    if (!Number.isFinite(event.movementX) || !Number.isFinite(event.movementY)) return;
+    if (!Number.isFinite(event.movementX) || !Number.isFinite(event.movementY)) { this.recordMouse('ignored-nonfinite', event.isTrusted); return; }
     this.yaw = THREE.MathUtils.euclideanModulo(this.yaw - event.movementX * .0025 * this.host.navigation.sensitivity + Math.PI, Math.PI * 2) - Math.PI;
     this.pitch = THREE.MathUtils.clamp(this.pitch - event.movementY * .0025 * this.host.navigation.sensitivity, -1.5, 1.5);
+    this.recordMouse('motion', event.isTrusted, event.movementX, event.movementY);
   };
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.active) {
@@ -484,6 +514,10 @@ export class GameSession {
     group.add(marker);
     const arrow = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, config.eyeHeight, 0)]), new THREE.LineBasicMaterial({ color: 0xffcf76, depthTest: false }));
     group.add(arrow);
+    const facing = entryLook(frame, config.geometry.anchor, config.eyeHeight, new THREE.Vector3(0, 0, -1).applyQuaternion(config.saved.quaternion));
+    const direction = new THREE.Vector3(-Math.sin(facing.yaw), 0, -Math.cos(facing.yaw)).multiplyScalar(config.eyeHeight * .5);
+    const tick = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, config.eyeHeight * .005, 0), direction.setY(config.eyeHeight * .005)]), new THREE.LineBasicMaterial({ color: 0xffcf76, depthTest: false }));
+    group.add(tick);
     group.quaternion.copy(frame.rotation);
     group.position.copy(frame.origin);
     this.preview.add(group);

@@ -26,18 +26,30 @@ export class GameUI {
     <div class="game-actions"><button id="game-pick" type="button" class="btn btn-secondary btn-sm">Pick floor / spawn</button><button id="game-flip" type="button" class="btn btn-secondary btn-sm">Flip up</button></div>
     <div class="game-fields"><label class="game-field">Floor offset (scene units)<input id="game-height" type="number" step="any" /></label><label class="game-field">Eye height (scene units)<input id="game-eye" type="number" min="0.00001" step="any" /></label></div>
     <div class="game-actions game-tilt" aria-label="Tilt floor"><span>Tilt</span><button id="game-tilt-x-minus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor back">X −</button><button id="game-tilt-x-plus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor forward">X +</button><button id="game-tilt-z-minus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor left">Z −</button><button id="game-tilt-z-plus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor right">Z +</button></div>
-    <p class="hint">Gold ring = spawn. Gold post = eye height. Mint outline = finite reference floor.</p>
+    <p class="hint">Gold ring = spawn. Gold post = eye height; short tick = entry heading. Mint outline = finite reference floor.</p>
     <details><summary>Calibrate scale</summary><p class="hint">Scale is unknown. Adjust eye height against your scene, or enter a known conversion. This scales walking speed, gravity and body clearance together.</p><label class="game-field">Scene units per metre<input id="game-units" type="number" min="0.00001" step="any" placeholder="Optional, if known" /></label><p class="hint">A known conversion sets eye height to 1.7 metres. Without it, all values remain scene units.</p></details>
     <label class="game-field">Walking surface<select id="game-support"><option value="mesh">Static mesh collision</option><option value="virtual">Virtual floor · no wall collision</option></select></label>
     <p id="game-capability" class="game-capability"></p>
     <label class="game-confirm"><input id="game-confirm" type="checkbox" /><span>I checked the floor, spawn and body scale.</span></label>
    </div>
    <div id="game-paused" hidden><p class="hint">WASD to walk · Shift to move faster · R to reset position. Escape releases the mouse and pauses. No flying or jumping.</p><div class="game-actions"><button id="game-reset" class="btn btn-secondary btn-sm" type="button">Reset position</button><button id="game-adjust" class="btn btn-secondary btn-sm" type="button">Adjust floor</button></div></div>
+   <details id="game-trace-details" hidden><summary>Local mouse input trace</summary><pre id="game-trace-paused"></pre></details>
    <div id="game-start-actions" class="game-start-actions"><button id="game-start" class="btn btn-primary" type="button">Start FPS</button><button id="game-keyboard" class="btn btn-secondary" type="button">Keyboard look</button><p class="hint">FPS captures your mouse. Keyboard look uses arrow keys to look and WASD to walk. Desktop keyboard required; no touch controls yet.</p></div>
   `;
     this.hud.className = 'game-hud';
     this.hud.hidden = true;
     this.hud.innerHTML = '<div class="game-instructions"><strong>Game mode</strong><span id="game-hud-capability"></span><span>WASD walk · Esc pause</span><button type="button" id="game-pause" class="btn btn-secondary btn-sm">Pause</button></div><div class="game-crosshair" aria-hidden="true">+</div>';
+    if (new URLSearchParams(location.search).get('gameInputTrace') === '1') {
+      game.inputTraceEnabled = true;
+      const output = document.createElement('pre'); output.className = 'game-input-trace'; this.hud.append(output);
+      this.get('#game-trace-details').hidden = false;
+      game.onInputTrace = () => {
+        const rows = game.inputTrace;
+        const text = rows.map(row => `#${row.index} ${row.event} trusted=${row.trusted} dx=${row.dx ?? '-'} dy=${row.dy ?? '-'} yaw=${row.yawDegrees.toFixed(2)} pitch=${row.pitchDegrees.toFixed(2)} viewport=${row.width}x${row.height}`);
+        this.get('#game-trace-paused').textContent = text.join('\n');
+        output.textContent = [...text.slice(0, 3), ...(text.length > 7 ? ['…'] : []), ...text.slice(Math.max(3, text.length - 4))].join('\n');
+      };
+    }
     const viewport = document.querySelector('#viewport');
     if (!viewport)
       throw new Error('Missing viewport');
@@ -151,5 +163,5 @@ export class GameUI {
     }
     this.get('#game-candidates-row').hidden = !c.suggestions.length;
   }
-  dispose(): void { this.unsubscribe(); this.button.removeEventListener('click', this.onEntry); this.panel.remove(); this.hud.remove(); document.body.classList.remove('is-game-playing'); }
+  dispose(): void { this.game.onInputTrace = null; this.game.inputTraceEnabled = false; this.unsubscribe(); this.button.removeEventListener('click', this.onEntry); this.panel.remove(); this.hud.remove(); document.body.classList.remove('is-game-playing'); }
 }

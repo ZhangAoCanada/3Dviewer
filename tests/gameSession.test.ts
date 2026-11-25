@@ -100,6 +100,26 @@ describe('exclusive game session ownership', () => {
     expect(lock).toBeNull();
     expect(game.state.kind).toBe('paused');
   });
+  it('does not turn without relative motion; positive dx looks right, positive dy looks down; reset restores entry facing', async () => {
+    await ready();game.inputTraceEnabled = true;game.start('locked');
+    const initial = host.camera.quaternion.clone();
+    const motion = (x: number, y: number) => { const event = new Event('mousemove');Object.defineProperties(event, { movementX: {value:x}, movementY:{value:y} });doc.dispatchEvent(event);game.update(.01); };
+    motion(0, 0);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
+    const before = host.camera.getWorldDirection(new THREE.Vector3());
+    motion(20, 20);const after = host.camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3(1,0,0).applyQuaternion(initial);
+    expect(after.dot(right)).toBeGreaterThan(before.dot(right));expect(after.y).toBeLessThan(before.y);
+    for(let i=0;i<100;i++)motion(1,0);
+    expect(game.inputTrace).toHaveLength(32);expect(game.inputTrace[0]?.event).toBe('capture');expect(game.inputTrace[1]?.dx).toBe(0);
+    expect(game.inputTrace.at(-1)?.index).toBe(102);
+    game.reset();expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
+  });
+  it('reports confirmation separately from invalid scale', async () => {
+    await game.enter();game.configure({support:'virtual',eyeHeight:1});game.start('keyboard');
+    expect(game.state.kind === 'setup' && game.state.message).toContain('Check');
+    game.configure({eyeHeight:NaN});game.configure({confirmed:true});game.start('keyboard');
+    expect(game.state.kind === 'setup' && game.state.message).toContain('Eye height');
+  });
   it('clears held input on focus loss and requires a fresh press on resume', async () => {
     await ready();
     game.start('keyboard');
