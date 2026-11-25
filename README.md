@@ -121,3 +121,7 @@ See [BENCHMARK.md](BENCHMARK.md).
 ## Credits
 
 Rendering uses [Three.js](https://threejs.org/) (MIT) and [Spark](https://github.com/sparkjs-dev/spark) (MIT). The butterfly sample is loaded from `https://sparkjs.dev/assets/splats/butterfly.spz` and is not vendored in this repo.
+
+### Isolated browser test server
+
+`OV_E2E_PORT=4216 npm run test:e2e` uses that port consistently for Playwright's managed preview, URL fixtures and tests that own separate browser contexts. The default remains4173. Ports are validated; no browser assertions change. Do not point tests at an unrelated existing preview.
