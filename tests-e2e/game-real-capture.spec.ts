@@ -17,7 +17,9 @@ test('bounded real captured Gaussians visibly move, jump and crouch with honest 
  await page.screenshot({path:testInfo.outputPath('real-gs-entry.png')});const image=await mask(),eye=Number(await page.locator('#game-eye').inputValue()),moves:Record<string,number>={};
  let changed=0;for(const key of ['KeyW','KeyS','KeyA','KeyD']){moves[key]=await hold(page,key);expect(moves[key]).toBeGreaterThan(eye*.7);if(key==='KeyW')changed=(await mask()).reduce<number>((count,value,i)=>count+(value!==image[i]?1:0),0);}
  expect(changed).toBeGreaterThan(100);
- const ground=await viewPosition(page);await page.keyboard.press('Space');await page.waitForTimeout(220);expect((await viewPosition(page))[1]-ground[1]).toBeGreaterThan(eye*.1);await page.waitForTimeout(900);expect((await viewPosition(page))[1]).toBeCloseTo(ground[1],3);
+ const ground=await viewPosition(page);await page.keyboard.press('Space');await page.waitForTimeout(220);expect((await viewPosition(page))[1]-ground[1]).toBeGreaterThan(eye*.1);
+ // Observe the actual landing, not wall time: bounded physics caps each slow software-render frame to50ms.
+ await expect.poll(async()=>(await viewPosition(page))[1]).toBeCloseTo(ground[1],3);
  await page.keyboard.press('KeyC');expect(ground[1]-(await viewPosition(page))[1]).toBeCloseTo(eye*.38,3);await page.screenshot({path:testInfo.outputPath('real-gs-crouch.png')});await page.keyboard.press('Escape');await page.screenshot({path:testInfo.outputPath('real-gs-pause.png')});
  await testInfo.attach('real-capture-measurements',{body:JSON.stringify({eye,moves,changed,fixtureSha256:'032129e9d9e2df17a5ca1d70aba67b46616fe8ef9e05c0b0d93d54c59aa9eea7',scope:'Public captured object, 8192 exact original Gaussians. Software Chromium. Not full density, walkable environment, native input/GPU certification.'},null,2),contentType:'application/json'});
 });
