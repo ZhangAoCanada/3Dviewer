@@ -57,9 +57,12 @@ test('actual mesh jump lands and crouched capsule passes tunnel while uncrouch/g
  await page.click('#game-start');await page.keyboard.down('KeyA');await page.waitForTimeout(2300);await page.keyboard.up('KeyA');await page.keyboard.press('KeyC');await page.waitForTimeout(250);expect((await viewPosition(page,ref))[1]-inside[1]).toBeGreaterThan(.5);
 });
 test('actual mesh ceiling bounds jump with no tunneling; virtual support stays explicitly ceiling-free',async({page})=>{
- const ref=await meshSetup(page,true),spawn=await viewPosition(page,ref);await page.keyboard.press('Space');let apex=0;
+ const ref=await meshSetup(page,true),spawn=await viewPosition(page,ref);
+ // Observe every real WebGL matrix upload: CDP round trips can miss this short head bump.
+ await page.evaluate(ref=>{const draws=Reflect.get(window,'__fpsDraws')as Record<string,number[]>;let latest=draws[ref]!;const probe={maxY:-Infinity,samples:0};Reflect.set(window,'__ceilingRenderProbe',probe);Object.defineProperty(draws,ref,{configurable:true,get:()=>latest,set:(m:number[])=>{latest=m;probe.samples++;probe.maxY=Math.max(probe.maxY,-(m[1]!*m[12]!+m[5]!*m[13]!+m[9]!*m[14]!));}});},ref);
+ await page.keyboard.press('Space');let apex=0;
  for(let i=0;i<10;i++){await page.waitForTimeout(40);apex=Math.max(apex,(await viewPosition(page,ref))[1]-spawn[1]);}
- expect(apex).toBeGreaterThan(.01);expect(apex).toBeLessThan(.16);await page.waitForTimeout(700);expect(Math.abs((await viewPosition(page,ref))[1]-spawn[1])).toBeLessThan(.01);
+ const uploaded=await page.evaluate(()=>Reflect.get(window,'__ceilingRenderProbe')as {maxY:number;samples:number});expect(uploaded.samples).toBeGreaterThan(0);apex=Math.max(apex,uploaded.maxY-spawn[1]);expect(apex).toBeGreaterThan(.01);expect(apex).toBeLessThan(.16);await page.waitForTimeout(700);expect(Math.abs((await viewPosition(page,ref))[1]-spawn[1])).toBeLessThan(.01);
 });
 
 test('optional key capture rejects conflicts, cancels safely, persists valid remaps and renders actual held movement/jump',async({page})=>{
