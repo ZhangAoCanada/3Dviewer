@@ -1,0 +1,5 @@
+import {expect,it} from 'vitest';
+import {RelativeLookInput} from '../src/game/lookInput';
+it('does not let zero events consume the capture handoff guard',()=>{const input=new RelativeLookInput();for(let i=0;i<20;i++)expect(input.consume(0,0,1).kind).toBe('zero');expect(input.consume(-960,0,1)).toEqual({kind:'capture-handoff',dx:0,dy:0});expect(input.consume(20,20,1)).toEqual({kind:'applied',dx:20,dy:20});});
+it('rejects a super-threshold event after handoff and rearms on resume',()=>{const input=new RelativeLookInput();input.consume(1,0,1);expect(input.consume(-960,0,1).kind).toBe('discontinuity');expect(input.consume(300,0,1).kind).toBe('applied');expect(input.consume(300,0,2).kind).toBe('discontinuity');input.reset();expect(input.consume(20,0,1).kind).toBe('capture-handoff');});
+it('preserves ordinary 1:1 movement over a full accumulated turn rather than clamping heading',()=>{const input=new RelativeLookInput();input.consume(1,0,1);let x=0;for(let i=0;i<100;i++)x+=input.consume(20,0,1).dx;expect(x).toBe(2000);});

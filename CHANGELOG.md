@@ -2,6 +2,22 @@
 
 Release availability and assets are determined by GitHub Releases, not by this file.
 
+## 0.4.0
+
+## What changed
+
+- Added grounded **Game mode**: explicitly choose **Start FPS** for mouse capture, then WASD to walk, mouse to look, Shift for faster walking, Escape to pause/release, and R to reset. Keyboard-look fallback uses arrow keys. Exit restores the previous Orbit/Fly view, including subsequent scene/quality reloads. Capture/resume rejects a first relative-motion handoff impulse; ordinary motion remains direct.
+- Inspect and confirm a proposed floor and spawn before entering. Manual floor/spawn picking, offset, tilt/flip, eye height and optional known scale remain available. Plane suggestions are evidence, not guaranteed semantic floor or metric scale; parallel levels and unavailable/capped analysis require user judgment.
+- Supported static opaque single-material triangle meshes up to20,000triangles use capsule floor/wall/ceiling collision, gravity, bounded slopes/steps and fall recovery. Unsupported/mixed/oversized/deforming/transparent geometry conservatively declines reconstructed collision. Collision preparation is cooperative and cancellable, with resource limits rather than universal scene guarantees.
+- Points and Gaussian splats use an explicitly **finite virtual floor with no reconstructed wall/stair collision**, optional subtle visual floor guide and a previewed boundary. Rendered Gaussians are not collision geometry. No voxel support claim.
+- Preserved the approved v5 identity, icon-only desktop download, preferences, normal viewing modes, release-metadata cache truth and waiting-update/no-automatic-reload behavior.
+
+## Verification and limits
+
+Accepted feature head8c8468b passed507unit tests and198default browser tests;51optional cases were skipped, not passed (50UI_SHOTS captures and1live-release lookup). Independent Gemini-bot code review/retests and an actual desktop pointer-lock/mouse/WASD/pause/reset/restore retest passed within their stated scope. Release-head and public-artifact checks are recorded separately in the publication evidence.
+
+Desktop keyboard required; no touch, universal native-WebView capture, installed-app/native-upgrade or physical-GPU certification. Automatic ground/scale certainty and splat-derived walls are not claimed. Measured20k-triangle preparation trades entry delay for responsiveness; no hard frame/latency or device-capacity guarantee. Installers remain unsigned/not notarized (macOS ad-hoc signing); system WebView requirements and OS warnings remain. Existing scenes are not forcibly reloaded for updates.
+
 ## 0.3.3
 
 ## What changed

@@ -5,6 +5,7 @@ import type { Renderable, RenderableMeta, RenderableStats, RenderSettings, ShRed
 import type { GaussianBounds, GaussianGeoref } from '../loaders/gaussian/decodeGaussianPly';
 import { estimateDecodedBytes, type ShDegree } from '../loaders/gaussian/gaussianPlan';
 import { nextId } from './ids';
+import { halfToFloat } from '../render/coarseSurface';
 
 type SplatMeshInstance = InstanceType<typeof SplatMesh>;
 
@@ -59,6 +60,35 @@ export class GaussianRenderable implements Renderable {
     } catch {
       /* The generator is rebuilt once the packed splats finish uploading. */
     }
+  }
+
+  /** Original resident centers only; this is floor evidence, never collision geometry. */
+  navigationSamples(limit: number, anchor: THREE.Vector3): Float32Array | null {
+    if (this.object.paged || limit < 1) return null;
+    const ext = this.object.extSplats?.extArrays?.[0];
+    const packed = this.object.packedSplats?.packedArray;
+    const words = ext ?? packed;
+    if (!words) return null;
+    const count = Math.min(splatCount(this.object), Math.floor(words.length / 4));
+    const stride = Math.max(1, Math.ceil(count / limit));
+    const values: number[] = [];
+    const floats = ext ? new Float32Array(ext.buffer, ext.byteOffset, ext.length) : null;
+    const point = new THREE.Vector3();
+    this.object.updateWorldMatrix(true, false);
+    for (let i = 0; i < count; i += stride) {
+      const o = i * 4;
+      if (floats && ext) {
+        if (halfToFloat((ext[o + 3] ?? 0) & 65535) < 0.1) continue;
+        point.set(floats[o] ?? NaN, floats[o + 1] ?? NaN, floats[o + 2] ?? NaN);
+      } else if (packed) {
+        if (((packed[o] ?? 0) >>> 24) / 255 < 0.1) continue;
+        const xy = packed[o + 1] ?? 0, zw = packed[o + 2] ?? 0;
+        point.set(halfToFloat(xy & 65535), halfToFloat(xy >>> 16), halfToFloat(zw & 65535));
+      }
+      point.applyMatrix4(this.object.matrixWorld).sub(anchor);
+      if (point.toArray().every(Number.isFinite)) values.push(point.x, point.y, point.z);
+    }
+    return Float32Array.from(values);
   }
 
   getStats(): RenderableStats {

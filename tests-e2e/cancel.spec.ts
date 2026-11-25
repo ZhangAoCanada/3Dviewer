@@ -1,6 +1,5 @@
-import { expect, test, type Page, type Request } from './test';
+import { VIEWER_BASE_URL as origin, expect, test, type Page, type Request } from './test';
 
-const origin = 'http://127.0.0.1:4173/3Dviewer/';
 
 const formats = [
   { name: 'hang.glb' },

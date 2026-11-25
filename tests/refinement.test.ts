@@ -11,6 +11,7 @@ function hostState() {
   };
   return Object.assign(lifecycle, {
     renderables: [], content: new THREE.Group(),
+    game: { invalidate() {} },
     sortTimer: { reset() {} },
     pagerPending: () => false, sortingPending: () => false,
     rebuildPickMeshes() {},

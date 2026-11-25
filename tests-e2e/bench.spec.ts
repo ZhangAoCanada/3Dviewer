@@ -1,6 +1,5 @@
-import { chromium, expect, test } from './test';
+import { VIEWER_BASE_URL as origin, chromium, expect, test } from './test';
 
-const origin = 'http://127.0.0.1:4173/3Dviewer/';
 
 test('a normal load does not request the benchmark chunk', async ({ page }) => {
   const urls: string[] = [];

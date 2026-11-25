@@ -24,7 +24,7 @@ Open the site, or run it locally and visit `http://localhost:5173/3Dviewer/`.
 | `.ply` with positions (and optional color) | Point cloud. Very large files are subsampled in a worker. |
 | `.glb`, `.gltf`, `.obj` | Triangle mesh |
 
-Orbit is the default. Drag orbits the point under the cursor, the wheel zooms toward the cursor, and right-drag (or Shift/Ctrl-drag) pans so that point sticks to the mouse. A flat scan such as a drone scene is treated as Z-up; the Controls panel can force Y-up or Z-up and set look sensitivity. **Fly** is a first-person mode. Double-click a point to fly to it. **R** animates back to the framed view, **F** flies to the view center, **1** / **2** switch orbit and fly, **H** toggles the side panel. `?demo=slab` builds a wide synthetic Z-up cloud for trying the controls.
+Orbit is the default. Drag orbits the point under the cursor, the wheel zooms toward the cursor, and right-drag (or Shift/Ctrl-drag) pans so that point sticks to the mouse. A flat scan such as a drone scene is treated as Z-up; the Controls panel can force Y-up or Z-up and set look sensitivity. **Fly** is an unconstrained camera; **Game** adds grounded first-person exploration. Double-click a point to fly to it. **R** animates back to the framed view, **F** flies to the view center, **1** / **2** switch orbit and fly, **H** toggles the side panel. `?demo=slab` builds a wide synthetic Z-up cloud for trying the controls.
 
 | Action | Orbit | Fly |
 | --- | --- | --- |
@@ -32,6 +32,17 @@ Orbit is the default. Drag orbits the point under the cursor, the wheel zooms to
 | Pan | Right, middle, or Shift/Ctrl drag. Two fingers pan | — |
 | Zoom | Wheel or pinch toward the fingers | Wheel |
 | Move | Double-click flies in | WASD, Q/E, Space, Shift to sprint. Two-finger drag moves forward. |
+
+### Game mode
+
+Choose **Game**, inspect the proposed floor and gold spawn/eye-height marker, then confirm and select **Start FPS**. Mouse capture starts only on that explicit click. Move with **WASD**, look with the mouse, use **Shift** for faster walking, and press **Escape** to release the mouse and pause. **R** resets to spawn. **Exit** restores the exact prior Orbit/Fly view. **Keyboard look** is a grounded alternative: arrow keys look, WASD walks. A desktop keyboard is required; touch controls and native-WebView mouse capture are not certified.
+
+Floor detection proposes planes from bounded geometry samples; it cannot know whether a plane is a floor, table or ceiling. Choose a different proposal, **Pick floor / spawn**, flip/tilt the floor, or adjust its offset. Eye height is in scene units until you supply a known units-per-metre conversion; changing it scales movement and body dimensions together.
+
+- **Static mesh collision:** supported visible, opaque, non-animated/non-instanced triangle meshes, up to 20,000 triangles. Includes body clearance, walls/ceilings, gravity, ramps/small steps, and fall recovery. Solid triangles do not infer doors or material semantics. Resource or unsupported-geometry limits require an explicit fallback choice.
+- **Virtual floor:** points and Gaussians are not solid collision geometry. Walk on one previewed finite artificial floor, with **no wall collision or reconstructed stairs**. The boundary stops movement. Paged/unreadable samples and ambiguous/no-floor scenes can use manual setup instead of guessing a physical floor.
+
+Loading, reorienting or replacing a scene ends game mode; it never silently recaptures the mouse. Floor calibration is session-only and does not change stored viewer preferences. See [the game-mode implementation notes](docs/GAME_MODE.md).
 
 Settings starts with **Quality & display**, including the actual loaded detail separately from a requested preset. **View and navigation** holds orientation and sensitivity; **Advanced** and **Scene & diagnostics** are collapsed by default. Source-loading changes show a reload action; rendering controls apply immediately. **Flip Y** turns OpenCV / COLMAP scenes right-side up. The butterfly sample enables it.
 
@@ -84,7 +95,7 @@ The tag should match `package.json` (`v0.2.0` for `0.2.0`). These builds are not
 - **Windows:** SmartScreen says the app is unrecognized. Choose **More info**, then **Run anyway**.
 - **macOS:** the first open is blocked. **Right-click the app > Open**, then **Open** again.
 
-**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. A release is published when a `v0.2.0` tag is pushed.
+**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. A release is published when a version tag such as `v0.4.0` is pushed.
 
 ## Deploy
 
@@ -110,3 +121,7 @@ See [BENCHMARK.md](BENCHMARK.md).
 ## Credits
 
 Rendering uses [Three.js](https://threejs.org/) (MIT) and [Spark](https://github.com/sparkjs-dev/spark) (MIT). The butterfly sample is loaded from `https://sparkjs.dev/assets/splats/butterfly.spz` and is not vendored in this repo.
+
+### Isolated browser test server
+
+`OV_E2E_PORT=4216 npm run test:e2e` uses that port consistently for Playwright's managed preview, URL fixtures and tests that own separate browser contexts. The default remains4173. Ports are validated; no browser assertions change. Do not point tests at an unrelated existing preview.

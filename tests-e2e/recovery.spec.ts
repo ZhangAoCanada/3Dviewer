@@ -1,4 +1,4 @@
-import { expect, test } from './test';
+import { VIEWER_BASE_URL, expect, test } from './test';
 
 test('forced WebGL2 failure keeps the shell and the problem card', async ({ page, context }) => {
   const errors: string[] = [];
@@ -74,7 +74,7 @@ test('a corrupt ply shows the format card', async ({ page }) => {
       body: 'ply\nformat binary_little_endian 1.0\nelement vertex 1000\nproperty float x\nend_header\n\x00',
     }),
   );
-  const target = 'http://127.0.0.1:4173/3Dviewer/bad.ply';
+  const target = new URL('bad.ply', VIEWER_BASE_URL).href;
   await page.goto(`?url=${encodeURIComponent(target)}`);
   await expect(page.locator('#problem-title')).toHaveText('This file could not be read', { timeout: 30_000 });
   await expect(page.getByRole('button', { name: 'Choose another file' })).toBeVisible();
@@ -86,7 +86,7 @@ test('a failed download can be retried', async ({ page }) => {
     hits += 1;
     return route.abort('failed');
   });
-  const target = 'http://127.0.0.1:4173/3Dviewer/gone.ply';
+  const target = new URL('gone.ply', VIEWER_BASE_URL).href;
   await page.goto(`?url=${encodeURIComponent(target)}`);
   await expect(page.locator('#problem-title')).toHaveText('Could not download the file', { timeout: 30_000 });
   const before = hits;

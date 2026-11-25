@@ -1,3 +1,5 @@
+import { suggestGround } from '../game/groundSuggestions';
+import { GameSession } from '../game/GameSession';
 import { SparkRenderer } from '@sparkjsdev/spark';
 import * as THREE from 'three';
 import { GraphicsUnavailableError } from '../core/loadFailure';
@@ -50,6 +52,7 @@ export class SceneHost {
   readonly renderer: THREE.WebGLRenderer;
   readonly spark: SparkRenderer;
   readonly navigation: NavigationController;
+  readonly game: GameSession;
   readonly content = new THREE.Group();
   readonly grid: THREE.GridHelper;
   private readonly renderables: Renderable[] = [];
@@ -167,6 +170,7 @@ export class SceneHost {
     }
     canvas.addEventListener('webglcontextlost', (event) => {
       event.preventDefault();
+      this.game.exit();
       this.contextLost = true;
       this.onContextLost?.();
     });
@@ -188,6 +192,10 @@ export class SceneHost {
     this.scene.add(this.grid);
     this.scene.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
+    this.game = new GameSession({camera:this.camera,canvas,navigation:this.navigation,scene:this.scene,
+      items:()=>this.items,up:()=>this.upAxis,sampleGround:(x,y)=>this.sampleGround(x,y),dirty:()=>{this.viewDirty=true;}});
+    this.game.suggestions = suggestGround;
+
     this.navigation.pick = (x, y, kind) => this.pick(x, y, kind);
     this.navigation.onPivot = (point, kind) => {
       const visible = point !== null;
@@ -235,10 +243,12 @@ export class SceneHost {
   }
 
   setMode(mode: NavMode): void {
+    this.game.exit();
     this.navigation.setMode(mode);
   }
 
   clear(): void {
+    this.game.invalidate();
     for (const item of this.renderables) item.dispose();
     this.renderables.length = 0;
     this.content.clear();
@@ -265,6 +275,7 @@ export class SceneHost {
   }
 
   add(renderable: Renderable, settings: RenderSettings): void {
+    this.game.invalidate();
     disableSplatRaycast(renderable.object);
     this.renderables.push(renderable);
     this.content.add(renderable.object);
@@ -352,6 +363,7 @@ export class SceneHost {
    * keeps the axis the user was using instead of re-detecting a tilted box.
    */
   setOrientation(q: THREE.Quaternion, up: UpMode): void {
+    this.game.invalidate();
     if (!this.hasIdentityCenter) this.captureIdentityCenter();
     const snapped = snapOrientation(q);
     const rotated = this.identityCenter.clone().applyQuaternion(snapped);
@@ -371,6 +383,7 @@ export class SceneHost {
   }
 
   setUpMode(mode: UpMode): void {
+    this.game.invalidate();
     this.upMode = mode;
     if (!isIdentityOrientation(this.content.quaternion)) this.pinnedUp = mode === 'y' || mode === 'z' ? mode : null;
     this.frameAll();
@@ -429,6 +442,7 @@ export class SceneHost {
   }
 
   resetView(): void {
+    if (this.game.ownsCamera) { this.game.reset(); return; }
     this.navigation.reset(true);
   }
 
@@ -447,6 +461,7 @@ export class SceneHost {
   }
 
   focusPointer(clientX: number, clientY: number): boolean {
+    if (this.game.active) return false;
     const hit = this.pick(clientX, clientY);
     if (!hit) return false;
     this.navigation.focusOn(hit.point);
@@ -574,6 +589,7 @@ export class SceneHost {
       this.lastTime = time;
       const dt = Math.min(0.05, elapsed);
       this.navigation.update(dt);
+      this.game.update(dt);
       this.updatePivotMarker();
       this.updateNearPlane();
       for (const item of this.renderables) if (item.update(dt)) this.viewDirty = true;
@@ -657,6 +673,7 @@ export class SceneHost {
     const gridMaterials = Array.isArray(this.grid.material) ? this.grid.material : [this.grid.material];
     for (const material of gridMaterials) material.dispose();
     this.spark.dispose();
+    this.game.dispose();
     this.navigation.dispose();
     this.renderer.dispose();
   }
@@ -710,7 +727,7 @@ export class SceneHost {
   }
 
   private updateNearPlane(): void {
-    if (!this.hasBounds || !this.navigation.isMoving()) return;
+    if (this.game.ownsCamera || !this.hasBounds || !this.navigation.isMoving()) return;
     const radius = Math.max(this.navigation.sceneRadius, 0.05);
     const distance = this.camera.position.distanceTo(this.navigation.pivot);
     const near = THREE.MathUtils.clamp(distance / 400, radius / 1e5, radius / 800);

@@ -1,5 +1,6 @@
 import { test as base } from '@playwright/test';
 export * from '@playwright/test';
+export { VIEWER_BASE_URL } from './baseURL';
 
 /** Only the optional public release lookup is deterministic by default. */
 export const test = base.extend<{ mockRelease: boolean }>({

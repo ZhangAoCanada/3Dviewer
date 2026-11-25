@@ -1,3 +1,4 @@
+import { GameUI } from '../game/ui';
 import * as THREE from 'three';
 import { collectDiagnostics, formatReport, type LoadDiag } from '../core/diagnostics';
 import { presentEpsg } from '../core/epsg';
@@ -97,6 +98,7 @@ interface ToastAction {
 
 export class ViewerApp {
   private host: SceneHost | null = null;
+  private gameUI: GameUI | null = null;
   private readonly registry = createDefaultRegistry();
   private readonly budget: MemoryBudget;
   private readonly settings: RenderSettings;
@@ -206,6 +208,9 @@ export class ViewerApp {
       host.applySettings(this.settings);
       this.applyNavPrefs(host);
       this.host = host;
+      this.gameUI?.dispose();
+      this.gameUI = new GameUI(host.game, () => host.navigation.mode);
+      host.game.onError = (message) => this.toast(message, 'warn');
       document.body.classList.remove('no-graphics');
       host.start((stats) => this.renderPerf(stats));
       this.renderPerf(host.stats());
@@ -324,6 +329,7 @@ export class ViewerApp {
 
     this.buildSamples();
     this.bindSheetSwipe();
+    must('#mode-game').addEventListener('click', () => this.closeUpright());
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
     must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
     must('#focus-btn').addEventListener('click', () => {
@@ -427,6 +433,7 @@ export class ViewerApp {
     });
 
     window.addEventListener('keydown', (event) => {
+      if (this.host?.game.active && event.key !== 'Escape') return;
       if (event.key === 'Escape') {
         this.onEscape(event);
         return;
@@ -621,6 +628,7 @@ export class ViewerApp {
   }
 
   private async loadDemoSlab(count?: number, ownerSignal?: AbortSignal): Promise<void> {
+    this.host?.game.exit();
     ownerSignal?.throwIfAborted();
     if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
     this.startupPending = false;
@@ -1075,6 +1083,9 @@ export class ViewerApp {
   }
 
   private async load(source: AssetSource, options?: LoadOptions): Promise<void> {
+    const leavingGame = this.host?.game.active;
+    this.host?.game.exit();
+    if (leavingGame && options?.restore && this.host) options = { ...options, restore: this.host.navigation.snapshot() };
     const ownerSignal = options?.ownerSignal;
     ownerSignal?.throwIfAborted();
     if (!ownerSignal) { this.sceneIntent += 1; this.benchAbort?.abort(); }
@@ -1924,6 +1935,7 @@ export class ViewerApp {
   }
 
   private async startBenchmark(): Promise<void> {
+    this.host?.game.exit();
     if (this.benchRunning || !this.host) return;
     this.benchRunning = true;
     this.benchAbort?.abort();

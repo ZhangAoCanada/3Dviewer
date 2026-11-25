@@ -44,6 +44,7 @@
 <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 3v12" /><path d="m17 8-5-5-5 5" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /></symbol>
 <symbol id="i-rotate-3d" viewBox="0 0 24 24"><path d="m15.194 13.707 3.814 1.86-1.86 3.814" /><path d="M16.47214 7.52786 A 5 10 0 1 0 13 21.79796" /><path d="M21.79796 11 A 10 5 0 1 0 19 15.57071" /></symbol>
 <symbol id="i-plane" viewBox="0 0 24 24"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" /></symbol>
+<symbol id="i-gamepad" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="13" rx="5"/><path d="M7 10v5m-2.5-2.5h5"/><circle cx="15.5" cy="10.5" r=".8"/><circle cx="18.5" cy="14" r=".8"/></symbol>
 <symbol id="i-focus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /></symbol>
 <symbol id="i-house" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" /><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></symbol>
 <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3" /><path d="M21 8V5a2 2 0 0 0-2-2h-3" /><path d="M3 16v3a2 2 0 0 0 2 2h3" /><path d="M16 21h3a2 2 0 0 0 2-2v-3" /></symbol>
@@ -172,11 +173,14 @@
 
       <nav id="toolbar" class="toolbar island" aria-label="View controls">
         <div class="segment" role="group" aria-label="Navigation mode">
-          <button id="mode-orbit" class="seg is-on" type="button" aria-pressed="true" title="Orbit (1)">
+          <button id="mode-orbit" aria-label="Orbit" class="seg is-on" type="button" aria-pressed="true" title="Orbit (1)">
             <svg class="icon" aria-hidden="true"><use href="#i-rotate-3d"/></svg><span class="seg-label">Orbit</span>
           </button>
-          <button id="mode-fly" class="seg" type="button" aria-pressed="false" title="Fly (2)">
+          <button id="mode-fly" aria-label="Fly" class="seg" type="button" aria-pressed="false" title="Fly (2)">
             <svg class="icon" aria-hidden="true"><use href="#i-plane"/></svg><span class="seg-label">Fly</span>
+          </button>
+          <button id="mode-game" aria-label="Game mode" class="seg" type="button" data-scene aria-pressed="false" title="Game mode — first-person exploration">
+            <svg class="icon" aria-hidden="true"><use href="#i-gamepad"/></svg><span class="seg-label">Game</span>
           </button>
         </div>
         <span class="divider" aria-hidden="true"></span>
@@ -481,6 +485,7 @@
                 <dt><kbd>T</kbd></dt><dd>Theme</dd>
                 <dt><kbd>?</kbd></dt><dd>This help</dd>
                 <dt><kbd>Esc</kbd></dt><dd>Close or cancel</dd>
+                <dt>Game mode</dt><dd>Choose Game, inspect and confirm the floor, then Start FPS. Mouse looks; WASD walks; R resets position; Escape releases the mouse and pauses. Keyboard look uses arrow keys. Points and splats use an explicit virtual floor without wall collision.</dd>
                 <dt>Fly mode</dt><dd><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows move · <kbd>Q</kbd> / <kbd>E</kbd> down / up (<kbd>Space</kbd> also up) · <kbd>Shift</kbd> sprint</dd>
               </dl>
             </section>
