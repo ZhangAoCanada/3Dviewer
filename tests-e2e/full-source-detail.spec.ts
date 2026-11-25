@@ -54,12 +54,28 @@ for (const [mode, large] of [['full', false], ['memory', false], ['memory', true
     // Eight real splats plus legal trailing bytes exercise the size boundary, not GPU capacity.
     const bytes = large ? Buffer.alloc(64 * 1024 * 1024) : fixture;
     if (large) fixture.copy(bytes);
-    let hold = false;let held = false;
+    let hold = false;let held = false;let fullDownloadBytes = 0;
     let release = () => {};const gate = new Promise<void>((resolve) => { release = resolve; });
     await page.route('**/delayed-sh3.ply', async (route) => {
       const req = route.request();
       if (req.method() === 'GET' && !req.headers().range && hold) { held = true;await gate; }
-      await route.fulfill({ status: 200, headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.length) }, body: req.method() === 'HEAD' ? undefined : bytes });
+      // Honor sniff ranges: transporting the entire 64 MiB body twice through CDP
+      // needlessly made fixture delivery consume the render assertion's deadline.
+      // Leave Accept-Ranges unadvertised: the loader must still transfer the full
+      // padded body, preserving this test's full-download cancellation path.
+      const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers().range ?? '');
+      const start = range ? Number(range[1]) : 0;
+      const end = range ? Math.min(Number(range[2]), bytes.length - 1) : bytes.length - 1;
+      const body = bytes.subarray(start, end + 1);
+      await route.fulfill({
+        status: range ? 206 : 200,
+        headers: {
+          'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
+          ...(range ? { 'Content-Range': `bytes ${start}-${end}/${bytes.length}` } : {}),
+        },
+        body: req.method() === 'HEAD' ? undefined : body,
+      });
+      if (req.method() === 'GET' && !range) fullDownloadBytes += body.length;
     });
     try {
       await page.goto('/?sh=2');
@@ -67,6 +83,7 @@ for (const [mode, large] of [['full', false], ['memory', false], ['memory', true
       await page.fill('#url-input', new URL('delayed-sh3.ply', page.url()).href);
       await page.locator('#url-form button[value="open"]').click();
       await expect(page.locator('#hud-splats')).toHaveText('8');
+      expect(fullDownloadBytes).toBe(bytes.length);
       await expect(page.locator('#loading')).toBeHidden();
       if (mode === 'full') await enable(page);else { await settings(page);await page.click('#quality-memory'); }
       hold = true;await page.click('#quality-reopen');
