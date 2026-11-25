@@ -26,7 +26,7 @@ export function entryLook(frame: GameFrame, target: THREE.Vector3, eyeHeight: nu
 export function virtualFootprint(bounds: THREE.Box3, frame: GameFrame, eyeHeight: number): Footprint {
   const f = footprintInFrame(bounds, frame);
   const margin = Math.max(eyeHeight * 3, (Math.max(f.maxX - f.minX, f.maxZ - f.minZ)) * .15);
-  return { minX: f.minX - margin, maxX: f.maxX + margin, minZ: f.minZ - margin, maxZ: f.maxZ + margin };
+  return { minX: Math.min(f.minX - margin, -margin), maxX: Math.max(f.maxX + margin, margin), minZ: Math.min(f.minZ - margin, -margin), maxZ: Math.max(f.maxZ + margin, margin) };
 }
 /** Scene units, not estimated metres. Keep thin facade bodies bounded relative to content. */
 export function defaultEyeHeight(bounds: THREE.Box3, up: THREE.Vector3): number {
@@ -34,15 +34,16 @@ export function defaultEyeHeight(bounds: THREE.Box3, up: THREE.Vector3): number 
   const size = bounds.getSize(new THREE.Vector3());
   const span = Math.max(size.x, size.y, size.z, .001);
   const horizontal = Math.max(f.maxX - f.minX, f.maxZ - f.minZ, span * .01);
-  return THREE.MathUtils.clamp(horizontal * .08, .00001, 1e8);
+  return THREE.MathUtils.clamp(Math.max(horizontal, span) * .08, .00001, 1e8);
 }
 /** Starts outside the content silhouette rather than on a mesh lid or inside a splat. */
-export function directEntryPoint(bounds: THREE.Box3, frame: GameFrame, forward: THREE.Vector3, eyeHeight: number): THREE.Vector3 {
+export function directEntryPoint(bounds: THREE.Box3, frame: GameFrame, forward: THREE.Vector3, eyeHeight: number, fov = 55, aspect = 16/9): THREE.Vector3 {
   const f = footprintInFrame(bounds, frame);
   const direction = forward.clone().applyQuaternion(frame.inverse).setY(0);
   if (direction.lengthSq() < 1e-12) direction.set(0, 0, -1);
   direction.normalize();
-  const distance = Math.abs(direction.x) * (f.maxX-f.minX)/2 + Math.abs(direction.z) * (f.maxZ-f.minZ)/2 + eyeHeight * 2;
-  const floor = virtualFootprint(bounds, frame, eyeHeight), radius = eyeHeight * .2;
-  return toWorld(frame, new THREE.Vector3(THREE.MathUtils.clamp((f.minX+f.maxX)/2 - direction.x * distance, floor.minX+radius, floor.maxX-radius), 0, THREE.MathUtils.clamp((f.minZ+f.maxZ)/2 - direction.z * distance, floor.minZ+radius, floor.maxZ-radius)));
+  const vertical = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(fov, 10, 120));
+  const halfAngle = Math.min(vertical / 2, Math.atan(Math.tan(vertical / 2) * Math.max(.1, aspect)));
+  const distance = bounds.getSize(new THREE.Vector3()).length() * .5 / Math.sin(halfAngle) + eyeHeight;
+  return toWorld(frame, new THREE.Vector3((f.minX+f.maxX)/2 - direction.x * distance, 0, (f.minZ+f.maxZ)/2 - direction.z * distance));
 }

@@ -1,6 +1,6 @@
 import { expect, test } from './test';
 import { gameRoom } from './fixtures/gameRoom';
-import { instrument, hold, renderFrame, viewPosition, distance } from './fixtures/fpsProbe';
+import { instrument, hold, renderFrame, viewPosition, distance, pixels } from './fixtures/fpsProbe';
 
 for(const sample of ['crate','cloud']) test(`Game directly enters rendered FPS and continuous WASD visibly translates ${sample}`,async({page},info)=>{
   await instrument(page);
@@ -10,6 +10,15 @@ for(const sample of ['crate','cloud']) test(`Game directly enters rendered FPS a
   await expect(page.locator('#game-panel')).toBeHidden();
   await expect(page.locator('#game-hud-capability')).toContainText('Virtual floor');
   const eye = Number(await page.locator('#game-eye').inputValue());
+  if(sample==='crate') {
+    const {default:sharp}=await import('sharp');
+    const {data,info: image}=await sharp(await pixels(page)).removeAlpha().raw().toBuffer({resolveWithObject:true});
+    let colored=0;for(let i=0;i<data.length;i+=image.channels)if(Math.max(data[i]!,data[i+1]!,data[i+2]!)>55 && Math.max(data[i]!,data[i+1]!,data[i+2]!)-Math.min(data[i]!,data[i+1]!,data[i+2]!)>35)colored++;
+    // A visible, framed object, not the featureless full-screen wall found in self-review.
+    expect(colored/(image.width*image.height)).toBeGreaterThan(.01);
+    expect(colored/(image.width*image.height)).toBeLessThan(.7);
+  }
+
   await page.screenshot({path:info.outputPath(`${sample}-direct-entry.png`)});
   const distances: Record<string,number> = {};
   for(const code of ['KeyW','KeyA','KeyS','KeyD']) {
@@ -33,7 +42,7 @@ test('direct capture denial offers keyboard look; retained fallback button still
   await instrument(page,true,true);
   await page.goto('/?sample=cloud');await expect(page.locator('#loading')).toBeHidden();await page.click('#mode-game');
   await expect(page.locator('#game-status')).toContainText('Mouse capture unavailable');
-  await page.click('#game-keyboard');await expect(page.locator('#game-keyboard')).toBeFocused();
+  await page.click('#game-keyboard');await expect(page.locator('#game-look-help')).toContainText('Arrows look');await expect(page.locator('#game-keyboard')).toBeFocused();
   const eye=Number(await page.locator('#game-eye').inputValue());expect(await hold(page,'KeyD')).toBeGreaterThan(eye*.7);await expect(page.locator('#game-keyboard')).toBeFocused();
 });
 

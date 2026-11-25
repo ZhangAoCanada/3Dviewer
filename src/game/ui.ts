@@ -39,7 +39,7 @@ export class GameUI {
   `;
     this.hud.className = 'game-hud';
     this.hud.hidden = true;
-    this.hud.innerHTML = '<div class="game-instructions"><strong>Game mode</strong><span id="game-hud-capability"></span><span>WASD move · Mouse look · Esc pause</span><output id="game-motion" aria-live="polite"></output><button type="button" id="game-pause" class="btn btn-secondary btn-sm">Pause</button></div><div class="game-crosshair" aria-hidden="true">+</div>';
+    this.hud.innerHTML = '<div class="game-instructions"><strong>Game mode</strong><span id="game-hud-capability"></span><span id="game-look-help">WASD move · Mouse look · Esc pause</span><output id="game-motion" aria-live="polite"></output><button type="button" id="game-pause" class="btn btn-secondary btn-sm">Pause</button></div><div class="game-crosshair" aria-hidden="true">+</div>';
     if (new URLSearchParams(location.search).get('gameInputTrace') === '1') {
       game.inputTraceEnabled = true;
       const output = document.createElement('pre'); output.className = 'game-input-trace'; this.hud.append(output);
@@ -122,6 +122,8 @@ export class GameUI {
     }
     this.panel.hidden = state.kind === 'inactive' || state.kind === 'playing' || state.kind === 'acquiring';
     this.hud.hidden = state.kind !== 'playing' && state.kind !== 'acquiring';
+    const help = this.hud.querySelector('#game-look-help');
+    if (help) help.textContent = state.kind === 'playing' && state.control === 'keyboard' ? 'WASD move · Arrows look · Esc pause' : 'WASD move · Mouse look · Esc pause';
     const motion = this.hud.querySelector('#game-motion');
     if (motion) motion.textContent = state.kind === 'acquiring' ? 'Capturing mouse…' : {idle:'',walking:'Moving',boundary:'Floor boundary',wall:'Blocked — try strafing'}[this.game.motion];
     document.body.classList.toggle('is-game-playing', state.kind === 'playing' || state.kind === 'acquiring');

@@ -189,7 +189,7 @@ export class GameSession {
     const geometry: SceneGeometry = cached?.geometry ?? { bounds, anchor: bounds.getCenter(new THREE.Vector3()), positions: new Float32Array(), provenance: 'points', triangles: null, collisionReason: 'Collision is not prepared.' };
     const mesh = cached?.mesh;
     const normal = mesh?.normal.clone() ?? up, eyeHeight = mesh?.eyeHeight ?? defaultEyeHeight(bounds, up);
-    const point = mesh?.point.clone() ?? directEntryPoint(bounds, gameFrame(this.floorPoint(bounds, up), up), this.host.camera.getWorldDirection(new THREE.Vector3()), eyeHeight);
+    const point = mesh?.point.clone() ?? directEntryPoint(bounds, gameFrame(this.floorPoint(bounds, up), up), this.host.camera.getWorldDirection(new THREE.Vector3()), eyeHeight, this.host.camera.fov, this.host.camera.aspect);
     const config: GameConfig = { geometry, saved, normal, point, eyeHeight, support: mesh ? 'mesh' : 'virtual', confirmed: true, showGuide: true, collisionPreparing: false,
       suggestions: cached?.analysis.suggestions ?? [], evidence: 'Automatic scene-unit defaults. Adjust the floor or scale only if needed; a proposed plane is not proof of a physical floor.' };
     this.state = { kind:'setup', config, message:'' };

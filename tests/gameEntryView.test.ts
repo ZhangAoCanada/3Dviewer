@@ -36,3 +36,10 @@ for(const scale of [.0001, 1, 10000]) it(`direct finite floor handles anisotropi
   const look=entryLook(frame,bounds.getCenter(new THREE.Vector3()),eye,new THREE.Vector3(-1,0,-1));
   expect(Number.isFinite(look.yaw+look.pitch)).toBe(true);
 });
+
+for(const aspect of [.45,16/9]) it(`frames the content outside its bounding sphere at aspect ${aspect}`,()=>{
+ const bounds=new THREE.Box3(new THREE.Vector3(-.5,-.5,-.5),new THREE.Vector3(.5,.5,.5)),up=new THREE.Vector3(0,1,0);
+ const point=directEntryPoint(bounds,gameFrame(new THREE.Vector3(0,-.5,0),up),new THREE.Vector3(0,0,-1),.08,55,aspect);
+ const half=Math.min(55*Math.PI/360,Math.atan(Math.tan(55*Math.PI/360)*aspect));
+ expect(point.clone().addScaledVector(up,.08).distanceTo(bounds.getCenter(new THREE.Vector3()))*Math.sin(half)).toBeGreaterThan(bounds.getSize(new THREE.Vector3()).length()/2);
+});
