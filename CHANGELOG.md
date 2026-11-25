@@ -2,6 +2,24 @@
 
 Release availability and assets are determined by GitHub Releases, not by this file.
 
+## 0.4.1
+
+## What changed
+
+- **Game now enters FPS directly in one click** with mouse capture—no mandatory floor panel, reading or confirmation. Pause with Escape; optional floor/scale adjustment, Reset and Exit remain available. Exit restores the previous Orbit/Fly view.
+- Fixed a verified keyboard-ownership failure: WASD could be discarded when an entry/resume button retained focus despite real canvas pointer capture. Editable fields, dialogs and menus still keep their input intent. Keyboard-look fallback clearly identifies arrow-key look.
+- Improved scene-relative spawn/framing and finite virtual-floor room for thin scenes. Actual motion, blocked mesh movement and the artificial floor boundary now have distinct brief feedback.
+- Ground preparation is opportunistic and cancellable. An already prepared capsule-clear supported static-mesh surface may be used; otherwise entry uses an explicitly labelled **finite virtual floor with no reconstructed wall/stair collision**. Background analysis never teleports a player or silently swaps the active collision world.
+- Preserved v5 branding, icon-only downloads, settings/preferences, normal viewing modes, release-metadata cache truth and waiting-update/no-automatic-reload behavior.
+
+## Verification and limits
+
+The reviewed feature candidate passed523unit tests and205default browser tests, with51baselineoptional skips (50UI_SHOTS captures and1live-release lookup). Independent Gemini-bot review passed17targeted tests. Desktop operator review confirmed one-click capture/no setup, small mouse-look, pause/optional adjustment, Exit restoration and clear cloud labels; the native tool could not certify sustained key holds. Trusted browser holds verify actual camera translation, rendered-scene changes, keyup stability and retained-focus/resume paths. Real captured-center and original-Gaussian-subset fixtures also demonstrated movement; this is not full-density/native-GPU performance certification. The reporter's precise native cause remains unconfirmed despite the verified focus defect.
+
+Scene scale and semantic floors are not guaranteed. Optional calibration remains available. Reconstructed collision is limited to supported static opaque single-material meshes up to20,000triangles, with bounded queries; points/Gaussians do not become solid walls or stairs. No touch, voxel, universal native-WebView capture, physical-GPU capacity/latency or actual-user-device acceptance is claimed. A full177kGaussian software observation timed out before its movement hold; no full-density performance guarantee.
+
+Installers are **unsigned/not notarized** (macOS ad-hoc signing), with normal OS warnings and system-WebView dependencies. Download integrity is not native installation/runtime/upgrade certification. Existing scenes are not forcibly reloaded: choose Reload in the update notice when ready.
+
 ## 0.4.0
 
 ## What changed
