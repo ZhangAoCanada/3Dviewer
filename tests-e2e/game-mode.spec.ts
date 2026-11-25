@@ -44,6 +44,8 @@ test('real FPS capture with synthetic relative input, movement, Escape pause and
   await frames(page);
   const before = await canvasShot(page);
   await setup(page);
+  await expect(page.locator('#game-support')).toHaveValue('mesh');
+  await expect(page.locator('#game-capability')).toContainText('static solid triangles');
   await page.click('#game-start');
   await expect.poll(() => page.evaluate(() => document.pointerLockElement?.id)).toBe('view');
   await expect(page.locator('.game-hud')).toBeVisible();

@@ -16,7 +16,7 @@ A static median-split triangle BVH includes all supported collision triangles or
 
 Capsule contact uses segment/triangle closest points, with both face orientations supported independently of display shading/material cloning. Support rays accept local slopes up to 45 degrees; small steps check upward clearance and landing. Missing mesh support causes gravity/fall recovery, not an invisible plane. Virtual-floor support is a separate finite rectangular model, explicitly artificial and without reconstructed wall/stair collision.
 
-Unsupported static-collision sources include transparent/alpha-cutout materials, skinned/morph/instanced geometry, mixed point/splat data, oversized or invalid meshes. No voxel loader exists. Scene geometry is assumed static during a session; content-transform changes invalidate it.
+Unsupported static-collision sources include multi-material group layouts, transparent/alpha-cutout materials, skinned/morph/instanced geometry, mixed point/splat data, oversized or invalid meshes. No voxel loader exists. Scene geometry is assumed static during a session; content-transform changes invalidate it.
 
 ## Verification
 
