@@ -57,3 +57,24 @@ export async function hold(page: Page, code: string, reference = 'modelViewMatri
   expect(distance(await viewPosition(page,reference),resting)).toBeLessThan(1e-4);
   return moved;
 }
+
+export interface RenderedPoseObservation {samples:number;minY:number;maxY:number;lastY:number;png:string|null;pngY:number|null}
+/** Observe actual uploads with O(1) pose history; optionally capture one coherent complete canvas frame. */
+export async function observeRenderedPose(page:Page,reference:string,captureAboveY?:number){
+ await page.evaluate(({reference,captureAboveY})=>{
+  const draws=Reflect.get(window,'__fpsDraws')as Record<string,number[]>;let latest=draws[reference]!;
+  const y=(m:number[])=>-(m[4]!*m[12]!+m[5]!*m[13]!+m[6]!*m[14]!);
+  const probe:RenderedPoseObservation={samples:0,minY:y(latest),maxY:y(latest),lastY:y(latest),png:null,pngY:null};let queued=false;
+  Reflect.set(window,'__renderedPoseObservation',probe);
+  Object.defineProperty(draws,reference,{configurable:true,get:()=>latest,set:(m:number[])=>{
+   latest=m;const height=y(m);probe.samples++;probe.minY=Math.min(probe.minY,height);probe.maxY=Math.max(probe.maxY,height);probe.lastY=height;
+   if(captureAboveY===undefined||height<=captureAboveY||probe.png||queued)return;queued=true;
+   // The microtask runs after synchronous renderer.render, before canvas compositing clears its buffer.
+   queueMicrotask(()=>{const canvas=document.querySelector('#view');if(!(canvas instanceof HTMLCanvasElement)||canvas.width*canvas.height>4_194_304)throw Error('Invalid bounded render fixture');probe.png=canvas.toDataURL('image/png');probe.pngY=height;});
+  }});
+ },{reference,captureAboveY});
+}
+export async function renderedPoseObservation(page:Page):Promise<RenderedPoseObservation>{return page.evaluate(()=>Reflect.get(window,'__renderedPoseObservation'));}
+
+/** Compare actual renderer pixels, excluding only the4px CSS focus outline outside the drawing buffer. */
+export async function canvasInteriorPixels(png:Buffer){const{default:sharp}=await import('sharp');const image=sharp(png),meta=await image.metadata();if(!meta.width||!meta.height||meta.width<=8||meta.height<=8)throw Error('Invalid canvas frame dimensions');return image.extract({left:4,top:4,width:meta.width-8,height:meta.height-8}).removeAlpha().raw().toBuffer();}
