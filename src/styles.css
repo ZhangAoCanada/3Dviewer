@@ -1525,3 +1525,31 @@ kbd {
 #settings-notice-slot { flex: none; display: none; max-height: 32%; overflow-y: auto; }
 #settings-notice-slot:has(.toast:not([hidden])) { display: grid; gap: 8px; padding: 12px 16px 0; }
 #settings-notice-slot .toast { box-shadow: none; }
+
+/* Grounded first-person exploration. Local UI only; existing viewer chrome remains intact. */
+.game-panel { position: absolute; z-index: var(--z-panel); top: calc(var(--safe-top) + var(--inset) + var(--header-h) + 12px); right: 16px; width: min(340px, calc(100% - 32px)); max-height: calc(100% - var(--header-h) - 120px); overflow: auto; padding: 16px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-strong); }
+.game-panel[hidden], .game-hud[hidden] { display: none; }
+.game-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.game-heading h2 { margin: 3px 0 0; font-size: 18px; line-height: 1.3; }
+.game-eyebrow { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .1em; color: var(--color-text-muted); }
+.game-status { margin: 12px 0; line-height: 1.5; font-size: 13px; }
+.game-panel .hint { margin: 8px 0; line-height: 1.5; }
+.game-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.game-field { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; min-width: 0; }
+.game-field input, .game-field select { width: 100%; min-width: 0; padding: 7px 9px; background: var(--color-bg); color: var(--color-text); border: 1px solid var(--color-border-strong); border-radius: 6px; }
+.game-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.game-tilt { font-size: 12px; }
+.game-tilt button { padding-inline: 9px; }
+.game-panel details { padding-block: 8px; border-block: 1px solid var(--color-border); font-size: 12px; }
+.game-panel summary { cursor: pointer; }
+.game-capability { padding: 10px; border-radius: 8px; background: var(--color-bg); font-size: 12px; line-height: 1.5; }
+.game-confirm { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.5; margin: 12px 0; }
+.game-confirm input { margin-top: 4px; flex: none; }
+.game-start-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.game-start-actions .hint { flex-basis: 100%; }
+.game-hud { pointer-events: none; position: absolute; z-index: 34; inset: 0; }
+.game-instructions { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 14px; max-width: calc(100% - 32px); width: max-content; padding: 8px 12px; border-radius: 10px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-strong); font-size: 12px; box-shadow: var(--shadow-sm); }
+.game-instructions button { pointer-events: auto; }
+.game-crosshair { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-shadow: 0 1px 3px black; font-size: 22px; font-weight: 400; }
+.is-game-playing #nav-hint, .is-game-playing #toolbar, .is-game-playing .topbar, .is-game-playing #hud { visibility: hidden; }
+@media (max-width: 640px) { .toolbar .seg-label { display: none; } .game-panel { top: calc(var(--safe-top) + var(--inset) + var(--header-h) + 8px); right: 8px; width: min(340px, calc(100% - 16px)); max-height: calc(100% - var(--header-h) - 104px); padding: 12px; } .game-heading h2 { font-size: 16px; } }

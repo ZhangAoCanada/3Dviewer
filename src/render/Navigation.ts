@@ -56,6 +56,12 @@ export function chooseOrbitPivot(hit: PickResult, currentPivot: THREE.Vector3): 
  */
 export class NavigationController {
   mode: NavMode = 'orbit';
+  private suspended = false;
+
+  setSuspended(suspended: boolean): void {
+    this.onBlur();
+    this.suspended = suspended;
+  }
   /** World units per second at sensitivity 1. Tuned to the framed scene. */
   speed = 1.5;
   sensitivity = 1;
@@ -244,6 +250,7 @@ export class NavigationController {
 
   /** True while a drag, coast, flight, or camera animation is changing the view. */
   isMoving(): boolean {
+    if (this.suspended) return false;
     if (this.animating || this.drag !== 'none') return true;
     if (Math.abs(this.zoomPending) > 1e-3) return true;
     if (Math.abs(this.yawVel) > 1e-4 || Math.abs(this.pitchVel) > 1e-4) return true;
@@ -251,6 +258,7 @@ export class NavigationController {
   }
 
   update(dt: number): void {
+    if (this.suspended) return;
     if (!this.ownsKeyboard(document.activeElement)) this.keys.clear();
     if (this.animating) {
       this.animT += dt;
@@ -343,10 +351,12 @@ export class NavigationController {
   }
 
   private onContextMenu = (event: Event): void => {
+    if (this.suspended) return;
     event.preventDefault();
   };
 
   private onPointerDown = (event: PointerEvent): void => {
+    if (this.suspended) return;
     this.dom.focus({ preventScroll: true });
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, type: event.pointerType });
     this.animating = false;
@@ -425,6 +435,7 @@ export class NavigationController {
   }
 
   private onPointerMove = (event: PointerEvent): void => {
+    if (this.suspended) return;
     const prev = this.pointers.get(event.pointerId);
     if (prev) this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY, type: prev.type });
     if (this.mode === 'fly') {
@@ -518,6 +529,7 @@ export class NavigationController {
   }
 
   private onPointerUp = (event: PointerEvent): void => {
+    if (this.suspended) return;
     this.pointers.delete(event.pointerId);
     if (this.mode === 'fly' && event.pointerType === 'touch') {
       this.beginFlyTouch();
@@ -554,6 +566,7 @@ export class NavigationController {
   };
 
   private onWheel = (event: WheelEvent): void => {
+    if (this.suspended) return;
     if (isTypingTarget(event.target) && event.target !== this.dom) return;
     event.preventDefault();
     this.animating = false;
@@ -613,6 +626,7 @@ export class NavigationController {
   }
 
   private onDoubleClick = (event: MouseEvent): void => {
+    if (this.suspended) return;
     if (this.mode !== 'orbit') return;
     event.preventDefault();
     const hit = this.query(event.clientX, event.clientY);
@@ -691,7 +705,7 @@ export class NavigationController {
   }
 
   private ownsKeyboard(target: EventTarget | null): boolean {
-    return !document.querySelector('dialog[open], [role="menu"]:not([hidden])') &&
+    return !this.suspended && !document.querySelector('dialog[open], [role="menu"]:not([hidden])') &&
       (target === this.dom || target === document.body);
   }
 

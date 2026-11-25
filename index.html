@@ -172,11 +172,14 @@
 
       <nav id="toolbar" class="toolbar island" aria-label="View controls">
         <div class="segment" role="group" aria-label="Navigation mode">
-          <button id="mode-orbit" class="seg is-on" type="button" aria-pressed="true" title="Orbit (1)">
+          <button id="mode-orbit" aria-label="Orbit" class="seg is-on" type="button" aria-pressed="true" title="Orbit (1)">
             <svg class="icon" aria-hidden="true"><use href="#i-rotate-3d"/></svg><span class="seg-label">Orbit</span>
           </button>
-          <button id="mode-fly" class="seg" type="button" aria-pressed="false" title="Fly (2)">
+          <button id="mode-fly" aria-label="Fly" class="seg" type="button" aria-pressed="false" title="Fly (2)">
             <svg class="icon" aria-hidden="true"><use href="#i-plane"/></svg><span class="seg-label">Fly</span>
+          </button>
+          <button id="mode-game" aria-label="Game mode" class="seg" type="button" data-scene aria-pressed="false" title="Game mode — first-person exploration">
+            <svg class="icon" aria-hidden="true"><use href="#i-focus"/></svg><span class="seg-label">Game</span>
           </button>
         </div>
         <span class="divider" aria-hidden="true"></span>
