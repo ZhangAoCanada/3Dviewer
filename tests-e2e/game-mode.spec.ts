@@ -107,6 +107,8 @@ test('scene replacement and setup cancellation leave no game overlay or input ow
   // Escape is a session command only outside the editable/checkbox controls.
   await page.locator('#game-title').focus();
   await page.keyboard.press('Escape');
+  await expect(page.locator('#game-paused')).toBeVisible();
+  await page.click('#game-exit');
   await expect(page.locator('#game-panel')).toBeHidden();
   await setup(page);
   await page.click('#game-keyboard');
@@ -170,7 +172,9 @@ for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${
 });
 
 test('setup navigation shortcuts do not abandon game setup, and R resets inspection without discarding it',async({page})=>{
- await openRoom(page);await setup(page);await page.locator('#game-title').focus();
+ await openRoom(page);await setup(page);
+ // This case owns inspector reset; non-inspecting Reset now intentionally restores draft values.
+ await page.click('#game-inspect');await expect(page.locator('#game-inspect')).toHaveText('Keep FPS view');await page.locator('#game-title').focus();
  for(const key of ['Digit1','Digit2','KeyR']){await page.keyboard.press(key);await expect(page.locator('#game-confirm')).toBeVisible();await expect(page.locator('#mode-game')).toHaveAttribute('aria-pressed','true');}
  await expect(page.locator('#game-eye')).toHaveValue('1.7');await page.click('#game-exit');
 });

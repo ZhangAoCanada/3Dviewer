@@ -153,3 +153,56 @@ describe('static mesh collision', () => {
   });
   it('reset returns to validated spawn', () => { const w = spawn(room()); run(w, 40, { ...idle, right: 1 }); w.reset(); expect(w.foot.toArray()).toEqual(w.spawn.toArray()); });
 });
+
+describe('refined grounded controls', () => {
+  it.each([.001,1.7,1000])('mesh and virtual jumps have bounded apex/landing and no air-jump at eye %s', eye => {
+    const body=playerScale(eye)!;
+    for(const world of [{kind:'virtual',footprint:{minX:-eye*20,maxX:eye*20,minZ:-eye*20,maxZ:eye*20}},
+      {kind:'mesh',collision:new MeshCollision(floor(0,-eye*20,eye*20,-eye*20,eye*20))}] satisfies WalkWorld[]) {
+      const w=Walker.spawn(world,body,new THREE.Vector3())!; const baseline=w.foot.y;
+      expect(w.jump()).toBe(true);expect(w.jump()).toBe(false);
+      let apex=0;for(let i=0;i<120;i++){expect(w.update(1/120,idle).kind).toBe('ok');apex=Math.max(apex,w.foot.y-baseline);if(i===10)expect(w.jump()).toBe(false);}
+      expect(apex/eye).toBeGreaterThan(.30);expect(apex/eye).toBeLessThan(.36);
+      expect(w.grounded).toBe(true);expect(Math.abs(w.foot.y-baseline)/eye).toBeLessThan(.002);
+    }
+  });
+  it('mesh ceilings stop upward velocity without tunneling or recovery',()=>{
+    const w=spawn(room(floor(s.height+s.eyeHeight*.08)));expect(w.jump()).toBe(true);let apex=0;
+    for(let i=0;i<120;i++){expect(w.update(1/120,idle).kind).toBe('ok');apex=Math.max(apex,w.foot.y);}
+    expect(apex).toBeGreaterThan(.03);expect(apex).toBeLessThan(s.eyeHeight*.09);expect(w.grounded).toBe(true);
+  });
+  it('crouch passes a real tunnel and refuses stand/growth until clear',()=>{
+    const w=spawn(room(floor(1.4,0,8,-8,8)),new THREE.Vector3(-2,0,0));
+    run(w,50,{...idle,right:1});expect(w.foot.x).toBeLessThan(0);
+    expect(w.setCrouched(true)).toBe(true);const radius=w.scale.radius;
+    run(w,100,{...idle,right:1});expect(w.foot.x).toBeGreaterThan(1);
+    const pose=w.foot.clone();expect(w.setCrouched(false)).toBe(false);expect(w.crouched).toBe(true);
+    expect(w.resize(playerScale(3)!)).toBe(false);expect(w.foot.equals(pose)).toBe(true);expect(w.scale.radius).toBe(radius);
+    run(w,200,{...idle,right:-1});expect(w.foot.x).toBeLessThan(0);expect(w.setCrouched(false)).toBe(true);
+  });
+  it('eye/body resizing preserves position and independent speed; speed does not change jump/body',()=>{
+    const world:WalkWorld={kind:'virtual',footprint:{minX:-100,maxX:100,minZ:-100,maxZ:100}};
+    const a=spawn(world), b=spawn(world);expect(b.resize(playerScale(3.4)!)).toBe(true);
+    run(a,60,{...idle,forward:1});run(b,60,{...idle,forward:1});expect(a.foot.z).toBeCloseTo(b.foot.z,7);
+    const body={...b.scale};expect(b.setSpeed(2)).toBe(true);const before=b.foot.clone();run(b,60,{...idle,right:1});expect(b.foot.distanceTo(before)).toBeCloseTo(s.speed*2,5);expect(b.scale).toEqual(body);
+    expect(b.jump()).toBe(true);const y=b.foot.y;run(b,12);expect(b.foot.y).toBeGreaterThan(y);
+  });
+  it('virtual hop clamps boundaries, never invents obstacles and lands exactly on its floor',()=>{
+    const world:WalkWorld={kind:'virtual',footprint:{minX:-1,maxX:1,minZ:-1,maxZ:1}};const w=spawn(world);
+    expect(w.jump()).toBe(true);run(w,120,{...idle,right:1,sprint:true});expect(w.foot.x).toBeCloseTo(1-s.radius);expect(w.foot.y).toBe(0);
+    const pose=w.foot.clone();expect(w.resize(playerScale(5)!)).toBe(false);expect(w.foot.equals(pose)).toBe(true);
+  });
+  it('pause clears elapsed catch-up but preserves vertical momentum; reset stops jump and stance',()=>{
+    const w=spawn(room());w.jump();run(w,5);w.stop();expect(w.jump()).toBe(false);const before=w.foot.y;run(w,1);expect(w.foot.y).toBeGreaterThan(before);
+    w.setCrouched(true);w.reset();expect(w.crouched).toBe(false);expect(w.foot.equals(w.spawn)).toBe(true);expect(w.grounded).toBe(true);
+  });
+  it('camera never exceeds crouched capsule and reduced stance transition is immediate',()=>{
+    const w=spawn(room());w.setCrouched(true);expect(w.cameraEyeHeight).toBe(w.scale.eyeHeight);w.setCrouched(false);expect(w.cameraEyeHeight).toBeLessThan(w.scale.eyeHeight);
+    w.advanceEye(.016,false);expect(w.cameraEyeHeight).toBeLessThanOrEqual(w.scale.eyeHeight);w.advanceEye(.01,true);expect(w.cameraEyeHeight).toBe(w.scale.eyeHeight);
+  });
+});
+
+it('independent speed/body changes reject collision-substep overflow instead of repeatedly recovering',()=>{
+ const w=spawn(room()),p=w.foot.clone();expect(w.resize(playerScale(.001)!)).toBe(false);expect(w.foot.equals(p)).toBe(true);
+ expect(w.resize(playerScale(.05)!)).toBe(true);expect(w.setSpeed(4)).toBe(false);expect(w.speedScale).toBe(1);expect(w.update(.05,{...idle,right:1}).kind).toBe('ok');
+});

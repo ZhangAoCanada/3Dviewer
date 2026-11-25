@@ -359,3 +359,69 @@ it('late pointer capture cannot steal an editable focus or modal opened during a
   expect(game.state.kind).toBe('acquiring');const input=new ElementStub();input.tagName='INPUT';focusElement(input);lockElement(canvas);
   expect(game.state.kind).toBe('paused');expect(active).toBe(input);expect(lock).toBeNull();
 });
+
+describe('non-destructive refinement controls',()=>{
+ it('eye height and floor offset preserve explored XZ, look and independent speed',async()=>{
+  await ready();game.start('keyboard');key('keydown','KeyW');run();key('keyup','KeyW');
+  const before=foot(),q=host.camera.quaternion.clone();const s=game.state;if(s.kind!=='playing')throw Error('run');const speed=s.run.walker.baseSpeed;
+  game.pause();expect(game.setEyeHeight(1.9)).toBe(true);expect(foot().toArray()).toEqual(before.toArray());expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);expect(s.run.walker.baseSpeed).toBe(speed);
+  const origin=s.run.frame.origin.clone();expect(game.setFloorOffset(game.floorOffset+.3)).toBe(true);expect(s.run.frame.origin.y-origin.y).toBeCloseTo(.3);expect(foot().toArray()).toEqual(before.toArray());
+  game.start('keyboard');const resumed=foot();key('keydown','KeyD');run();key('keyup','KeyD');expect(foot().distanceTo(resumed)).toBeCloseTo(speed,5);
+ });
+ it('advanced setup keeps current camera and resumes unchanged position/look rather than original orbit',async()=>{
+  await ready();game.start('keyboard');key('keydown','KeyW');run();key('keyup','KeyW');const p=host.camera.position.clone(),q=host.camera.quaternion.clone(),f=foot();
+  game.pause();game.adjust();expect(game.ownsCamera).toBe(true);expect(host.camera.position.equals(p)).toBe(true);game.configure({eyeHeight:1.8});game.configure({confirmed:true});game.start('keyboard');expect(foot().distanceTo(f)).toBeLessThan(1e-7);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+ });
+ it('live resize/floor edits reject airborne/invalid changes without corrupting pose',async()=>{
+  await ready();game.start('keyboard');game.jump();game.update(.03);const p=foot(),q=host.camera.quaternion.clone();expect(game.setEyeHeight(NaN)).toBe(false);expect(game.setEyeHeight(2)).toBe(false);expect(game.setFloorOffset(.2)).toBe(false);expect(foot().equals(p)).toBe(true);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+ });
+ it('Space/Enter retained-button defaults are owned without implicit recapture or exit',async()=>{
+  await ready();game.start('locked');const button=new ElementStub();button.id='mode-game';button.tagName='BUTTON';focusElement(button);
+  for(const code of ['Space','Enter']) {expect(key('keydown',code).defaultPrevented).toBe(true);key('keyup',code);expect(game.playing).toBe(true);expect(lock).toBe(canvas);}
+ });
+});
+
+it('tilted/non-Y-up live height and virtual floor follow chosen up without XZ/look loss',async()=>{
+ await ready();const up=new THREE.Vector3(.2,.1,1).normalize();game.configure({normal:up});game.configure({confirmed:true});game.start('keyboard');key('keydown','KeyD');run();key('keyup','KeyD');
+ const p=host.camera.position.clone(),q=host.camera.quaternion.clone(),f=foot();game.pause();expect(game.setEyeHeight(1.9)).toBe(true);expect(host.camera.position.clone().sub(p).distanceTo(up.clone().multiplyScalar(.2))).toBeLessThan(1e-7);
+ const after=host.camera.position.clone();expect(game.setFloorOffset(game.floorOffset+.4)).toBe(true);expect(host.camera.position.clone().sub(after).distanceTo(up.clone().multiplyScalar(.4))).toBeLessThan(1e-7);expect(foot().distanceTo(f)).toBeLessThan(1e-7);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+});
+
+describe('expanded action ownership and pose changes',()=>{
+ it('jump is fresh-edge only and held repeat never launches again after landing',async()=>{
+  await ready();game.start('keyboard');const y=foot().y;expect(key('keydown','Space').defaultPrevented).toBe(true);for(let i=0;i<15;i++)game.update(1/60);expect(foot().y-y).toBeGreaterThan(.2);
+  run();expect(foot().y).toBeCloseTo(y,8);key('keydown','Space',true);run();expect(foot().y).toBeCloseTo(y,8);
+  key('keyup','Space');key('keydown','Space');game.update(.1);expect(foot().y-y).toBeGreaterThan(.1);
+ });
+ it('remaps movement/jump/reset without stealing modified chords or editable intent, Escape remains recovery',async()=>{
+  await ready();game.start('locked');expect(game.rebind('moveForward',['KeyI'])).toBe(true);expect(game.rebind('jump',['Digit1'])).toBe(true);expect(game.rebind('reset',['KeyT'])).toBe(true);
+  const before=foot();key('keydown','KeyW');run();expect(foot().distanceTo(before)).toBeLessThan(1e-8);
+  expect(key('keydown','KeyI',false,{ctrlKey:true}).defaultPrevented).toBe(false);run();expect(foot().distanceTo(before)).toBeLessThan(1e-8);
+  key('keydown','KeyI');run();key('keyup','KeyI');expect(foot().distanceTo(before)).toBeGreaterThan(1.2);
+  expect(key('keydown','Digit1').defaultPrevented).toBe(true);game.update(.1);expect(foot().y).toBeGreaterThan(.1);
+  key('keydown','KeyT');expect(foot().distanceTo(before)).toBeLessThan(1e-8);expect(game.state.kind).toBe('playing');
+  key('keydown','Escape');expect(game.state.kind).toBe('paused');expect(game.rebind('jump',['Escape'])).toBe(false);expect(game.rebind('jump',['KeyI'])).toBe(false);
+  const edit=new ElementStub();edit.tagName='INPUT';focusElement(edit);expect(key('keydown','KeyT').defaultPrevented).toBe(false);expect(game.state.kind).toBe('paused');
+ });
+ it('crouch/height/floor keys do not repeat and setup pick/cancel never yields explored camera to navigation',async()=>{
+  await ready();game.start('keyboard');const p=foot(),q=host.camera.quaternion.clone();key('keydown','KeyC');expect(game.crouched).toBe(true);key('keydown','KeyC',true);expect(game.crouched).toBe(true);
+  key('keydown','BracketRight');expect(game.config!.eyeHeight).toBeCloseTo(1.7*1.15);const eye=game.config!.eyeHeight;key('keydown','BracketRight',true);expect(game.config!.eyeHeight).toBe(eye);expect(foot().distanceTo(p)).toBeLessThan(1e-8);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+  game.pause();game.adjust();game.pickFloor();game.escape();const saved=host.camera.position.clone();nav.update(.5);expect(host.camera.position.toArray()).toEqual(saved.toArray());expect(game.ownsCamera).toBe(true);
+ });
+});
+
+it('owns retained-button activation and fresh game intent while pointer lock confirmation is pending',async()=>{
+ await ready();canvas.requestPointerLock=()=>Promise.resolve();active=new ElementStub();active.tagName='BUTTON';active.id='game-start';canvas.focus=()=>{};game.start('locked');expect(game.state.kind).toBe('acquiring');
+ expect(key('keydown','Enter').defaultPrevented).toBe(true);expect(key('keydown','Space').defaultPrevented).toBe(true);key('keyup','Space');key('keydown','KeyW');const before=host.camera.position.clone();game.update(.05);expect(host.camera.position.toArray()).toEqual(before.toArray());
+ lockElement(canvas);game.update(.05);expect(game.state.kind).toBe('playing');expect(foot().y).toBeGreaterThan(.01);expect(host.camera.position.distanceTo(before)).toBeGreaterThan(.01);
+});
+
+it('denied pending capture cancels queued jump/crouch instead of resuming an unseen airborne stance',async()=>{
+ await ready();canvas.requestPointerLock=()=>Promise.resolve();game.start('locked');key('keydown','Space');key('keydown','KeyC');expect(game.airborne).toBe(false);expect(game.crouched).toBe(false);doc.dispatchEvent(new Event('pointerlockerror'));expect(game.state.kind).toBe('paused');game.start('keyboard');run();expect(game.airborne).toBe(false);expect(game.crouched).toBe(false);expect(foot().y).toBe(0);
+});
+
+it('advanced draft surface changes cannot mutate the explored live world before validated commit',async()=>{
+ await ready();game.start('keyboard');if(game.state.kind!=='playing')throw Error('playing');const live=game.state.run,point=live.config.point.clone(),normal=live.config.normal.clone(),pose=host.camera.position.clone();game.pause();game.adjust();expect(game.config).not.toBe(live.config);
+ game.configure({point:new THREE.Vector3(0,9,0),normal:new THREE.Vector3(0,0,1)});expect(live.config.point.toArray()).toEqual(point.toArray());expect(live.config.normal.toArray()).toEqual(normal.toArray());expect(host.camera.position.toArray()).toEqual(pose.toArray());
+ game.setBindingCapture(true);game.invalidate();expect(game.capturingBinding).toBe(false);
+});

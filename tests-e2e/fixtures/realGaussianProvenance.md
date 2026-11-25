@@ -1,0 +1,4 @@
+# Optional real reconstruction regression
+Set `OV_REAL_GS_FIXTURE` to the retained 186212-byte SPZv2 subset (SHA256 `032129e9d9e2df17a5ca1d70aba67b46616fe8ef9e05c0b0d93d54c59aa9eea7`). No fixture bytes distributed in this repository.
+Public source https://sparkjs.dev/assets/splats/butterfly.spz, source177132 Gaussians. Select floor(k*N/8192), preserve every selected original position/alpha/color/scale/rotation/SH byte; update count, deterministic gzip. Task evidence `/workspace/omniview-fps-refinement-20261125/real-capture/`, original derivation/provenance `/workspace/omniview-game-mode-20261125/direct-entry-fix/public-capture/`.
+This is a real captured **object**, not a captured walkable environment. Mask waits for real colored capture appearance (not HUD/guide). Software Chromium640×480 checks pose + rendered changes; no full-density/native/GPU certification. Missing optional fixture is an explicitly reported skip.

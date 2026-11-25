@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { createServer } from 'node:http';
 import { gaussianPlyFixture } from '../tests/fixtures/gaussianPlyFixture';
 
 test.use({ serviceWorkers: 'block' });
@@ -56,31 +57,33 @@ for (const [mode, large] of [['full', false], ['memory', false], ['memory', true
     if (large) fixture.copy(bytes);
     let hold = false;let held = false;let fullDownloadBytes = 0;
     let release = () => {};const gate = new Promise<void>((resolve) => { release = resolve; });
-    await page.route('**/delayed-sh3.ply', async (route) => {
-      const req = route.request();
-      if (req.method() === 'GET' && !req.headers().range && hold) { held = true;await gate; }
-      // Honor sniff ranges: transporting the entire 64 MiB body twice through CDP
-      // needlessly made fixture delivery consume the render assertion's deadline.
-      // Leave Accept-Ranges unadvertised: the loader must still transfer the full
-      // padded body, preserving this test's full-download cancellation path.
-      const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers().range ?? '');
+    // Serve the actual binary over HTTP: CDP route.fulfill base64/JSON transport
+    // can stall the test runner while serializing 64 MiB before the loader starts.
+    const server = createServer(async (req, response) => {
+      if (req.url !== '/delayed-sh3.ply') { response.writeHead(404).end();return; }
+      if (req.method === 'GET' && !req.headers.range && hold) { held = true;await gate; }
+      if (response.destroyed) return;
+      // Honor sniff ranges without advertising range loading: the full padded
+      // body must still be transferred before the same cancellation assertions.
+      const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? '');
       const start = range ? Number(range[1]) : 0;
       const end = range ? Math.min(Number(range[2]), bytes.length - 1) : bytes.length - 1;
       const body = bytes.subarray(start, end + 1);
-      await route.fulfill({
-        status: range ? 206 : 200,
-        headers: {
-          'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
-          ...(range ? { 'Content-Range': `bytes ${start}-${end}/${bytes.length}` } : {}),
-        },
-        body: req.method() === 'HEAD' ? undefined : body,
+      response.writeHead(range ? 206 : 200, {
+        'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length),
+        'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+        ...(range ? { 'Content-Range': `bytes ${start}-${end}/${bytes.length}` } : {}),
       });
-      if (req.method() === 'GET' && !range) fullDownloadBytes += body.length;
+      response.end(req.method === 'HEAD' ? undefined : body, () => {
+        if (req.method === 'GET' && !range) fullDownloadBytes += body.length;
+      });
     });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address=server.address();if(!address||typeof address==='string')throw new Error('No fixture server address');
     try {
       await page.goto('/?sh=2');
       await page.click('#url-btn');
-      await page.fill('#url-input', new URL('delayed-sh3.ply', page.url()).href);
+      await page.fill('#url-input', `http://127.0.0.1:${address.port}/delayed-sh3.ply`);
       await page.locator('#url-form button[value="open"]').click();
       await expect(page.locator('#hud-splats')).toHaveText('8');
       expect(fullDownloadBytes).toBe(bytes.length);
@@ -96,7 +99,7 @@ for (const [mode, large] of [['full', false], ['memory', false], ['memory', true
       await expect(page.locator('#file-name')).toHaveText('delayed-sh3.ply');
       await expect(page.locator('#quality-reopen')).toBeVisible();
       if (mode === 'full') await expect(page.locator('#file-detail')).toHaveText(/Reopen required/);
-    } finally { release(); }
+    } finally { release();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve())); }
   });
 }
 
