@@ -107,7 +107,6 @@ const MIN_UP_ALIGNMENT = 0.35;
 const MERGE_NORMAL_DOT = 0.9961947;
 const GRID = 48;
 const ZERO_LEN = 1e-12;
-const AREA_EPS = 1e-20;
 
 type Phase = 'validate' | 'generate' | 'score' | 'refit' | 'measure-bounds' | 'measure-grid' | 'finish';
 
@@ -238,9 +237,11 @@ function normalizeHint(hint: readonly [number, number, number] | undefined): [nu
   const y = hint[1];
   const z = hint[2];
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-  const len = Math.hypot(x, y, z);
-  if (!(len > ZERO_LEN)) return null;
-  return [x / len, y / len, z / len];
+  const scale = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
+  if (!(scale > 0)) return null;
+  const sx = x / scale, sy = y / scale, sz = z / scale;
+  const len = Math.hypot(sx, sy, sz);
+  return [sx / len, sy / len, sz / len];
 }
 
 class GroundJob implements GroundProposalJob {
@@ -271,7 +272,8 @@ class GroundJob implements GroundProposalJob {
 
   step(maxWorkUnits: number): GroundProposalProgress {
     if (this.finalResult) return { status: 'done', progress: 1, result: this.finalResult };
-    let remaining = Number.isInteger(maxWorkUnits) && maxWorkUnits > 0 ? maxWorkUnits : 0;
+    let remaining = Number.isSafeInteger(maxWorkUnits) && maxWorkUnits > 0 ? maxWorkUnits : 0;
+    if (remaining === 0) return { status: 'running', progress: this.runningProgress() };
     let stalls = 0;
     while (!this.finalResult && stalls < 10_000) {
       if (this.phase === 'finish') {
@@ -677,7 +679,7 @@ class GroundJob implements GroundProposalJob {
 
   private collectCandidates(): { list: GroundCandidate[]; ambiguous: boolean } {
     const usable = this.selected.filter((item) => item.inliers >= this.input.minSupport && isMeasured(item));
-    usable.sort(compareHypotheses);
+    usable.sort((a, b) => compareHypotheses(a, b, this.input.tolerance));
     const accepted: Hypothesis[] = [];
     for (const item of usable) {
       if (accepted.some((other) => samePlane(item, other, this.input.tolerance))) continue;
@@ -828,9 +830,9 @@ function isMeasured(h: Hypothesis): boolean {
   return h.inliers > 0 && Number.isFinite(h.uMin) && Number.isFinite(h.uMax);
 }
 
-function compareHypotheses(a: Hypothesis, b: Hypothesis): number {
-  const aArea = spreadProxy(a);
-  const bArea = spreadProxy(b);
+function compareHypotheses(a: Hypothesis, b: Hypothesis, tolerance: number): number {
+  const aArea = spreadProxy(a, tolerance);
+  const bArea = spreadProxy(b, tolerance);
   if (bArea !== aArea) return bArea - aArea;
   if (b.inliers !== a.inliers) return b.inliers - a.inliers;
   const aRms = a.inliers > 0 ? a.sumRes2 / a.inliers : Infinity;
@@ -839,11 +841,11 @@ function compareHypotheses(a: Hypothesis, b: Hypothesis): number {
   return 0;
 }
 
-function spreadProxy(h: Hypothesis): number {
+function spreadProxy(h: Hypothesis, tolerance: number): number {
   if (h.occupied > 0) {
     const uSpan = Math.max(h.uMax - h.uMin, 0);
     const vSpan = Math.max(h.vMax - h.vMin, 0);
-    const cell = Math.max((h.uMax - h.uMin > 0 || h.vMax - h.vMin > 0 ? Math.max(uSpan, vSpan) / GRID : 0), AREA_EPS);
+    const cell = Math.max(tolerance * 4, Math.max(uSpan, vSpan) / GRID);
     return h.occupied * cell * cell;
   }
   const uSpan = Math.max(h.uMax - h.uMin, 0);

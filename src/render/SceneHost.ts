@@ -1,3 +1,4 @@
+import { suggestGround } from '../game/groundSuggestions';
 import { GameSession } from '../game/GameSession';
 import { SparkRenderer } from '@sparkjsdev/spark';
 import * as THREE from 'three';
@@ -193,6 +194,7 @@ export class SceneHost {
     this.navigation = new NavigationController(this.camera, canvas);
     this.game = new GameSession({camera:this.camera,canvas,navigation:this.navigation,scene:this.scene,
       items:()=>this.items,up:()=>this.upAxis,sampleGround:(x,y)=>this.sampleGround(x,y),dirty:()=>{this.viewDirty=true;}});
+    this.game.suggestions = suggestGround;
 
     this.navigation.pick = (x, y, kind) => this.pick(x, y, kind);
     this.navigation.onPivot = (point, kind) => {

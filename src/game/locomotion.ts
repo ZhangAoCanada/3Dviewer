@@ -90,7 +90,7 @@ export class Walker {
       this.foot.add(delta);
       const resolved = this.resolve();
       if (!resolved)
-        return this.recover('Collision query exceeded its safety budget.');
+        return this.recover('Movement could not be resolved safely. Returned to the last safe position.');
       if (this.grounded && this.foot.clone().sub(before).setY(0).length() < delta.clone().setY(0).length() * 0.5) {
         this.tryStep(before, delta);
       }

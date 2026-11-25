@@ -12,7 +12,8 @@ export interface GroundSuggestion {
   evidence: string;
 }
 /** Detector integration port. Proposals are never auto-accepted or treated as collision support. */
-export type GroundSuggestions = (geometry: SceneGeometry, up: THREE.Vector3, signal: AbortSignal) => Promise<GroundSuggestion[]>;
+export interface GroundAnalysis { suggestions: GroundSuggestion[]; message: string }
+export type GroundSuggestions = (geometry: SceneGeometry, up: THREE.Vector3, signal: AbortSignal) => Promise<GroundAnalysis>;
 export interface GameConfig {
   geometry: SceneGeometry;
   saved: GameViewSnapshot;
@@ -113,13 +114,14 @@ export class GameSession {
         point.z = geometry.bounds.min.z;
       else
         point.y = geometry.bounds.min.y;
-      const suggestions = this.suggestions ? await this.suggestions(geometry, up, abort.signal) : [];
+      const analysis = this.suggestions ? await this.suggestions(geometry, up, abort.signal) : {suggestions: [], message: ''};
+      const suggestions = analysis.suggestions;
       if (revision !== this.revision)
         return;
       const suggestion = suggestions[0];
       const config: GameConfig = { geometry, saved, normal: suggestion?.normal.clone() ?? up, point: suggestion?.point.clone() ?? point,
         eyeHeight: span * .1, support: geometry.triangles ? 'mesh' : 'virtual', confirmed: false, suggestions,
-        evidence: suggestion?.evidence ?? 'Manual floor: starting at scene bounds, not detected. Adjust or pick a flat patch.' };
+        evidence: suggestion?.evidence ?? `${analysis.message} Manual floor: starting at scene bounds, not detected. Adjust or pick a flat patch.`.trim() };
       this.state = { kind: 'setup', config, message: '' };
       this.updatePreview();
       this.changed();

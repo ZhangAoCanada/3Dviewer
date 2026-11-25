@@ -138,3 +138,18 @@ for (const width of [360, 640, 1280])
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   });
+
+
+for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${sample} only offers honest virtual-floor walking`, async ({ page }) => {
+  await page.goto(`/?sample=${sample}`);
+  await expect(page.locator('#file-name')).not.toHaveText('');
+  await page.click('#mode-game');
+  await expect(page.locator('#game-confirm')).toBeVisible();
+  await expect(page.locator('#game-support')).toHaveValue('virtual');
+  await expect(page.locator('#game-support option[value="mesh"]')).toBeDisabled();
+  await expect(page.locator('#game-capability')).toContainText('no reconstructed walls');
+  await page.check('#game-confirm');await page.click('#game-keyboard');
+  await expect(page.locator('.game-hud')).toBeVisible();
+  await page.keyboard.press('Escape');await expect(page.locator('#game-paused')).toBeVisible();
+  await page.click('#game-exit');await expect(page.locator('#mode-game')).toHaveAttribute('aria-pressed','false');
+});

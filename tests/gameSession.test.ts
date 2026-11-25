@@ -159,7 +159,7 @@ describe('exclusive game session ownership', () => {
   });
   it('cancelled preparation cannot attach a stale proposal or touch a replacement camera', async () => {
     let release: (() => void) | null = null;
-    game.suggestions = () => new Promise(resolve => { release = () => resolve([{ normal: new THREE.Vector3(0, 1, 0), point: new THREE.Vector3(), evidence: 'late' }]); });
+    game.suggestions = () => new Promise(resolve => { release = () => resolve({suggestions:[{ normal: new THREE.Vector3(0, 1, 0), point: new THREE.Vector3(), evidence: 'late' }],message:''}); });
     const pending = game.enter();
     while (!release)
       await new Promise(resolve => setTimeout(resolve, 1));
