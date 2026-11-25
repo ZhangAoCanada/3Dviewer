@@ -90,7 +90,10 @@ export class GameSession {
     this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy, sensitivity: this.host.navigation.sensitivity, appliedDx: decision?.dx, appliedDy: decision?.dy, disposition: decision?.kind,
       yawDegrees: THREE.MathUtils.radToDeg(this.yaw), pitchDegrees: THREE.MathUtils.radToDeg(this.pitch),
       width: this.host.canvas.clientWidth, height: this.host.canvas.clientHeight });
-    if (this.trace.length > 32) this.trace.splice(9, 1);
+    if (this.trace.length > 32) {
+      const oldestUnpinned = this.trace.findIndex((row, index) => index >= 9 && row.disposition !== 'capture-handoff');
+      this.trace.splice(oldestUnpinned, 1);
+    }
     this.onInputTrace?.();
   }
   private revision = 0;

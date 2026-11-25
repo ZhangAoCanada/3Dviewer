@@ -124,11 +124,15 @@ describe('exclusive game session ownership', () => {
     const motion=(x:number,trusted:boolean)=>{const event=new Event('mousemove');Object.defineProperties(event,{movementX:{value:x},movementY:{value:0},isTrusted:{value:trusted}});doc.dispatchEvent(event);game.update(.01);};
     for(const trusted of [true,false]) {
       const initial=host.camera.quaternion.clone();
+      for(let i=0;i<60;i++)motion(0,trusted);
+      motion(NaN,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
+      expect(game.inputTrace.at(-1)?.event).toBe('ignored-nonfinite');
       motion(-960,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
       expect(game.inputTrace.at(-1)?.disposition).toBe('capture-handoff');
       motion(-960,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
       expect(game.inputTrace.at(-1)?.disposition).toBe('discontinuity');expect(game.inputTrace.at(-1)?.appliedDx).toBe(0);
       motion(20,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeGreaterThan(.01);
+      for(let i=0;i<60;i++)motion(1,trusted);expect(game.inputTrace).toHaveLength(32);expect(game.inputTrace.some(row=>row.disposition==='capture-handoff')).toBe(true);
       game.pause();game.start('locked');
     }
   });

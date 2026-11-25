@@ -33,7 +33,7 @@ export class GameUI {
     <p id="game-capability" class="game-capability"></p>
     <label class="game-confirm"><input id="game-confirm" type="checkbox" /><span>I checked the floor, spawn and body scale.</span></label>
    </div>
-   <div id="game-paused" hidden><p class="hint">WASD to walk · Shift to move faster · R to reset position. Escape releases the mouse and pauses. No flying or jumping.</p><div class="game-actions"><button id="game-reset" class="btn btn-secondary btn-sm" type="button">Reset position</button><button id="game-adjust" class="btn btn-secondary btn-sm" type="button">Adjust floor</button></div></div>
+   <div id="game-paused" hidden><p class="hint">WASD to walk · Shift to move faster · R to reset pose. Escape releases the mouse and pauses. No flying or jumping.</p><div class="game-actions"><button id="game-reset" class="btn btn-secondary btn-sm" type="button">Reset pose</button><button id="game-adjust" class="btn btn-secondary btn-sm" type="button">Adjust floor</button></div></div>
    <details id="game-trace-details" hidden><summary>Local mouse input trace</summary><pre id="game-trace-paused"></pre></details>
    <div id="game-start-actions" class="game-start-actions"><button id="game-start" class="btn btn-primary" type="button">Start FPS</button><button id="game-keyboard" class="btn btn-secondary" type="button">Keyboard look</button><p class="hint">FPS captures your mouse. Keyboard look uses arrow keys to look and WASD to walk. Desktop keyboard required; no touch controls yet.</p></div>
   `;
