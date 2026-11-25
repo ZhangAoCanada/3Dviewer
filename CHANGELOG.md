@@ -2,6 +2,24 @@
 
 Release availability and assets are determined by GitHub Releases, not by this file.
 
+## 0.5.0
+
+## What changed
+
+- Preserved **one-click Game entry**; compact Pause controls adjust standing eye/body height, virtual-floor offset and independent movement speed without losing explored position or look. Unsafe changes give clearance/work-budget feedback. Optional floor/surface drafts and inspection preserve live stance and pose.
+- Added **Space jump**, **C crouch/stand**, **Shift sprint**, **R reset**, **Escape pause** and arrow-key look fallback. Supported static-mesh capsule collision checks headroom and blocked standing. Virtual mode offers a finite-floor hop/return, explicitly **no reconstructed walls or ceilings**.
+- Added optional16-action key remapping with conflict/recovery checks, capture/cancel/reset defaults and validated persistence. Independent FPS sensitivity and comfort/reduced-motion controls; no default head bob or shake.
+- Fixed draft/live body isolation, crouched/airborne resume, stale error/recovery feedback, scale/pace calibration, keyboard Controls activation and focused-control Space ownership. Reset restores draft values during non-inspecting setup, only the inspector while inspecting, and normal player recovery in play/Pause.
+- Preserved v5 identity, icon-only downloads, preferences/cache truth, previous Orbit/Fly restoration and waiting-update/no-automatic-reload behavior.
+
+## Verification and limits
+
+Approved54f8f36 passed612unit tests/61files,223canonical browsers, lint/types/build/precache41;51optional skips (50UI_SHOTS and1live-release lookup). Real8192-original-Gaussian fixture enabled. Independent actual Gemini-bot review/probes and scoped desktop operator checks passed; browser holds check actual camera/pixels. This is not physical sustained-key, installed-native, full-density or GPU certification. Final release-head/public-artifact checks are recorded separately.
+
+Scene-unit scale and semantic floors are not guaranteed. Conservative reconstructed collision remains limited to supported static opaque single-material meshes up to20,000triangles, with bounded queries; unsupported meshes/points/splats retain finite virtual support, not invented walls/ceilings. A captured object subset is not a captured walkable-room certification. A documented pure-binding error-role attribution follow-up remains mitigated by truthful consumer conflict labels; invalid bindings are not accepted.
+
+Installers remain **unsigned/not notarized** (macOS ad-hoc signing), with system-WebView dependencies and OS warnings. Hash integrity is not native installation/runtime/upgrade certification. Save work and choose **Reload** in the waiting update notice when ready; scenes are not forcibly reloaded.
+
 ## 0.4.1
 
 ## What changed
