@@ -105,3 +105,16 @@ it('B3 sub-physics refresh ticks retain honest movement feedback instead of alte
 it('B2 real mesh fall recovery replaces fresh jump feedback with its recovery reason',async()=>{
  await ready();game.start('keyboard');if(game.state.kind!=='playing')throw Error('run');const floor=[new THREE.Triangle(new THREE.Vector3(-1,0,-1),new THREE.Vector3(-1,0,1),new THREE.Vector3(1,0,1)),new THREE.Triangle(new THREE.Vector3(-1,0,-1),new THREE.Vector3(1,0,1),new THREE.Vector3(1,0,-1))];game.state.run.walker=Walker.spawn({kind:'mesh',collision:new MeshCollision(floor)},playerScale(1.7)!,new THREE.Vector3())!;game.jump();key('keydown','KeyW');for(let i=0;i<180&&game.state.kind==='playing';i++)game.update(1/60);const ended=currentState();expect(ended.kind).toBe('paused');if(ended.kind==='paused')expect(ended.message).toContain('No safe floor');expect(game.feedback).toBe('');
 });
+
+it.each(['KeyR','KeyT'])('setup %s resets only the draft, preserving explored crouch/position/look; play and inspector reset remain functional',async(code)=>{
+ await ready();game.start('keyboard');if(code!=='KeyR')expect(game.rebind('reset',[code])).toBe(true);
+ key('keydown','KeyW');run();key('keyup','KeyW');key('keydown','ArrowLeft');for(let i=0;i<10;i++)game.update(1/60);key('keyup','ArrowLeft');key('keydown','ArrowUp');for(let i=0;i<5;i++)game.update(1/60);key('keyup','ArrowUp');game.toggleCrouch();
+ const live=currentState();if(live.kind!=='playing')throw Error('playing');const p=host.camera.position.clone(),q=host.camera.quaternion.clone(),f=foot();game.pause();game.adjust();game.configure({eyeHeight:2});game.useSelectedSpawn();expect(key('keydown',code).defaultPrevented).toBe(true);key('keyup',code);
+ expect(game.state.kind).toBe('setup');expect(live.run.walker.foot.toArray()).toEqual(f.toArray());expect(live.run.walker.crouched).toBe(true);expect(game.config!.eyeHeight).toBe(1.7);expect(host.camera.position.toArray()).toEqual(p.toArray());expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+ game.toggleInspection();key('keydown',code);key('keyup',code);game.toggleInspection();game.backToPause();expect(foot().toArray()).toEqual(f.toArray());expect(game.crouched).toBe(true);expect(host.camera.quaternion.angleTo(q)).toBeLessThan(1e-7);
+ game.start('keyboard');key('keydown',code);key('keyup',code);expect(foot().distanceTo(live.run.walker.spawn)).toBeLessThan(1e-8);expect(game.crouched).toBe(false);
+});
+it('Space reset remap leaves focused setup button and summary activation owned by the control',async()=>{
+ await ready();game.start('keyboard');game.rebind('jump',['Digit1']);game.rebind('reset',['Space']);key('keydown','KeyW');run();key('keyup','KeyW');game.pause();game.adjust();const p=host.camera.position.clone();
+ for(const tag of ['BUTTON','SUMMARY']){active=new ElementStub();active.tagName=tag;active.id='game-back';expect(key('keydown','Space').defaultPrevented).toBe(false);expect(host.camera.position.toArray()).toEqual(p.toArray());expect(game.state.kind).toBe('setup');}
+});

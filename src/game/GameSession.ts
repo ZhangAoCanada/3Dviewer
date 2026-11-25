@@ -506,6 +506,15 @@ export class GameSession {
   }
   reset(): void {
     if(this.state.kind==='setup'&&this.inspecting){restoreGameView(this.state.config.saved,this.host.camera,this.host.navigation);this.host.navigation.setSuspended(false);this.changed();return;}
+    if(this.state.kind==='setup'&&this.editingRun){
+      // Reset belongs to the draft here; player recovery is available again in Pause/play.
+      this.collisionAbort?.abort();this.collisionAbort=null;
+      const run=this.editingRun,config={...run.config,normal:run.config.normal.clone(),point:run.config.point.clone(),confirmed:true,collisionPreparing:false};
+      this.state={kind:'setup',config,message:'Draft reset to current player settings. Explored pose and stance unchanged.'};
+      this.useNewSpawn=false;this.rebaseSpeed=false;this.picking=false;
+      this.collision=run.walker.world.kind==='mesh'?{config,frame:run.frame,collider:run.walker.world.collision}:null;
+      this.host.navigation.setSuspended(true);this.updatePreview();this.changed();return;
+    }
     const run = this.currentRun;
     if (!run) return;
     run.walker.reset();this.feedback = '';this.feedbackTime = 0;
