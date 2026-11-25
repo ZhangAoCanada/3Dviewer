@@ -6,6 +6,7 @@ import { gameFrame, playerScale, toWorld, type GameFrame } from './frame';
 import { Walker, type WalkWorld } from './locomotion';
 import type { MeshCollision } from './meshCollision';
 import { entryLook, virtualEntryPoint } from './entryView';
+import { RelativeLookInput, type LookDecision } from './lookInput';
 import { collisionInFrameAsync, footprintInFrame, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
 import { captureGameView, restoreGameView, type GameViewSnapshot } from './viewSnapshot';
 export interface GroundSuggestion {
@@ -24,6 +25,7 @@ export interface GameConfig {
   eyeHeight: number;
   support: 'mesh' | 'virtual';
   confirmed: boolean;
+  showGuide: boolean;
   collisionPreparing: boolean;
   evidence: string;
   suggestions: GroundSuggestion[];
@@ -70,6 +72,7 @@ export interface GameMouseTrace {
   event: 'capture' | 'motion' | 'ignored-nonfinite';
   index: number; trusted: boolean; dx?: number; dy?: number; sensitivity: number;
   yawDegrees: number; pitchDegrees: number; width: number; height: number;
+  appliedDx?: number; appliedDy?: number; disposition?: LookDecision['kind'];
 }
 export class GameSession {
   state: GameState = { kind: 'inactive' };
@@ -79,11 +82,12 @@ export class GameSession {
   onInputTrace: (() => void) | null = null;
   private readonly trace: GameMouseTrace[] = [];
   private mouseEventIndex = 0;
+  private readonly mouseInput = new RelativeLookInput();
   get inputTrace(): readonly GameMouseTrace[] { return this.trace.slice(); }
-  private recordMouse(event: GameMouseTrace['event'], trusted: boolean, dx?: number, dy?: number): void {
+  private recordMouse(event: GameMouseTrace['event'], trusted: boolean, dx?: number, dy?: number, decision?: LookDecision): void {
     if (!this.inputTraceEnabled) return;
     if (event === 'capture') { this.trace.length = 0; this.mouseEventIndex = 0; }
-    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy, sensitivity: this.host.navigation.sensitivity,
+    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy, sensitivity: this.host.navigation.sensitivity, appliedDx: decision?.dx, appliedDy: decision?.dy, disposition: decision?.kind,
       yawDegrees: THREE.MathUtils.radToDeg(this.yaw), pitchDegrees: THREE.MathUtils.radToDeg(this.pitch),
       width: this.host.canvas.clientWidth, height: this.host.canvas.clientHeight });
     if (this.trace.length > 32) this.trace.splice(9, 1);
@@ -146,7 +150,7 @@ export class GameSession {
         return;
       const suggestion = suggestions[0];
       const config: GameConfig = { geometry, saved, normal: suggestion?.normal.clone() ?? up, point: suggestion?.point.clone() ?? point,
-        eyeHeight: span * .1, support: geometry.triangles ? 'mesh' : 'virtual', confirmed: false, collisionPreparing: false, suggestions,
+        eyeHeight: span * .1, support: geometry.triangles ? 'mesh' : 'virtual', confirmed: false, showGuide: true, collisionPreparing: false, suggestions,
         evidence: suggestion?.evidence ?? `${analysis.message} Manual floor: starting at scene bounds, not detected. Adjust or pick a flat patch.`.trim() };
       if (config.support === 'virtual') {
         config.point = virtualEntryPoint(geometry.bounds, gameFrame(config.point, config.normal),
@@ -191,7 +195,7 @@ export class GameSession {
     });
   }
 
-  configure(change: Partial<Pick<GameConfig, 'normal' | 'point' | 'eyeHeight' | 'support' | 'confirmed'>>): void {
+  configure(change: Partial<Pick<GameConfig, 'normal' | 'point' | 'eyeHeight' | 'support' | 'confirmed' | 'showGuide'>>): void {
     if (this.state.kind !== 'setup')
       return;
     Object.assign(this.state.config, change);
@@ -257,6 +261,7 @@ export class GameSession {
     run.walker.stop();
     this.host.navigation.setSuspended(true);
     this.clearPreview();
+    if (run.config.support === 'virtual' && run.config.showGuide) this.showVirtualGuide(run);
     this.host.canvas.focus({ preventScroll: true });
     if (control === 'keyboard') {
       this.state = { kind: 'playing', run, control };
@@ -394,6 +399,7 @@ export class GameSession {
     if (document.pointerLockElement === this.host.canvas) {
       if (state.kind === 'acquiring') {
         this.state = { kind: 'playing', run: state.run, control: 'locked' };
+        this.mouseInput.reset();
         this.paintCamera(state.run);
         this.recordMouse('capture', event.isTrusted);
         this.changed();
@@ -410,15 +416,19 @@ export class GameSession {
     if (this.state.kind !== 'playing' || this.state.control !== 'locked' || document.pointerLockElement !== this.host.canvas)
       return;
     if (!Number.isFinite(event.movementX) || !Number.isFinite(event.movementY)) { this.recordMouse('ignored-nonfinite', event.isTrusted); return; }
-    this.yaw = THREE.MathUtils.euclideanModulo(this.yaw - event.movementX * .0025 * this.host.navigation.sensitivity + Math.PI, Math.PI * 2) - Math.PI;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - event.movementY * .0025 * this.host.navigation.sensitivity, -1.5, 1.5);
-    this.recordMouse('motion', event.isTrusted, event.movementX, event.movementY);
+    const decision = this.mouseInput.consume(event.movementX, event.movementY, this.host.navigation.sensitivity);
+    this.yaw = THREE.MathUtils.euclideanModulo(this.yaw - decision.dx * .0025 * this.host.navigation.sensitivity + Math.PI, Math.PI * 2) - Math.PI;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - decision.dy * .0025 * this.host.navigation.sensitivity, -1.5, 1.5);
+    this.recordMouse('motion', event.isTrusted, event.movementX, event.movementY, decision);
   };
+  private canUseSessionCommand(event: KeyboardEvent): boolean {
+    const target = event.target;
+    return !event.defaultPrevented && !event.ctrlKey && !event.metaKey && !event.altKey && !this.hasOpenDialogOrMenu() &&
+      !(target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)));
+  }
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.active) {
-      const target = event.target;
-      if (event.defaultPrevented || this.hasOpenDialogOrMenu() || (target instanceof HTMLElement &&
-        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)))) {
+      if (!this.canUseSessionCommand(event)) {
         this.keys.clear();
         this.pause('Paused while a control is open.');
         return;
@@ -427,6 +437,12 @@ export class GameSession {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.escape();
+      return;
+    }
+    if ((this.state.kind === 'setup' || this.state.kind === 'paused') && event.code === 'KeyR' && this.canUseSessionCommand(event)) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (this.state.kind === 'setup') this.host.navigation.reset(true);
+      else this.reset();
       return;
     }
     if (this.state.kind !== 'playing')
@@ -480,6 +496,17 @@ export class GameSession {
     this.state.config.evidence = 'User-picked local patch. Confirm floor, normal direction and body scale.';
     this.configure({ normal: fit.normal, point: center });
   };
+  private showVirtualGuide(run: Run): void {
+    const f = footprintInFrame(run.config.geometry.bounds, run.frame), points: THREE.Vector3[] = [];
+    const y = run.walker.scale.skin * .1;
+    for (let i = 0; i <= 10; i++) {
+      const x = THREE.MathUtils.lerp(f.minX, f.maxX, i / 10), z = THREE.MathUtils.lerp(f.minZ, f.maxZ, i / 10);
+      points.push(new THREE.Vector3(x, y, f.minZ), new THREE.Vector3(x, y, f.maxZ), new THREE.Vector3(f.minX, y, z), new THREE.Vector3(f.maxX, y, z));
+    }
+    const grid = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: 0x72e7c6, transparent: true, opacity: .14, depthWrite: false }));
+    grid.quaternion.copy(run.frame.rotation);grid.position.copy(run.frame.origin);this.preview.add(grid);
+    this.host.dirty();
+  }
   private clearPreview(): void {
     this.preview.traverse(object => { if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) {
       object.geometry.dispose();

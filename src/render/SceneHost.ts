@@ -442,7 +442,7 @@ export class SceneHost {
   }
 
   resetView(): void {
-    if (this.game.active) { this.game.reset(); return; }
+    if (this.game.ownsCamera) { this.game.reset(); return; }
     this.navigation.reset(true);
   }
 

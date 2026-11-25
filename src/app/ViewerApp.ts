@@ -433,7 +433,7 @@ export class ViewerApp {
     });
 
     window.addEventListener('keydown', (event) => {
-      if (this.host?.game.playing || this.host?.game.state.kind === 'acquiring') return;
+      if (this.host?.game.active && event.key !== 'Escape') return;
       if (event.key === 'Escape') {
         this.onEscape(event);
         return;

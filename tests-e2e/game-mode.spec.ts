@@ -24,7 +24,7 @@ async function frames(page: import('@playwright/test').Page, count = 20) {
 }
 async function canvasShot(page: import('@playwright/test').Page) {
   // Crop actual rendered pixels without time-varying FPS/toasts or setup chrome.
-  return page.locator('#view').screenshot({ style: '.topbar,#hud,.toast-stack,#toolbar,#nav-hint,#game-panel,.game-instructions,.game-crosshair {visibility:hidden!important}' });
+  return page.locator('#view').screenshot({ style: '.topbar,#hud,.toast-stack,#toolbar,#nav-hint,#game-panel,#panel,.game-instructions,.game-crosshair {visibility:hidden!important}' });
 }
 async function openRoom(page: import('@playwright/test').Page) {
   await page.goto('/?sample=crate');
@@ -50,6 +50,9 @@ test('real FPS capture with synthetic relative input, movement, Escape pause and
   await expect.poll(() => page.evaluate(() => document.pointerLockElement?.id)).toBe('view');
   await expect(page.locator('.game-hud')).toBeVisible();
   const atSpawn = await canvasShot(page);
+  // Capture handoff must reject a sidebar-to-center sized impulse before ordinary look.
+  await page.evaluate(() => document.dispatchEvent(new MouseEvent('mousemove', { movementX: -960, movementY: 0, bubbles: true })));
+  await frames(page);expect((await canvasShot(page)).equals(atSpawn)).toBe(true);
   // Headless CDP mouse moves report zero relative deltas under pointer lock. Capture is real;
   // provide a synthetic relative-input boundary event and assert the actual rendered response.
   await page.evaluate(() => document.dispatchEvent(new MouseEvent('mousemove', { movementX: 160, movementY: 50, bubbles: true })));
@@ -160,6 +163,7 @@ for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${
   await expect(page.locator('#game-support')).toHaveValue('virtual');
   await expect(page.locator('#game-support option[value="mesh"]')).toHaveJSProperty('disabled', true);
   await expect(page.locator('#game-capability')).toContainText('no reconstructed walls');
+  if (sample === 'cloud') await page.uncheck('#game-guide');
   await page.check('#game-confirm');await page.click('#game-keyboard');
   await expect(page.locator('.game-hud')).toBeVisible();
   if (sample === 'cloud') {
@@ -174,4 +178,23 @@ for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${
   }
   await page.keyboard.press('Escape');await expect(page.locator('#game-paused')).toBeVisible();
   await page.click('#game-exit');await expect(page.locator('#mode-game')).toHaveAttribute('aria-pressed','false');
+});
+
+test('setup navigation shortcuts do not abandon game setup, and R resets inspection without discarding it',async({page})=>{
+ await openRoom(page);await setup(page);await page.locator('#game-title').focus();
+ for(const key of ['Digit1','Digit2','KeyR']){await page.keyboard.press(key);await expect(page.locator('#game-confirm')).toBeVisible();await expect(page.locator('#mode-game')).toHaveAttribute('aria-pressed','true');}
+ await expect(page.locator('#game-eye')).toHaveValue('1.7');await page.click('#game-exit');
+});
+
+test('quality reopen from paused game preserves an independently aimed Fly view',async({page})=>{
+ await page.goto('/?sample=torus-ply');await expect(page.locator('#loading')).toBeHidden();
+ await page.click('#mode-fly');
+ const box=await page.locator('#view').boundingBox();if(!box)throw Error('No canvas');
+ await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.5+45,box.y+box.height*.5,{steps:5});await page.mouse.up();await frames(page,30);
+ const centroid=async()=>{const {default:sharp}=await import('sharp');const {data,info}=await sharp(await canvasShot(page)).removeAlpha().raw().toBuffer({resolveWithObject:true});let x=0,y=0,n=0;for(let i=0;i<data.length;i+=info.channels){const r=data[i]!,g=data[i+1]!,b=data[i+2]!;if(Math.max(r,g,b)-Math.min(r,g,b)>40){const pixel=i/info.channels;x+=pixel%info.width;y+=Math.floor(pixel/info.width);n++;}}expect(n).toBeGreaterThan(500);return {x:x/n,y:y/n};};
+ const before=await centroid();
+ await page.click('#mode-game');await expect(page.locator('#game-confirm')).toBeVisible();await page.check('#game-confirm');await page.click('#game-keyboard');await page.keyboard.press('Escape');
+ await page.click('#panel-btn');await page.click('#quality-memory');await expect(page.locator('#quality-reopen')).toBeVisible();await page.click('#quality-reopen');
+ await expect(page.locator('#loading')).toBeHidden({timeout:60000});await expect(page.locator('#mode-fly')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#game-panel')).toBeHidden();await frames(page,40);
+ const after=await centroid();expect(Math.hypot(after.x-before.x,after.y-before.y)).toBeLessThan(8);
 });

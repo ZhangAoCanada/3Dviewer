@@ -88,8 +88,12 @@ describe('exclusive game session ownership', () => {
     const prior = host.camera.quaternion.clone();
     const mouse = new Event('mousemove');
     Object.defineProperties(mouse, { movementX: { value: 200 }, movementY: { value: 100000 } });
-    doc.dispatchEvent(mouse);
-    game.update(.01);
+    doc.dispatchEvent(mouse);game.update(.01);
+    expect(host.camera.quaternion.angleTo(prior)).toBeLessThan(1e-7);
+    for (let i=0;i<4;i++) {
+      const normal = new Event('mousemove');Object.defineProperties(normal,{movementX:{value:200},movementY:{value:200}});
+      doc.dispatchEvent(normal);game.update(.01);
+    }
     expect(host.camera.quaternion.angleTo(prior)).toBeGreaterThan(.1);
     const forward = host.camera.getWorldDirection(new THREE.Vector3());
     expect(Math.abs(forward.y)).toBeLessThan(1);
@@ -106,13 +110,41 @@ describe('exclusive game session ownership', () => {
     const motion = (x: number, y: number) => { const event = new Event('mousemove');Object.defineProperties(event, { movementX: {value:x}, movementY:{value:y} });doc.dispatchEvent(event);game.update(.01); };
     motion(0, 0);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
     const before = host.camera.getWorldDirection(new THREE.Vector3());
+    motion(1, 1);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
     motion(20, 20);const after = host.camera.getWorldDirection(new THREE.Vector3());
     const right = new THREE.Vector3(1,0,0).applyQuaternion(initial);
     expect(after.dot(right)).toBeGreaterThan(before.dot(right));expect(after.y).toBeLessThan(before.y);
     for(let i=0;i<100;i++)motion(1,0);
     expect(game.inputTrace).toHaveLength(32);expect(game.inputTrace[0]?.event).toBe('capture');expect(game.inputTrace[1]?.dx).toBe(0);
-    expect(game.inputTrace.at(-1)?.index).toBe(102);
+    expect(game.inputTrace.at(-1)?.index).toBe(103);
     game.reset();expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
+  });
+  it('rejects capture/resume warp impulses and later discontinuities without an isTrusted filter', async () => {
+    await ready();game.inputTraceEnabled=true;game.start('locked');
+    const motion=(x:number,trusted:boolean)=>{const event=new Event('mousemove');Object.defineProperties(event,{movementX:{value:x},movementY:{value:0},isTrusted:{value:trusted}});doc.dispatchEvent(event);game.update(.01);};
+    for(const trusted of [true,false]) {
+      const initial=host.camera.quaternion.clone();
+      motion(-960,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
+      expect(game.inputTrace.at(-1)?.disposition).toBe('capture-handoff');
+      motion(-960,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeLessThan(1e-7);
+      expect(game.inputTrace.at(-1)?.disposition).toBe('discontinuity');expect(game.inputTrace.at(-1)?.appliedDx).toBe(0);
+      motion(20,trusted);expect(host.camera.quaternion.angleTo(initial)).toBeGreaterThan(.01);
+      game.pause();game.start('locked');
+    }
+  });
+  it('owns setup and paused reset commands without abandoning calibration, but leaves editable commands alone', async () => {
+    await ready();const reset=vi.spyOn(nav,'reset');
+    key('keydown','KeyR');expect(reset).toHaveBeenCalledWith(true);expect(game.state.kind).toBe('setup');
+    const input=new ElementStub();input.tagName='INPUT';input.focus();reset.mockClear();expect(key('keydown','KeyR').defaultPrevented).toBe(false);expect(reset).not.toHaveBeenCalled();
+    canvas.focus();game.start('keyboard');key('keydown','KeyW');run();game.pause();key('keydown','KeyR');
+    expect(foot().toArray()).toEqual([0,0,0]);expect(game.state.kind).toBe('paused');
+  });
+  it('can render a subtle artificial guide without inventing geometry collision, and can turn it off', async () => {
+    await ready();game.start('keyboard');
+    let lines=0;host.scene.traverse(o=>{if(o instanceof THREE.LineSegments)lines++;});expect(lines).toBeGreaterThan(0);
+    const state=game.state;if(state.kind!=='playing')throw Error('expected playing');expect(state.run.walker.world.kind).toBe('virtual');
+    game.exit();await ready();game.configure({showGuide:false});game.start('keyboard');
+    lines=0;host.scene.traverse(o=>{if(o instanceof THREE.LineSegments)lines++;});expect(lines).toBe(0);
   });
   it('reports confirmation separately from invalid scale', async () => {
     await game.enter();game.configure({support:'virtual',eyeHeight:1});game.start('keyboard');

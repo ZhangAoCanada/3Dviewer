@@ -29,6 +29,7 @@ export class GameUI {
     <p class="hint">Gold ring = spawn. Gold post = eye height; short tick = entry heading. Mint outline = finite reference floor.</p>
     <details><summary>Calibrate scale</summary><p class="hint">Scale is unknown. Adjust eye height against your scene, or enter a known conversion. This scales walking speed, gravity and body clearance together.</p><label class="game-field">Scene units per metre<input id="game-units" type="number" min="0.00001" step="any" placeholder="Optional, if known" /></label><p class="hint">A known conversion sets eye height to 1.7 metres. Without it, all values remain scene units.</p></details>
     <label class="game-field">Walking surface<select id="game-support"><option value="mesh">Static mesh collision</option><option value="virtual">Virtual floor · no wall collision</option></select></label>
+    <label id="game-guide-row" class="game-confirm" hidden><input id="game-guide" type="checkbox" checked /><span>Show artificial floor guide during play.</span></label>
     <p id="game-capability" class="game-capability"></p>
     <label class="game-confirm"><input id="game-confirm" type="checkbox" /><span>I checked the floor, spawn and body scale.</span></label>
    </div>
@@ -45,7 +46,7 @@ export class GameUI {
       this.get('#game-trace-details').hidden = false;
       game.onInputTrace = () => {
         const rows = game.inputTrace;
-        const text = rows.map(row => `#${row.index} ${row.event} trusted=${row.trusted} dx=${row.dx ?? '-'} dy=${row.dy ?? '-'} sensitivity=${row.sensitivity} yaw=${row.yawDegrees.toFixed(2)} pitch=${row.pitchDegrees.toFixed(2)} viewport=${row.width}x${row.height}`);
+        const text = rows.map(row => `#${row.index} ${row.event} trusted=${row.trusted} dx=${row.dx ?? '-'} dy=${row.dy ?? '-'} applied=${row.appliedDx ?? '-'},${row.appliedDy ?? '-'} ${row.disposition ?? ''} sensitivity=${row.sensitivity} yaw=${row.yawDegrees.toFixed(2)} pitch=${row.pitchDegrees.toFixed(2)} viewport=${row.width}x${row.height}`);
         this.get('#game-trace-paused').textContent = text.join('\n');
         output.textContent = [...text.slice(0, 3), ...(text.length > 7 ? ['…'] : []), ...text.slice(Math.max(3, text.length - 4))].join('\n');
       };
@@ -63,6 +64,7 @@ export class GameUI {
     this.get('#game-reset').addEventListener('click', () => game.reset());
     this.get('#game-adjust').addEventListener('click', () => game.adjust());
     this.hud.querySelector('#game-pause')?.addEventListener('click', () => game.pause());
+    this.get('#game-guide').addEventListener('change', () => game.configure({ showGuide: this.input('#game-guide').checked }));
     this.get('#game-confirm').addEventListener('change', () => game.configure({ confirmed: this.input('#game-confirm').checked }));
     this.get('#game-eye').addEventListener('change', () => game.configure({ eyeHeight: this.input('#game-eye').valueAsNumber }));
     this.get('#game-height').addEventListener('change', () => {
@@ -153,6 +155,8 @@ export class GameUI {
     this.input('#game-height').value = String(Number(floorOffset.toPrecision(7)));
     this.input('#game-eye').value = String(Number(c.eyeHeight.toPrecision(7)));
     this.input('#game-confirm').checked = c.confirmed;
+    this.get('#game-guide-row').hidden = c.support !== 'virtual';
+    this.input('#game-guide').checked = c.showGuide;
     this.select('#game-support').value = c.support;
     const mesh = this.select('#game-support').querySelector('option[value="mesh"]');
     if (mesh instanceof HTMLOptionElement)

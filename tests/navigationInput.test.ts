@@ -46,6 +46,17 @@ beforeEach(() => {
 afterEach(() => { nav.dispose(); vi.unstubAllGlobals(); });
 
 describe('navigation input ownership', () => {
+  it('restores Fly quaternion/up/projection after a game exit and later reload snapshot, not lookAt stale pivot', () => {
+    const camera = new THREE.PerspectiveCamera(61, 1, .007, 900);
+    const element = new ElementStub();
+    const controller = new NavigationController(camera, element as unknown as HTMLElement);
+    controller.setMode('fly');camera.position.set(4,3,7);camera.quaternion.setFromEuler(new THREE.Euler(-.4,1.1,0,'YXZ'));
+    const snapshot=controller.snapshot(), expected=camera.quaternion.clone();
+    controller.frame(new THREE.Box3(new THREE.Vector3(-5,-5,-5),new THREE.Vector3(5,5,5)));
+    controller.restore(snapshot);
+    expect(camera.quaternion.angleTo(expected)).toBeLessThan(1e-7);expect(camera.near).toBe(.007);expect(camera.far).toBe(900);expect(camera.fov).toBe(61);
+    controller.dispose();
+  });
   it('does not move for button Space or an already handled menu arrow', () => {
     nav.setMode('fly');
     const before = camera.position.clone();

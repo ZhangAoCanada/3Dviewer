@@ -21,6 +21,10 @@ export interface NavSnapshot {
   pivot: THREE.Vector3;
   up: UpAxis;
   mode: NavMode;
+  /** Present on current snapshots; legacy position/pivot snapshots retain lookAt semantics. */
+  quaternion?: THREE.Quaternion;
+  cameraUp?: THREE.Vector3;
+  projection?: { near: number; far: number; fov: number };
 }
 
 /** Copy a saved view onto a camera. No animation. */
@@ -28,7 +32,13 @@ export function applySnapshot(camera: THREE.PerspectiveCamera, pivot: THREE.Vect
   camera.position.copy(snapshot.position);
   pivot.copy(snapshot.pivot);
   upVector(snapshot.up, camera.up);
-  camera.lookAt(pivot);
+  if (snapshot.cameraUp) camera.up.copy(snapshot.cameraUp);
+  if (snapshot.quaternion) camera.quaternion.copy(snapshot.quaternion);
+  else camera.lookAt(pivot);
+  if (snapshot.projection) {
+    Object.assign(camera, snapshot.projection);
+    camera.updateProjectionMatrix();
+  }
 }
 
 export type PickKind = 'surface' | 'ground' | 'none';
@@ -166,10 +176,13 @@ export class NavigationController {
       pivot: this.pivot.clone(),
       up: this.up,
       mode: this.mode,
+      quaternion: this.camera.quaternion.clone(),
+      cameraUp: this.camera.up.clone(),
+      projection: { near: this.camera.near, far: this.camera.far, fov: this.camera.fov },
     };
   }
 
-  /** Put the camera back. Copies position, pivot, and up, then looks at the pivot. */
+  /** Restore full captured pose/projection, with lookAt fallback for legacy snapshots. */
   restore(snapshot: NavSnapshot): void {
     this.mode = snapshot.mode;
     this.up = snapshot.up;
