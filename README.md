@@ -95,7 +95,7 @@ The tag should match `package.json` (`v0.2.0` for `0.2.0`). These builds are not
 - **Windows:** SmartScreen says the app is unrecognized. Choose **More info**, then **Run anyway**.
 - **macOS:** the first open is blocked. **Right-click the app > Open**, then **Open** again.
 
-**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. A release is published when a `v0.2.0` tag is pushed.
+**Download desktop app** in the top-right island (and in the More menu on a phone) opens a dialog that highlights the installer for this computer and links to https://github.com/ZhangAoCanada/3Dviewer/releases/latest. The button is hidden inside the desktop app. A release is published when a version tag such as `v0.4.0` is pushed.
 
 ## Deploy
 
