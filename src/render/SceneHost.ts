@@ -193,7 +193,7 @@ export class SceneHost {
     this.scene.add(this.pivotMarker);
     this.navigation = new NavigationController(this.camera, canvas);
     this.game = new GameSession({camera:this.camera,canvas,navigation:this.navigation,scene:this.scene,
-      items:()=>this.items,up:()=>this.upAxis,sampleGround:(x,y)=>this.sampleGround(x,y),dirty:()=>{this.viewDirty=true;}});
+      bounds:()=>this.hasBounds?this.bounds:null,items:()=>this.items,up:()=>this.upAxis,sampleGround:(x,y)=>this.sampleGround(x,y),dirty:()=>{this.viewDirty=true;}});
     this.game.suggestions = suggestGround;
 
     this.navigation.pick = (x, y, kind) => this.pick(x, y, kind);
@@ -425,6 +425,7 @@ export class SceneHost {
     this.rebuildCoarse();
     this.navigation.frame(measured, this.flat ? this.groundLevel : undefined);
     this.placeGrid(measured, size);
+    this.game.warmup();
     this.viewDirty = true;
     const stamp = this.indexKey();
     if (stamp === this.indexStamp && (this.index || this.indexJob || this.indexAfter > 0)) return;

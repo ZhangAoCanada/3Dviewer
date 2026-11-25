@@ -1,23 +1,5 @@
 import { expect, test } from './test';
-const room = `o Room
-v -5 0 -5
-v -5 0 5
-v 5 0 5
-v 5 0 -5
-v -5 4 -5
-v -5 4 5
-v 5 4 5
-v 5 4 -5
-v -3 0 -2
-v 3 0 -2
-v 3 3 -2
-v -3 3 -2
-f 1 2 3 4
-f 1 5 6 2
-f 4 3 7 8
-f 1 4 8 5
-f 9 10 11 12
-`;
+import { gameRoom as room } from './fixtures/gameRoom';
 async function frames(page: import('@playwright/test').Page, count = 20) {
   await page.evaluate(async (count) => { for (let i = 0; i < count; i++)
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); }, count);
@@ -34,7 +16,13 @@ async function openRoom(page: import('@playwright/test').Page) {
 }
 async function setup(page: import('@playwright/test').Page) {
   await page.click('#mode-game');
+  await expect(page.locator('#game-panel')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.pointerLockElement?.id)).toBe('view');
+  await page.keyboard.press('Escape');
+  await page.click('#game-adjust');
   await expect(page.locator('#game-confirm')).toBeVisible();
+  await expect(page.locator('#game-support option[value="mesh"]')).toHaveJSProperty('disabled',false);
+  await page.selectOption('#game-support','mesh');
   await page.fill('#game-eye', '1.7');
   await page.locator('#game-eye').press('Tab');
   await page.check('#game-confirm');
@@ -105,8 +93,7 @@ test('manual virtual floor is explicit, keyboard look works and focus pauses mov
 test('pointer lock rejection stays paused and offers accessible grounded alternative', async ({ page }) => {
   await page.addInitScript(() => { HTMLCanvasElement.prototype.requestPointerLock = () => Promise.reject(new DOMException('Test denial', 'NotAllowedError')); });
   await openRoom(page);
-  await setup(page);
-  await page.click('#game-start');
+  await page.click('#mode-game');
   await expect(page.locator('#game-title')).toHaveText('Exploration paused');
   await expect(page.locator('#game-status')).toContainText('Mouse capture unavailable');
   await page.click('#game-keyboard');
@@ -159,6 +146,8 @@ for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${
   await page.goto(`/?sample=${sample}`);
   await expect(page.locator('#file-name')).not.toHaveText('');
   await page.click('#mode-game');
+  await expect(page.locator('#game-panel')).toBeHidden();
+  await page.keyboard.press('Escape');await page.click('#game-adjust');
   await expect(page.locator('#game-confirm')).toBeVisible();
   await expect(page.locator('#game-support')).toHaveValue('virtual');
   await expect(page.locator('#game-support option[value="mesh"]')).toHaveJSProperty('disabled', true);
@@ -193,7 +182,7 @@ test('quality reopen from paused game preserves an independently aimed Fly view'
  await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.5+45,box.y+box.height*.5,{steps:5});await page.mouse.up();await frames(page,30);
  const centroid=async()=>{const {default:sharp}=await import('sharp');const {data,info}=await sharp(await canvasShot(page)).removeAlpha().raw().toBuffer({resolveWithObject:true});let x=0,y=0,n=0;for(let i=0;i<data.length;i+=info.channels){const r=data[i]!,g=data[i+1]!,b=data[i+2]!;if(Math.max(r,g,b)-Math.min(r,g,b)>40){const pixel=i/info.channels;x+=pixel%info.width;y+=Math.floor(pixel/info.width);n++;}}expect(n).toBeGreaterThan(500);return {x:x/n,y:y/n};};
  const before=await centroid();
- await page.click('#mode-game');await expect(page.locator('#game-confirm')).toBeVisible();await page.check('#game-confirm');await page.click('#game-keyboard');await page.keyboard.press('Escape');
+ await page.click('#mode-game');await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');await page.keyboard.press('Escape');
  await page.click('#panel-btn');await page.click('#quality-memory');await expect(page.locator('#quality-reopen')).toBeVisible();await page.click('#quality-reopen');
  await expect(page.locator('#loading')).toBeHidden({timeout:60000});await expect(page.locator('#mode-fly')).toHaveAttribute('aria-pressed','true');await expect(page.locator('#game-panel')).toBeHidden();await frames(page,40);
  const after=await centroid();expect(Math.hypot(after.x-before.x,after.y-before.y)).toBeLessThan(8);

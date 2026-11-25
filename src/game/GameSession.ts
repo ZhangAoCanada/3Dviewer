@@ -5,7 +5,7 @@ import { fitPlane } from '../render/upright';
 import { gameFrame, playerScale, toWorld, type GameFrame } from './frame';
 import { Walker, type WalkWorld } from './locomotion';
 import type { MeshCollision } from './meshCollision';
-import { entryLook, virtualEntryPoint } from './entryView';
+import { defaultEyeHeight, directEntryPoint, entryLook, virtualEntryPoint, virtualFootprint } from './entryView';
 import { RelativeLookInput, type LookDecision } from './lookInput';
 import { collisionInFrameAsync, footprintInFrame, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
 import { captureGameView, restoreGameView, type GameViewSnapshot } from './viewSnapshot';
@@ -64,6 +64,8 @@ export interface GameHost {
   navigation: NavigationController;
   scene: THREE.Scene;
   items: () => readonly Renderable[];
+  /** Already framed bounds: direct entry must not traverse scene geometry in its click. */
+  bounds?: () => THREE.Box3 | null;
   up: () => 'y' | 'z';
   sampleGround: (x: number, y: number) => Float32Array;
   dirty: () => void;
@@ -98,6 +100,9 @@ export class GameSession {
   }
   private revision = 0;
   private collisionAbort: AbortController | null = null;
+  private warmAbort: AbortController | null = null;
+  private prepared: { geometry: SceneGeometry; analysis: GroundAnalysis; mesh: { point: THREE.Vector3; normal: THREE.Vector3; frame: GameFrame; collider: MeshCollision; eyeHeight: number } | null } | null = null;
+  motion: 'idle' | 'walking' | 'boundary' | 'wall' = 'idle';
   private collision: { config: GameConfig; frame: GameFrame; collider: MeshCollision } | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly keys = new Set<string>();
@@ -128,6 +133,71 @@ export class GameSession {
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private changed(): void { this.host.dirty(); for (const listener of this.listeners)
     listener(); }
+  /** Opportunistic scene-revision cache. Never moves or upgrades an active player's world. */
+  warmup(): void {
+    if (this.warmAbort || this.prepared || !this.host.items().length) return;
+    const abort = new AbortController();
+    this.warmAbort = abort;
+    void (async () => {
+      const geometry = await prepareSceneGeometry(this.host.items(), abort.signal);
+      const up = this.upVector();
+      const analysis = this.suggestions ? await this.suggestions(geometry, up, abort.signal) : { suggestions: [], message: '' };
+      abort.signal.throwIfAborted();
+      const eyeHeight = defaultEyeHeight(geometry.bounds, up);
+      const min = this.floorPoint(geometry.bounds, up).dot(up);
+      // Evidence is not support. Only attempt a near-bottom, walkable, actually capsule-clear mesh surface.
+      const candidate = analysis.suggestions.filter(p => Math.abs(p.normal.dot(up)) >= .9 && Math.abs(p.point.dot(up) - min) <= eyeHeight * 2)
+        .sort((a,b) => a.point.dot(up) - b.point.dot(up))[0];
+      let mesh: NonNullable<GameSession['prepared']>['mesh'] = null;
+      if (candidate && geometry.triangles) {
+        const normal = candidate.normal.clone(); if (normal.dot(up) < 0) normal.negate();
+        const point = candidate.point.clone(), frame = gameFrame(point, normal);
+        const collider = await collisionInFrameAsync(geometry, frame, abort.signal);
+        const scale = playerScale(eyeHeight);
+        if (collider && scale && Walker.spawn({kind:'mesh',collision:collider}, scale, new THREE.Vector3()))
+          mesh = { point, normal, frame, collider, eyeHeight };
+      }
+      abort.signal.throwIfAborted();
+      this.prepared = { geometry, analysis, mesh };
+      const config = this.config;
+      if (config) {
+        // Suggestions are available in Pause → Adjust; no teleport or collision swap mid-walk.
+        config.geometry = geometry; config.suggestions = analysis.suggestions;
+        this.changed();
+      }
+    })().catch(error => {
+      if (!abort.signal.aborted && this.config) {
+        this.config.evidence = `Automatic proposals unavailable: ${error instanceof Error ? error.message : 'bounded preparation failed'}. Optional manual adjustment remains available.`;
+        this.changed();
+      }
+    }).finally(() => { if (this.warmAbort === abort) this.warmAbort = null; });
+  }
+  private upVector(): THREE.Vector3 { return this.host.up() === 'z' ? new THREE.Vector3(0,0,1) : new THREE.Vector3(0,1,0); }
+  private floorPoint(bounds: THREE.Box3, up: THREE.Vector3): THREE.Vector3 {
+    const point = bounds.getCenter(new THREE.Vector3());
+    if (up.z) point.z = bounds.min.z; else point.y = bounds.min.y;
+    return point;
+  }
+  /** One click → FPS. No async work precedes requestPointerLock; calibration is optional. */
+  enterDirect(): void {
+    if (this.active || !this.host.items().length) return;
+    const cached = this.prepared;
+    const bounds = cached?.geometry.bounds.clone() ?? this.host.bounds?.()?.clone() ?? new THREE.Box3();
+    if (!this.host.bounds && !cached) for (const item of this.host.items()) { const b = item.getBounds(); if (b) bounds.union(b); }
+    if (bounds.isEmpty() || ![...bounds.min.toArray(),...bounds.max.toArray()].every(Number.isFinite)) { this.onError('Scene bounds are not ready. Try Game after loading finishes.'); return; }
+    const saved = captureGameView(this.host.camera, this.host.navigation), up = this.upVector();
+    const geometry: SceneGeometry = cached?.geometry ?? { bounds, anchor: bounds.getCenter(new THREE.Vector3()), positions: new Float32Array(), provenance: 'points', triangles: null, collisionReason: 'Collision is not prepared.' };
+    const mesh = cached?.mesh;
+    const normal = mesh?.normal.clone() ?? up, eyeHeight = mesh?.eyeHeight ?? defaultEyeHeight(bounds, up);
+    const point = mesh?.point.clone() ?? directEntryPoint(bounds, gameFrame(this.floorPoint(bounds, up), up), this.host.camera.getWorldDirection(new THREE.Vector3()), eyeHeight, this.host.camera.fov, this.host.camera.aspect);
+    const config: GameConfig = { geometry, saved, normal, point, eyeHeight, support: mesh ? 'mesh' : 'virtual', confirmed: true, showGuide: true, collisionPreparing: false,
+      suggestions: cached?.analysis.suggestions ?? [], evidence: 'Automatic scene-unit defaults. Adjust the floor or scale only if needed; a proposed plane is not proof of a physical floor.' };
+    this.state = { kind:'setup', config, message:'' };
+    if (mesh) this.collision = { config, frame:mesh.frame, collider:mesh.collider };
+    this.start('locked');
+    // start() above owns the click's activation. Background preparation cannot delay capture.
+    this.warmup();
+  }
   async enter(): Promise<void> {
     if (this.active || this.host.items().length === 0)
       return;
@@ -245,7 +315,7 @@ export class GameSession {
         this.changed();
         return;
       }
-      const world: WalkWorld = collision ? { kind: 'mesh', collision } : { kind: 'virtual', footprint: footprintInFrame(config.geometry.bounds, frame) };
+      const world: WalkWorld = collision ? { kind: 'mesh', collision } : { kind: 'virtual', footprint: virtualFootprint(config.geometry.bounds, frame, config.eyeHeight) };
       const walker = Walker.spawn(world, scale, new THREE.Vector3());
       if (!walker) {
         this.state.message = 'Spawn has no floor, is outside the boundary, or lacks body clearance. Pick a different floor/spawn patch or reduce eye height.';
@@ -260,6 +330,7 @@ export class GameSession {
     else
       return;
     this.picking = false;
+    this.motion = 'idle';
     this.keys.clear();
     run.walker.stop();
     this.host.navigation.setSuspended(true);
@@ -294,6 +365,7 @@ export class GameSession {
     this.state = { kind: 'paused', run: state.run, message };
     this.keys.clear();
     state.run.walker.stop();
+    this.motion = 'idle';
     this.releaseLock();
     this.changed();
   }
@@ -307,6 +379,7 @@ export class GameSession {
     this.state = { kind: 'setup', config: state.run.config, message: '' };
     this.updatePreview();
     this.changed();
+    this.prepareCollision(state.run.config);
   }
   reset(): void {
     const state = this.state;
@@ -338,7 +411,7 @@ export class GameSession {
     return false;
   }
   /** Scene replacement must never restore the old camera into a new scene. */
-  invalidate(): void { this.exit(false); }
+  invalidate(): void { this.warmAbort?.abort(); this.warmAbort = null; this.prepared = null; this.exit(false); }
   exit(restore = true): void {
     const state = this.state;
     if (state.kind === 'inactive')
@@ -372,9 +445,14 @@ export class GameSession {
       this.yaw += ((this.keys.has('ArrowLeft') ? 1 : 0) - (this.keys.has('ArrowRight') ? 1 : 0)) * dt * 1.5;
       this.pitch = THREE.MathUtils.clamp(this.pitch + ((this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('ArrowDown') ? 1 : 0)) * dt * 1.2, -1.5, 1.5);
     }
+    const before = state.run.walker.foot.clone();
     const result = state.run.walker.update(dt, { forward: (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0),
       right: (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0), yaw: this.yaw, sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') });
     this.paintCamera(state.run);
+    const moving = this.keys.has('KeyW') !== this.keys.has('KeyS') || this.keys.has('KeyA') !== this.keys.has('KeyD');
+    const translated = state.run.walker.foot.clone().sub(before).setY(0).length();
+    const motion = !moving ? 'idle' : translated > state.run.walker.scale.speed * Math.min(dt, .05) * .05 ? 'walking' : state.run.walker.world.kind === 'virtual' ? 'boundary' : 'wall';
+    if (motion !== this.motion && dt >= 1/120) { this.motion = motion; this.changed(); }
     if (result.kind === 'recover')
       this.pause(result.reason);
   }
@@ -394,13 +472,23 @@ export class GameSession {
     return !!document.querySelector('dialog[open], [role="dialog"]:not([hidden]), [role="menu"]:not([hidden])');
   }
   private ownsInput(): boolean {
-    return !this.hasOpenDialogOrMenu() &&
-      (document.activeElement === this.host.canvas || document.activeElement === document.body);
+    const active = document.activeElement;
+    if (this.hasOpenDialogOrMenu() || active instanceof HTMLElement && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return false;
+    // Pointer capture owns game keys even when a browser retains the activating button's focus.
+    // Keyboard fallback permits only our entry/resume controls, never arbitrary outside UI.
+    const entryButton = active instanceof HTMLElement && /^(mode-game|game-start|game-keyboard)$/.test(active.id);
+    return document.pointerLockElement === this.host.canvas || active === this.host.canvas || active === document.body ||
+      (this.state.kind === 'playing' && this.state.control === 'keyboard' && entryButton);
   }
   private onLock = (event: Event): void => {
     const state = this.state;
     if (document.pointerLockElement === this.host.canvas) {
       if (state.kind === 'acquiring') {
+        const active = document.activeElement;
+        if (this.hasOpenDialogOrMenu() || active instanceof HTMLElement && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
+          this.pause('Paused while another control is open.'); return;
+        }
+        this.host.canvas.focus({ preventScroll: true });
         this.state = { kind: 'playing', run: state.run, control: 'locked' };
         this.mouseInput.reset();
         this.paintCamera(state.run);
@@ -500,7 +588,8 @@ export class GameSession {
     this.configure({ normal: fit.normal, point: center });
   };
   private showVirtualGuide(run: Run): void {
-    const f = footprintInFrame(run.config.geometry.bounds, run.frame), points: THREE.Vector3[] = [];
+    if (run.walker.world.kind !== 'virtual') return;
+    const f = run.walker.world.footprint, points: THREE.Vector3[] = [];
     const y = run.walker.scale.skin * .1;
     for (let i = 0; i <= 10; i++) {
       const x = THREE.MathUtils.lerp(f.minX, f.maxX, i / 10), z = THREE.MathUtils.lerp(f.minZ, f.maxZ, i / 10);
@@ -527,7 +616,7 @@ export class GameSession {
     const config = this.state.config;
     if (!playerScale(config.eyeHeight))
       return;
-    const frame = gameFrame(config.point, config.normal), footprint = footprintInFrame(config.geometry.bounds, frame);
+    const frame = gameFrame(config.point, config.normal), footprint = config.support === 'virtual' ? virtualFootprint(config.geometry.bounds, frame, config.eyeHeight) : footprintInFrame(config.geometry.bounds, frame);
     const width = footprint.maxX - footprint.minX, depth = footprint.maxZ - footprint.minZ;
     if (!(width > 0 && depth > 0))
       return;
@@ -556,7 +645,7 @@ export class GameSession {
     this.host.dirty();
   }
   dispose(): void {
-    this.exit(false);
+    this.invalidate();
     this.clearPreview();
     this.preview.removeFromParent();
     this.listeners.clear();
