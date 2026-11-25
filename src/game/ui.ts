@@ -24,14 +24,14 @@ export class GameUI {
     this.panel.innerHTML = `
    <div class="game-heading"><div><p class="game-eyebrow">FIRST-PERSON EXPLORATION</p><h2 id="game-title" tabindex="-1">Adjust ground</h2></div><button id="game-exit" type="button" class="btn btn-ghost btn-sm" aria-label="Exit game mode">Exit</button></div>
    <p id="game-status" class="game-status" role="status"></p>
-   <div id="game-setup"><button id="game-selected-spawn" type="button" class="btn btn-secondary btn-sm">Use selected spawn</button><p class="hint">Explored position and look are preserved when safe. Changing surface may require explicitly choosing the selected spawn.</p>
+   <div id="game-setup"><div class="game-actions"><button id="game-back" type="button" class="btn btn-secondary btn-sm">Back to pause</button><button id="game-inspect" type="button" class="btn btn-secondary btn-sm">Inspect from outside</button></div><button id="game-selected-spawn" type="button" class="btn btn-secondary btn-sm">Use selected spawn</button><p class="hint">Explored position and look are preserved when safe. Changing surface may require explicitly choosing the selected spawn.</p>
     <p id="game-evidence" class="hint"></p>
     <label id="game-candidates-row" class="game-field" hidden>Suggested surface<select id="game-candidates"></select></label>
     <div class="game-actions"><button id="game-pick" type="button" class="btn btn-secondary btn-sm">Pick floor / spawn</button><button id="game-flip" type="button" class="btn btn-secondary btn-sm">Flip up</button></div>
     <div class="game-fields"><label class="game-field">Floor offset (scene units)<input id="game-height" type="number" step="any" /></label><label class="game-field">Eye height (scene units)<input id="game-eye" type="number" min="0.00001" step="any" /></label></div>
     <div class="game-actions game-tilt" aria-label="Tilt floor"><span>Tilt</span><button id="game-tilt-x-minus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor back">X −</button><button id="game-tilt-x-plus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor forward">X +</button><button id="game-tilt-z-minus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor left">Z −</button><button id="game-tilt-z-plus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor right">Z +</button></div>
     <p class="hint">Gold ring = spawn. Gold post = eye height; short tick = entry heading. Mint outline = finite reference floor.</p>
-    <details><summary>Calibrate scale</summary><p class="hint">Scale is unknown. Adjust eye height against your scene, or enter a known conversion. This changes body clearance and gravity. Walk speed remains independent.</p><label class="game-field">Scene units per metre<input id="game-units" type="number" min="0.00001" step="any" placeholder="Optional, if known" /></label><p class="hint">A known conversion sets eye height to 1.7 metres. Without it, all values remain scene units.</p></details>
+    <details><summary>Calibrate scale</summary><p class="hint">Scale is unknown. Adjust eye height against your scene, or enter a known conversion. Known conversion calibrates body, gravity and walking pace together. Quick body-height controls keep speed independent.</p><label class="game-field">Scene units per metre<input id="game-units" type="number" min="0.00001" step="any" placeholder="Optional, if known" /></label><p class="hint">A known conversion sets eye height to 1.7 metres. Without it, all values remain scene units.</p></details>
     <label class="game-field">Walking surface<select id="game-support"><option value="mesh">Static mesh collision</option><option value="virtual">Virtual floor · no wall collision</option></select></label>
     <label id="game-guide-row" class="game-confirm" hidden><input id="game-guide" type="checkbox" checked /><span>Show artificial floor guide during play.</span></label>
     <p id="game-capability" class="game-capability"></p>
@@ -42,7 +42,9 @@ export class GameUI {
     <label for="game-quick-floor">Virtual floor offset · scene units</label><div class="game-stepper"><button id="game-floor-minus" type="button" class="btn btn-secondary btn-sm" aria-label="Lower virtual floor">−</button><input id="game-quick-floor" type="number" step="any"/><button id="game-floor-plus" type="button" class="btn btn-secondary btn-sm" aria-label="Raise virtual floor">+</button><button id="game-floor-apply" type="button" class="btn btn-secondary btn-sm">Apply</button></div><p id="game-floor-help" class="hint"></p>
     <label for="game-speed">Walk speed <output id="game-speed-value">1×</output> · independent of height</label><input id="game-speed" type="range" min="0.25" max="4" step="0.25" value="1"/>
     </div><div class="game-actions"><button id="game-reset" class="btn btn-secondary btn-sm" type="button">Reset pose</button><button id="game-adjust" class="btn btn-secondary btn-sm" type="button">Floor &amp; surface setup</button><button id="game-stance" class="btn btn-secondary btn-sm" type="button">Crouch / stand</button></div>
+   </div>
     <details id="game-controls"><summary>Controls &amp; comfort</summary><p id="game-current-keys" class="hint"></p><p class="hint">Mouse looks; your Look bindings work in Keyboard mode. Escape pauses. Height changes keep position and speed; crouch is a temporary stance. Virtual hops return to the artificial floor, with no reconstructed walls or ceilings. No head bob or camera shake.</p><label class="game-field">FPS look sensitivity <output id="game-look-value">1×</output><input id="game-look-sensitivity" type="range" min="0.4" max="2" step="0.05" value="1"/></label><label class="game-confirm"><input id="game-reduced-motion" type="checkbox"/>Instant stance transitions</label></details>
+   <div id="game-binding-section">
     <details id="game-bindings"><summary>Customize keys</summary><div id="game-bindings-list"></div><p class="hint">Physical key positions. Replace one action at a time; conflicts are rejected. Escape always recovers. Tab or Escape cancels capture.</p><p id="game-binding-status" role="status" aria-live="polite"></p><button id="game-bind-cancel" type="button" class="btn btn-secondary btn-sm" hidden>Cancel key capture</button><button id="game-bindings-reset" type="button" class="btn btn-secondary btn-sm">Reset key defaults</button></details>
    </div>
    <details id="game-trace-details" hidden><summary>Local mouse input trace</summary><pre id="game-trace-paused"></pre></details>
@@ -87,8 +89,12 @@ export class GameUI {
     this.get('#game-flip').addEventListener('click', () => { const c = game.config; if (c)
       game.configure({ normal: c.normal.clone().negate() }); });
     this.get('#game-reset').addEventListener('click', () => game.reset());
+    this.get('#game-back').addEventListener('click',()=>game.backToPause());
+    this.get('#game-inspect').addEventListener('click',()=>game.toggleInspection());
     this.get('#game-selected-spawn').addEventListener('click', () => game.useSelectedSpawn());
     this.get('#game-stance').addEventListener('click', () => game.toggleCrouch());
+    this.input('#game-quick-eye').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();this.get('#game-eye-apply').click();}});
+    this.input('#game-quick-floor').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();this.get('#game-floor-apply').click();}});
     this.get('#game-eye-apply').addEventListener('click', () => game.setEyeHeight(this.input('#game-quick-eye').valueAsNumber));
     this.get('#game-floor-apply').addEventListener('click', () => game.setFloorOffset(this.input('#game-quick-floor').valueAsNumber));
     for (const sign of [-1,1]) {
@@ -98,7 +104,7 @@ export class GameUI {
     this.input('#game-speed').addEventListener('input', () => game.setPreferences({speed:this.input('#game-speed').valueAsNumber}));
     this.input('#game-look-sensitivity').addEventListener('input', () => game.setPreferences({sensitivity:this.input('#game-look-sensitivity').valueAsNumber}));
     this.input('#game-reduced-motion').addEventListener('change', () => game.setPreferences({reducedMotion:this.input('#game-reduced-motion').checked}));
-    game.onControls = () => { const details = this.get('#game-controls');if (details instanceof HTMLDetailsElement) { details.open = true;queueMicrotask(() => { if (game.state.kind === 'paused') details.querySelector('summary')?.focus(); }); } };
+    game.onControls = () => { const details = this.get('#game-controls');if (details instanceof HTMLDetailsElement) { details.open = true;queueMicrotask(() => { if (game.state.kind === 'paused'||game.state.kind==='setup') details.querySelector('summary')?.focus(); }); } };
     this.hud.querySelector('#game-help')?.addEventListener('click', () => game.showControls());
     this.get('#game-adjust').addEventListener('click', () => game.adjust());
     this.hud.querySelector('#game-pause')?.addEventListener('click', () => game.pause());
@@ -114,8 +120,7 @@ export class GameUI {
     });
     this.get('#game-units').addEventListener('change', () => {
       const value = this.input('#game-units').valueAsNumber;
-      if (Number.isFinite(value) && value > 0)
-        game.configure({ eyeHeight: value * 1.7 });
+      game.calibrateScale(value);
     });
     this.get('#game-support').addEventListener('change', () => {
       const value = this.select('#game-support').value;
@@ -181,7 +186,12 @@ export class GameUI {
       button?.setAttribute('aria-pressed', String(on));
     }
     this.get('#game-setup').hidden = state.kind !== 'setup';
+    this.get('#game-back').hidden=state.kind!=='setup'||!this.game.canReturnToPause;
+    this.get('#game-inspect').hidden=state.kind!=='setup'||!this.game.canReturnToPause;
+    this.get('#game-inspect').textContent=this.game.inspecting?'Keep FPS view':'Inspect from outside';
     this.get('#game-paused').hidden = state.kind !== 'paused';
+    this.get('#game-controls').hidden=state.kind!=='paused'&&state.kind!=='setup';
+    this.get('#game-binding-section').hidden=state.kind!=='paused';
     this.get('#game-start-actions').hidden = state.kind !== 'setup' && state.kind !== 'paused';
     this.get('#game-status').textContent = state.kind === 'preparing' ? 'Preparing bounded floor evidence…' : state.kind === 'acquiring' ? 'Waiting for mouse capture…' :
       state.kind === 'paused' ? this.game.feedback || state.message : state.kind === 'setup' ? state.message || (c?.collisionPreparing && c.support === 'mesh' ? 'Preparing bounded static collision… You can still adjust or exit.' : 'Inspect the preview, then confirm your floor.') : '';
@@ -207,6 +217,7 @@ export class GameUI {
     this.input('#game-look-sensitivity').value=String(this.game.preferences.sensitivity);
     this.get('#game-look-value').textContent=`${this.game.preferences.sensitivity}×`;
     this.input('#game-reduced-motion').checked=this.game.preferences.reducedMotion;
+    for(const id of ['#game-speed','#game-look-sensitivity']){const input=this.input(id);input.style.setProperty('--fill',`${100*(input.valueAsNumber-Number(input.min))/(Number(input.max)-Number(input.min))}%`);}
     for(const id of ['#game-quick-floor','#game-floor-minus','#game-floor-plus','#game-floor-apply']) {
       const control=this.get(id);if(control instanceof HTMLInputElement || control instanceof HTMLButtonElement) control.disabled=c.support!=='virtual';
     }
@@ -247,7 +258,7 @@ export class GameUI {
     if(this.game.state.kind!=='paused'){this.cancelCapture(false);return;}
     const target=event.target;
     if(target instanceof HTMLElement&&(target.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))||document.querySelector('dialog[open],[role="dialog"]:not([hidden]),[role="menu"]:not([hidden])')){this.cancelCapture(false);return;}
-    if(event.ctrlKey||event.metaKey||event.altKey)return;
+    if(event.ctrlKey||event.metaKey||event.altKey){if(/^(Control|Alt|Meta)(Left|Right)$/.test(event.code)){this.captureStatus='Control, Alt and Meta are reserved for browser shortcuts. Choose another key, or Escape to cancel.';this.renderBindings();}return;}
     event.preventDefault();event.stopImmediatePropagation();
     if(event.code==='Escape'||event.code==='Tab'){this.cancelCapture();return;}
     if(event.repeat)return;

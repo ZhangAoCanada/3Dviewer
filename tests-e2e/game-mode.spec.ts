@@ -107,6 +107,8 @@ test('scene replacement and setup cancellation leave no game overlay or input ow
   // Escape is a session command only outside the editable/checkbox controls.
   await page.locator('#game-title').focus();
   await page.keyboard.press('Escape');
+  await expect(page.locator('#game-paused')).toBeVisible();
+  await page.click('#game-exit');
   await expect(page.locator('#game-panel')).toBeHidden();
   await setup(page);
   await page.click('#game-keyboard');

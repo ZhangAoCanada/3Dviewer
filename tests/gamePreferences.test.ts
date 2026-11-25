@@ -11,3 +11,9 @@ describe('bounded independent FPS preferences',()=>{
   vi.stubGlobal('matchMedia',()=>({matches:true}));vi.stubGlobal('localStorage',{getItem:()=>'{',setItem:()=>{throw Error('blocked');}});expect(readPreferences()).toEqual(defaultPreferences());expect(()=>savePreferences(defaultPreferences())).not.toThrow();
  });
 });
+
+it('rejects inherited, array and unknown preference fields rather than adopting partial stored state',()=>{
+ const valid={version:1,speed:1,sensitivity:1,reducedMotion:false};expect(parsePreferences(Object.create(valid))).toBeNull();expect(parsePreferences(Object.assign([],valid))).toBeNull();expect(parsePreferences({...valid,extra:true})).toBeNull();
+});
+
+it('caps persisted JSON before parsing rather than accepting padded oversized values',()=>{vi.stubGlobal('localStorage',{getItem:()=>JSON.stringify({version:1,speed:2,sensitivity:1,reducedMotion:false})+' '.repeat(1100)});expect(readPreferences().speed).toBe(1);});
