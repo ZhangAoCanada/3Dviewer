@@ -57,7 +57,12 @@ for(const scale of [.001,1000]) test(`direct thin facade keeps finite playable e
 });
 test('verified mesh wall blocks forward motion with feedback while sustained strafe actually moves the camera and scene',async({page})=>{
   await instrument(page);await page.goto('/?sample=crate');await expect(page.locator('#loading')).toBeHidden();
-  await page.locator('#file-input').setInputFiles({name:'walk-room.obj',mimeType:'text/plain',buffer:Buffer.from(gameRoom)});
+  // A featureless wall fills the view at capsule contact: genuine lateral movement
+  // within its span can produce identical pixels. Add vertex-color optical flow,
+  // retaining exactly the same vertices/faces, material class and collision world.
+  const observableRoom = gameRoom.replace(/^v ([-\d.]+) ([-\d.]+) ([-\d.]+)$/gm,
+    (_line: string, x: string, y: string, z: string) => `v ${x} ${y} ${z} ${(Number(x) + 5) / 10} 0.3 ${(5 - Number(x)) / 10}`);
+  await page.locator('#file-input').setInputFiles({name:'walk-room.obj',mimeType:'text/plain',buffer:Buffer.from(observableRoom)});
   await expect(page.locator('#file-name')).toHaveText('walk-room.obj');await page.click('#mode-game');
   await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');await page.keyboard.press('Escape');await page.click('#game-adjust');
   await expect(page.locator('#game-support option[value="mesh"]')).toHaveJSProperty('disabled',false);

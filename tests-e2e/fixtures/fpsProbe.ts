@@ -52,7 +52,7 @@ export async function hold(page: Page, code: string, reference = 'modelViewMatri
   const after = await viewPosition(page,reference), moved = distance(before,after);
   const changed = !image.equals(await pixels(page));
   await expect(page.locator('.game-hud')).toBeVisible();
-  expect(changed).toBe(true);
+  expect(changed, `Rendered scene must change during ${code}: displacement=${moved}, before=${before}, after=${after}`).toBe(true);
   const resting = await viewPosition(page,reference); await page.waitForTimeout(180);
   expect(distance(await viewPosition(page,reference),resting)).toBeLessThan(1e-4);
   return moved;
