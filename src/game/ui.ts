@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import {GAME_ACTIONS,isBoundCode,type GameAction} from './keyBindings';
+import {ACTION_LABELS,bindingLabel} from './bindingSettings';
 import { gameFrame } from './frame';
 import type { GameSession } from './GameSession';
 export class GameUI {
@@ -7,6 +9,8 @@ export class GameUI {
   private readonly unsubscribe: () => void;
   private readonly button: HTMLButtonElement;
   private phase: string = 'inactive';
+  private capture: {action:GameAction;button:HTMLButtonElement}|null=null;
+  private captureStatus='';
   constructor(private readonly game: GameSession, private readonly navigationMode: () => 'orbit' | 'fly') {
     const button = document.querySelector('#mode-game');
     if (!(button instanceof HTMLButtonElement))
@@ -27,7 +31,7 @@ export class GameUI {
     <div class="game-fields"><label class="game-field">Floor offset (scene units)<input id="game-height" type="number" step="any" /></label><label class="game-field">Eye height (scene units)<input id="game-eye" type="number" min="0.00001" step="any" /></label></div>
     <div class="game-actions game-tilt" aria-label="Tilt floor"><span>Tilt</span><button id="game-tilt-x-minus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor back">X −</button><button id="game-tilt-x-plus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor forward">X +</button><button id="game-tilt-z-minus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor left">Z −</button><button id="game-tilt-z-plus" class="btn btn-ghost btn-sm" type="button" aria-label="Tilt floor right">Z +</button></div>
     <p class="hint">Gold ring = spawn. Gold post = eye height; short tick = entry heading. Mint outline = finite reference floor.</p>
-    <details><summary>Calibrate scale</summary><p class="hint">Scale is unknown. Adjust eye height against your scene, or enter a known conversion. This scales walking speed, gravity and body clearance together.</p><label class="game-field">Scene units per metre<input id="game-units" type="number" min="0.00001" step="any" placeholder="Optional, if known" /></label><p class="hint">A known conversion sets eye height to 1.7 metres. Without it, all values remain scene units.</p></details>
+    <details><summary>Calibrate scale</summary><p class="hint">Scale is unknown. Adjust eye height against your scene, or enter a known conversion. This changes body clearance and gravity. Walk speed remains independent.</p><label class="game-field">Scene units per metre<input id="game-units" type="number" min="0.00001" step="any" placeholder="Optional, if known" /></label><p class="hint">A known conversion sets eye height to 1.7 metres. Without it, all values remain scene units.</p></details>
     <label class="game-field">Walking surface<select id="game-support"><option value="mesh">Static mesh collision</option><option value="virtual">Virtual floor · no wall collision</option></select></label>
     <label id="game-guide-row" class="game-confirm" hidden><input id="game-guide" type="checkbox" checked /><span>Show artificial floor guide during play.</span></label>
     <p id="game-capability" class="game-capability"></p>
@@ -38,11 +42,11 @@ export class GameUI {
     <label for="game-quick-floor">Virtual floor offset · scene units</label><div class="game-stepper"><button id="game-floor-minus" type="button" class="btn btn-secondary btn-sm" aria-label="Lower virtual floor">−</button><input id="game-quick-floor" type="number" step="any"/><button id="game-floor-plus" type="button" class="btn btn-secondary btn-sm" aria-label="Raise virtual floor">+</button><button id="game-floor-apply" type="button" class="btn btn-secondary btn-sm">Apply</button></div><p id="game-floor-help" class="hint"></p>
     <label for="game-speed">Walk speed <output id="game-speed-value">1×</output> · independent of height</label><input id="game-speed" type="range" min="0.25" max="4" step="0.25" value="1"/>
     </div><div class="game-actions"><button id="game-reset" class="btn btn-secondary btn-sm" type="button">Reset pose</button><button id="game-adjust" class="btn btn-secondary btn-sm" type="button">Floor &amp; surface setup</button><button id="game-stance" class="btn btn-secondary btn-sm" type="button">Crouch / stand</button></div>
-    <details id="game-controls"><summary>Controls &amp; comfort</summary><p id="game-current-keys" class="hint"></p><p class="hint">Mouse looks; arrows look in Keyboard mode. Escape pauses. Height changes keep position and speed; crouch is a temporary stance. Virtual hops return to the artificial floor, with no reconstructed walls or ceilings. No head bob or camera shake.</p><label class="game-field">FPS look sensitivity <output id="game-look-value">1×</output><input id="game-look-sensitivity" type="range" min="0.4" max="2" step="0.05" value="1"/></label><label class="game-confirm"><input id="game-reduced-motion" type="checkbox"/>Instant stance transitions</label></details>
-    <details id="game-bindings"><summary>Customize keys</summary><div id="game-bindings-list"></div><p id="game-binding-status" role="status"></p><button id="game-bindings-reset" type="button" class="btn btn-secondary btn-sm">Reset key defaults</button></details>
+    <details id="game-controls"><summary>Controls &amp; comfort</summary><p id="game-current-keys" class="hint"></p><p class="hint">Mouse looks; your Look bindings work in Keyboard mode. Escape pauses. Height changes keep position and speed; crouch is a temporary stance. Virtual hops return to the artificial floor, with no reconstructed walls or ceilings. No head bob or camera shake.</p><label class="game-field">FPS look sensitivity <output id="game-look-value">1×</output><input id="game-look-sensitivity" type="range" min="0.4" max="2" step="0.05" value="1"/></label><label class="game-confirm"><input id="game-reduced-motion" type="checkbox"/>Instant stance transitions</label></details>
+    <details id="game-bindings"><summary>Customize keys</summary><div id="game-bindings-list"></div><p class="hint">Physical key positions. Replace one action at a time; conflicts are rejected. Escape always recovers. Tab or Escape cancels capture.</p><p id="game-binding-status" role="status" aria-live="polite"></p><button id="game-bind-cancel" type="button" class="btn btn-secondary btn-sm" hidden>Cancel key capture</button><button id="game-bindings-reset" type="button" class="btn btn-secondary btn-sm">Reset key defaults</button></details>
    </div>
    <details id="game-trace-details" hidden><summary>Local mouse input trace</summary><pre id="game-trace-paused"></pre></details>
-   <div id="game-start-actions" class="game-start-actions"><button id="game-start" class="btn btn-primary" type="button">Start FPS</button><button id="game-keyboard" class="btn btn-secondary" type="button">Keyboard look</button><p class="hint">FPS captures your mouse. Keyboard look uses arrow keys to look and WASD to walk. Desktop keyboard required; no touch controls yet.</p></div>
+   <div id="game-start-actions" class="game-start-actions"><button id="game-start" class="btn btn-primary" type="button">Start FPS</button><button id="game-keyboard" class="btn btn-secondary" type="button">Keyboard look</button><p class="hint">FPS captures your mouse. Keyboard look uses your Look and Move bindings (arrows / WASD by default). Desktop keyboard required; no touch controls yet.</p></div>
   `;
     this.hud.className = 'game-hud';
     this.hud.hidden = true;
@@ -62,6 +66,20 @@ export class GameUI {
     if (!viewport)
       throw new Error('Missing viewport');
     viewport.append(this.panel, this.hud);
+    for(const action of GAME_ACTIONS){
+      const row=document.createElement('div');row.className='game-binding-row';
+      const label=document.createElement('span');label.textContent=ACTION_LABELS[action];
+      const keys=document.createElement('kbd');keys.id=`game-binding-${action}`;
+      const change=document.createElement('button');change.type='button';change.className='btn btn-secondary btn-sm';change.id=`game-bind-${action}`;change.textContent='Change';change.setAttribute('aria-label',`Change ${ACTION_LABELS[action]} key`);
+      change.addEventListener('click',()=>{this.cancelCapture(false);this.capture={action,button:change};game.setBindingCapture(true);change.setAttribute('aria-pressed','true');this.captureStatus=`Press a key for ${ACTION_LABELS[action]}. Escape or Tab cancels.`;this.renderBindings();});
+      row.append(label,keys,change);this.get('#game-bindings-list').append(row);
+    }
+    window.addEventListener('keydown',this.captureKey,true);
+    document.addEventListener('focusin',this.captureFocus,true);
+    window.addEventListener('blur',this.captureBlur);
+    this.get('#game-bind-cancel').addEventListener('click',()=>this.cancelCapture());
+    this.get('#game-bindings-reset').addEventListener('click',()=>{this.cancelCapture(false);this.captureStatus='';game.resetBindings();});
+    this.get('#game-bindings').addEventListener('toggle',()=>{const details=this.get('#game-bindings');if(details instanceof HTMLDetailsElement&&!details.open)this.cancelCapture(false);});
     this.get('#game-exit').addEventListener('click', () => { game.exit(); button.focus(); });
     this.get('#game-start').addEventListener('click', () => game.start('locked'));
     this.get('#game-keyboard').addEventListener('click', () => game.start('keyboard'));
@@ -143,7 +161,13 @@ export class GameUI {
     this.panel.hidden = state.kind === 'inactive' || state.kind === 'playing' || state.kind === 'acquiring';
     this.hud.hidden = state.kind !== 'playing' && state.kind !== 'acquiring';
     const help = this.hud.querySelector('#game-look-help');
-    if (help) help.textContent = state.kind === 'playing' && state.control === 'keyboard' ? 'WASD · Arrows look · Space jump · C crouch · Esc' : 'WASD · Mouse look · Space jump · C crouch · Esc';
+    if (help) {
+      const moveActions:readonly GameAction[]=['moveForward','moveLeft','moveBackward','moveRight'];
+      const move=moveActions.map(action=>bindingLabel(this.game.bindings,action)).join('/');
+      const lookActions:readonly GameAction[]=['lookLeft','lookRight','lookUp','lookDown'];
+      const keyLook=lookActions.every(action=>this.game.bindings[action].every(code=>code.startsWith('Arrow')))?'Arrows look':'Custom keys look';
+      help.textContent=`${move} · ${state.kind==='playing'&&state.control==='keyboard'?keyLook:'Mouse look'} · ${bindingLabel(this.game.bindings,'jump')} jump · ${bindingLabel(this.game.bindings,'crouch')} crouch · Esc`;
+    }
     const motion = this.hud.querySelector('#game-motion');
     const motionText = state.kind === 'acquiring' ? 'Capturing mouse…' : (this.game.motion === 'boundary' ? 'Floor boundary' : this.game.motion === 'wall' ? 'Blocked — try strafing' : '') || this.game.feedback || (this.game.airborne ? 'Airborne' : this.game.crouched ? 'Crouched' : '') || {idle:'',walking:'Moving',boundary:'Floor boundary',wall:'Blocked — try strafing'}[this.game.motion];
     if (motion && motion.textContent !== motionText) motion.textContent = motionText;
@@ -187,7 +211,9 @@ export class GameUI {
       const control=this.get(id);if(control instanceof HTMLInputElement || control instanceof HTMLButtonElement) control.disabled=c.support!=='virtual';
     }
     this.get('#game-floor-help').textContent=c.support==='virtual'?'Moves the artificial floor and body vertically, not your explored XZ/look.':'Floor follows static mesh. Use surface setup to choose different support.';
-    this.get('#game-current-keys').textContent='WASD move · Space jump/hop · C crouch · Shift sprint · R reset · [ / ] body height · PageUp / PageDown virtual floor · ? controls';
+    this.get('#game-current-keys').textContent=GAME_ACTIONS.map(action=>`${bindingLabel(this.game.bindings,action)}: ${ACTION_LABELS[action]}`).join(' · ')+` · Escape: pause / exit${isBoundCode(this.game.bindings,'Slash')?'':' · ?: controls'}`;
+    if(state.kind!=='paused'&&this.capture)this.cancelCapture(false);
+    this.renderBindings();
     const floorOffset = c.point.clone().sub(c.geometry.anchor).dot(c.normal);
     this.input('#game-height').value = String(Number(floorOffset.toPrecision(7)));
     this.input('#game-eye').value = String(Number(c.eyeHeight.toPrecision(7)));
@@ -204,5 +230,31 @@ export class GameUI {
     }
     this.get('#game-candidates-row').hidden = !c.suggestions.length;
   }
-  dispose(): void { this.game.onControls = null; this.game.onInputTrace = null; this.game.inputTraceEnabled = false; this.unsubscribe(); this.button.removeEventListener('click', this.onEntry); this.panel.remove(); this.hud.remove(); document.body.classList.remove('is-game-playing'); }
+  private renderBindings():void {
+    for(const action of GAME_ACTIONS)this.get(`#game-binding-${action}`).textContent=bindingLabel(this.game.bindings,action);
+    this.get('#game-binding-status').textContent=this.captureStatus||this.game.bindingMessage;
+    this.get('#game-bind-cancel').hidden=!this.capture;
+  }
+  private cancelCapture(focus=true):void {
+    const prior=this.capture;this.capture=null;this.game.setBindingCapture(false);this.captureStatus='';
+    if(prior){prior.button.setAttribute('aria-pressed','false');if(focus)prior.button.focus();}
+    this.renderBindings();
+  }
+  private captureFocus=(event:FocusEvent):void=>{if(this.capture&&event.target instanceof Node&&!this.get('#game-bindings').contains(event.target))this.cancelCapture(false);};
+  private captureBlur=():void=>{if(this.capture)this.cancelCapture(false);};
+  private captureKey=(event:KeyboardEvent):void=>{
+    const current=this.capture;if(!current)return;
+    if(this.game.state.kind!=='paused'){this.cancelCapture(false);return;}
+    const target=event.target;
+    if(target instanceof HTMLElement&&(target.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))||document.querySelector('dialog[open],[role="dialog"]:not([hidden]),[role="menu"]:not([hidden])')){this.cancelCapture(false);return;}
+    if(event.ctrlKey||event.metaKey||event.altKey)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    if(event.code==='Escape'||event.code==='Tab'){this.cancelCapture();return;}
+    if(event.repeat)return;
+    const codes=current.action==='sprint'&&['ShiftLeft','ShiftRight'].includes(event.code)?['ShiftLeft','ShiftRight']:[event.code];
+    // End capture before committing so state subscribers cannot retain stale capture UI.
+    this.capture=null;this.game.setBindingCapture(false);current.button.setAttribute('aria-pressed','false');this.captureStatus='';
+    this.game.rebind(current.action,codes);current.button.focus();this.renderBindings();
+  };
+  dispose(): void { this.cancelCapture(false);window.removeEventListener('keydown',this.captureKey,true);document.removeEventListener('focusin',this.captureFocus,true);window.removeEventListener('blur',this.captureBlur);this.game.onControls = null; this.game.onInputTrace = null; this.game.inputTraceEnabled = false; this.unsubscribe(); this.button.removeEventListener('click', this.onEntry); this.panel.remove(); this.hud.remove(); document.body.classList.remove('is-game-playing'); }
 }

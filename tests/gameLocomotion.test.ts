@@ -184,7 +184,7 @@ describe('refined grounded controls', () => {
     const world:WalkWorld={kind:'virtual',footprint:{minX:-100,maxX:100,minZ:-100,maxZ:100}};
     const a=spawn(world), b=spawn(world);expect(b.resize(playerScale(3.4)!)).toBe(true);
     run(a,60,{...idle,forward:1});run(b,60,{...idle,forward:1});expect(a.foot.z).toBeCloseTo(b.foot.z,7);
-    const body={...b.scale};b.speedScale=2;const before=b.foot.clone();run(b,60,{...idle,right:1});expect(b.foot.distanceTo(before)).toBeCloseTo(s.speed*2,5);expect(b.scale).toEqual(body);
+    const body={...b.scale};expect(b.setSpeed(2)).toBe(true);const before=b.foot.clone();run(b,60,{...idle,right:1});expect(b.foot.distanceTo(before)).toBeCloseTo(s.speed*2,5);expect(b.scale).toEqual(body);
     expect(b.jump()).toBe(true);const y=b.foot.y;run(b,12);expect(b.foot.y).toBeGreaterThan(y);
   });
   it('virtual hop clamps boundaries, never invents obstacles and lands exactly on its floor',()=>{
@@ -200,4 +200,9 @@ describe('refined grounded controls', () => {
     const w=spawn(room());w.setCrouched(true);expect(w.cameraEyeHeight).toBe(w.scale.eyeHeight);w.setCrouched(false);expect(w.cameraEyeHeight).toBeLessThan(w.scale.eyeHeight);
     w.advanceEye(.016,false);expect(w.cameraEyeHeight).toBeLessThanOrEqual(w.scale.eyeHeight);w.advanceEye(.01,true);expect(w.cameraEyeHeight).toBe(w.scale.eyeHeight);
   });
+});
+
+it('independent speed/body changes reject collision-substep overflow instead of repeatedly recovering',()=>{
+ const w=spawn(room()),p=w.foot.clone();expect(w.resize(playerScale(.001)!)).toBe(false);expect(w.foot.equals(p)).toBe(true);
+ expect(w.resize(playerScale(.05)!)).toBe(true);expect(w.setSpeed(4)).toBe(false);expect(w.speedScale).toBe(1);expect(w.update(.05,{...idle,right:1}).kind).toBe('ok');
 });

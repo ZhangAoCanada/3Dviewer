@@ -30,7 +30,15 @@ export class Walker {
   private body: PlayerScale;
   private readonly walkSpeed: number;
   crouched = false;
-  speedScale = 1;
+  private speedMultiplier = 1;
+  get speedScale(): number { return this.speedMultiplier; }
+  private withinStepBudget(scale: PlayerScale, speed: number, standingEye = scale.eyeHeight): boolean {
+    return this.world.kind === 'virtual' || Math.ceil(Math.hypot(this.walkSpeed * speed * 1.8, standingEye * 10) / 120 / (scale.radius * .2)) <= 64;
+  }
+  setSpeed(value: number): boolean {
+    if (!Number.isFinite(value) || value < .25 || value > 4 || !this.withinStepBudget(this.body, value, this.standing.eyeHeight)) return false;
+    this.speedMultiplier = value;return true;
+  }
   private eye = 0;
   get baseSpeed(): number { return this.walkSpeed; }
   get scale(): PlayerScale { return this.body; }
@@ -47,7 +55,7 @@ export class Walker {
   resize(scale: PlayerScale): boolean {
     if (this.world.kind === 'mesh') this.world.collision.beginFrame();
     const next = this.stance(scale, this.crouched);
-    if (!this.fits(this.foot, next) || !this.fits(this.spawn, next)) return false;
+    if (!this.withinStepBudget(next, this.speedMultiplier, scale.eyeHeight) || !this.fits(this.foot, next) || !this.fits(this.spawn, next)) return false;
     this.standing = { ...scale }; this.body = next;
     this.eye = next.eyeHeight;
     this.safe.copy(this.foot);
@@ -74,7 +82,8 @@ export class Walker {
     return true;
   }
   advanceEye(elapsed: number, reducedMotion: boolean): void {
-    this.eye = reducedMotion ? this.body.eyeHeight : THREE.MathUtils.lerp(this.eye, this.body.eyeHeight, Math.min(1, Math.max(0, elapsed) / .12));
+    const change = this.standing.eyeHeight * .38 * Math.max(0, elapsed) / .12;
+    this.eye = reducedMotion ? this.body.eyeHeight : this.eye + THREE.MathUtils.clamp(this.body.eyeHeight - this.eye, -change, change);
     if (Math.abs(this.eye - this.body.eyeHeight) < this.standing.eyeHeight * 1e-6) this.eye = this.body.eyeHeight;
   }
   private accumulator = 0;
@@ -133,7 +142,7 @@ export class Walker {
       return { kind: 'ok' };
     }
     const wasGrounded = this.grounded;
-    this.velocity = Math.max(this.velocity - this.scale.gravity * dt, -this.scale.eyeHeight * 10);
+    this.velocity = Math.max(this.velocity - this.scale.gravity * dt, -this.standing.eyeHeight * 10);
     direction.y = this.velocity * dt;
     const count = Math.max(1, Math.ceil(direction.length() / (this.scale.radius * 0.2)));
     if (count > 64)
@@ -149,7 +158,7 @@ export class Walker {
         this.tryStep(before, delta);
       }
     }
-    if (this.foot.y < this.spawn.y - this.scale.eyeHeight * 5 || !this.foot.toArray().every(Number.isFinite)) {
+    if (this.foot.y < this.spawn.y - this.standing.eyeHeight * 5 || !this.foot.toArray().every(Number.isFinite)) {
       return this.recover('No safe floor below. Returned to the last safe position.');
     }
     if (this.grounded)

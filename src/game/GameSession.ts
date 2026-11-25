@@ -5,6 +5,8 @@ import { fitPlane } from '../render/upright';
 import { gameFrame, playerScale, toLocal, toWorld, type GameFrame } from './frame';
 import { Walker, type WalkWorld } from './locomotion';
 import { readPreferences, savePreferences, parsePreferences, type GamePreferences } from './preferences';
+import { DEFAULT_GAME_KEY_BINDINGS, getActionForCode, isActionActive, isBoundCode, rebindAction, type GameAction } from './keyBindings';
+import { readBindingSettings, saveBindingSettings } from './bindingSettings';
 import type { MeshCollision } from './meshCollision';
 import { defaultEyeHeight, directEntryPoint, entryLook, virtualEntryPoint, virtualFootprint } from './entryView';
 import { RelativeLookInput, type LookDecision } from './lookInput';
@@ -107,11 +109,27 @@ export class GameSession {
   private collision: { config: GameConfig; frame: GameFrame; collider: MeshCollision } | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly keys = new Set<string>();
+  private readonly pendingActions:GameAction[]=[];
   private readonly preview = new THREE.Group();
   private picking = false;
   private editingRun: Run | null = null;
   private useNewSpawn = false;
   preferences = readPreferences();
+  private bindingSettings = readBindingSettings();
+  get bindings() { return this.bindingSettings.bindings; }
+  get bindingMessage(): string { return this.bindingSettings.error; }
+  capturingBinding = false;
+  setBindingCapture(value: boolean): void { this.capturingBinding = value; this.keys.clear();this.pendingActions.length=0; }
+  rebind(action: GameAction, codes: readonly string[]): boolean {
+    const result = rebindAction(this.bindings,action,codes);
+    if (!result.ok) { this.bindingSettings.error = result.error.message;this.changed();return false; }
+    this.bindingSettings = {bindings: result.value,error:saveBindingSettings(result.value) ? 'Keys saved.' : 'Keys changed for this session; storage unavailable.'};
+    this.keys.clear();this.pendingActions.length=0;this.changed();return true;
+  }
+  resetBindings(): void {
+    this.bindingSettings = {bindings:DEFAULT_GAME_KEY_BINDINGS,error:saveBindingSettings(DEFAULT_GAME_KEY_BINDINGS) ? 'Default keys restored.' : 'Defaults restored for this session; storage unavailable.'};
+    this.keys.clear();this.pendingActions.length=0;this.changed();
+  }
   feedback = '';
   private feedbackTime = 0;
   private get currentRun(): Run | null {
@@ -124,15 +142,16 @@ export class GameSession {
   setPreferences(change: Partial<GamePreferences>): boolean {
     const value = parsePreferences({ version: 1, ...this.preferences, ...change });
     if (!value) { this.announce('Choose speed 0.25–4× and look sensitivity 0.4–2×.'); return false; }
+    const run = this.currentRun;
+    if (run && !run.walker.setSpeed(value.speed)) { this.announce('Speed exceeds this body’s collision work budget. Choose a larger body or slower speed.'); return false; }
     this.preferences = value; savePreferences(value);
-    const run = this.currentRun; if (run) run.walker.speedScale = value.speed;
     this.changed(); return true;
   }
   setEyeHeight(value: number): boolean {
     const run = this.currentRun, scale = playerScale(value);
     if (!run || !scale) { this.announce('Eye height must be finite, 0.00001–100000000 scene units.'); return false; }
     if (!run.walker.grounded) { this.announce('Land before changing body height.'); return false; }
-    if (!run.walker.resize(scale)) { this.announce('Body does not fit here or at the reset position. Height unchanged.'); return false; }
+    if (!run.walker.resize(scale)) { this.announce('Body clearance or movement budget is blocked or unavailable here / at reset. Height unchanged.'); return false; }
     run.config.eyeHeight = value; this.paintCamera(run); this.refreshGuide(run);
     this.announce(`Eye height ${Number(value.toPrecision(5))} scene units. Walk speed unchanged.`); return true;
   }
@@ -152,14 +171,14 @@ export class GameSession {
   }
   toggleCrouch(): void {
     const run = this.currentRun;if (!run) return;
-    if (!run.walker.setCrouched(!run.walker.crouched)) { this.announce('Low ceiling — staying crouched.'); return; }
+    if (!run.walker.setCrouched(!run.walker.crouched)) { this.announce('Standing clearance blocked or unavailable — staying crouched.'); return; }
     run.walker.advanceEye(0,this.preferences.reducedMotion);this.paintCamera(run);
     this.announce(run.walker.crouched ? 'Crouched. Slower movement; same body width.' : 'Standing.');
   }
   jump(): void {
     const run = this.currentRun;if (!run) return;
     if (run.walker.jump()) this.announce(run.walker.world.kind === 'virtual' ? 'Virtual-floor hop · no reconstructed walls or ceilings.' : 'Jumping.');
-    else this.announce(run.walker.grounded ? 'Not enough headroom to jump.' : 'Land before jumping again.');
+    else this.announce(run.walker.grounded ? 'No verified headroom to jump.' : 'Land before jumping again.');
   }
   private refreshGuide(run: Run): void {
     this.clearPreview();
@@ -335,7 +354,10 @@ export class GameSession {
   configure(change: Partial<Pick<GameConfig, 'normal' | 'point' | 'eyeHeight' | 'support' | 'confirmed' | 'showGuide'>>): void {
     if (this.state.kind !== 'setup')
       return;
-    if (this.editingRun && change.eyeHeight !== undefined && Object.keys(change).length === 1) { this.setEyeHeight(change.eyeHeight); return; }
+    if (this.editingRun && change.eyeHeight !== undefined && Object.keys(change).length === 1) {
+      this.state.config.eyeHeight=change.eyeHeight;this.state.config.confirmed=false;
+      this.setEyeHeight(change.eyeHeight);this.updatePreview();this.changed();return;
+    }
     Object.assign(this.state.config, change);
     if (change.normal || change.point || change.eyeHeight !== undefined || change.support)
       this.state.config.confirmed = false;
@@ -357,7 +379,7 @@ export class GameSession {
     if (this.state.kind !== 'setup')
       return;
     this.picking = !this.picking;
-    this.host.navigation.setSuspended(this.picking);
+    this.host.navigation.setSuspended(this.picking || !!this.editingRun);
     this.state.message = this.picking ? 'Click a flat floor patch in the scene. Escape cancels selection.' : '';
     this.changed();
   }
@@ -389,6 +411,7 @@ export class GameSession {
         this.changed();
         return;
       }
+      if (!walker.setSpeed(this.preferences.speed)) { this.state.message='Speed exceeds the collision work budget for this body. Choose a larger height or slower speed.';this.changed();return; }
       const initialLook = entryLook(frame, config.geometry.anchor, config.eyeHeight, new THREE.Vector3(0, 0, -1).applyQuaternion(config.saved.quaternion));
       run = { config, walker, frame, initialLook };
       if (!editing || this.useNewSpawn) { this.yaw = initialLook.yaw; this.pitch = initialLook.pitch; }
@@ -403,8 +426,8 @@ export class GameSession {
       return;
     this.picking = false;
     this.motion = 'idle';
-    this.keys.clear();
-    run.walker.stop();run.walker.speedScale = this.preferences.speed;
+    this.keys.clear();this.pendingActions.length=0;
+    run.walker.stop();
     this.host.navigation.setSuspended(true);
     this.clearPreview();
     if (run.config.support === 'virtual' && run.config.showGuide) this.showVirtualGuide(run);
@@ -435,7 +458,7 @@ export class GameSession {
     if (state.kind !== 'playing' && state.kind !== 'acquiring')
       return;
     this.state = { kind: 'paused', run: state.run, message };
-    this.keys.clear();
+    this.keys.clear();this.pendingActions.length=0;
     state.run.walker.stop();
     this.motion = 'idle';
     this.releaseLock();
@@ -447,11 +470,11 @@ export class GameSession {
       return;
     this.editingRun = state.run;this.useNewSpawn = false;
     this.host.navigation.setSuspended(true);
-    state.run.config.confirmed = true;
-    this.state = { kind: 'setup', config: state.run.config, message: '' };
+    const config={...state.run.config,normal:state.run.config.normal.clone(),point:state.run.config.point.clone(),confirmed:true};
+    this.state = { kind: 'setup', config, message: '' };
     this.updatePreview();
     this.changed();
-    this.prepareCollision(state.run.config);
+    this.prepareCollision(config);
   }
   reset(): void {
     const run = this.currentRun;
@@ -465,7 +488,7 @@ export class GameSession {
   escape(): boolean {
     if (this.picking) {
       this.picking = false;
-      this.host.navigation.setSuspended(false);
+      this.host.navigation.setSuspended(!!this.editingRun);
       if (this.state.kind === 'setup')
         this.state.message = '';
       this.changed();
@@ -484,6 +507,7 @@ export class GameSession {
   /** Scene replacement must never restore the old camera into a new scene. */
   invalidate(): void { this.warmAbort?.abort(); this.warmAbort = null; this.prepared = null; this.exit(false); }
   exit(restore = true): void {
+    this.capturingBinding=false;
     const state = this.state;
     if (state.kind === 'inactive')
       return;
@@ -497,7 +521,7 @@ export class GameSession {
     this.state = { kind: 'inactive' };
     this.editingRun = null;this.useNewSpawn = false;this.feedback = '';this.feedbackTime = 0;
     this.picking = false;
-    this.keys.clear();
+    this.keys.clear();this.pendingActions.length=0;
     this.releaseLock();
     this.clearPreview();
     this.host.navigation.setSuspended(false);
@@ -514,18 +538,18 @@ export class GameSession {
       return;
     }
     if (state.control === 'keyboard') {
-      this.yaw += ((this.keys.has('ArrowLeft') ? 1 : 0) - (this.keys.has('ArrowRight') ? 1 : 0)) * dt * 1.5 * this.preferences.sensitivity;
-      this.pitch = THREE.MathUtils.clamp(this.pitch + ((this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('ArrowDown') ? 1 : 0)) * dt * 1.2 * this.preferences.sensitivity, -1.5, 1.5);
+      this.yaw += ((isActionActive(this.bindings, 'lookLeft', this.keys) ? 1 : 0) - (isActionActive(this.bindings, 'lookRight', this.keys) ? 1 : 0)) * dt * 1.5 * this.preferences.sensitivity;
+      this.pitch = THREE.MathUtils.clamp(this.pitch + ((isActionActive(this.bindings, 'lookUp', this.keys) ? 1 : 0) - (isActionActive(this.bindings, 'lookDown', this.keys) ? 1 : 0)) * dt * 1.2 * this.preferences.sensitivity, -1.5, 1.5);
     }
     const wasAirborne = !state.run.walker.grounded;
     const before = state.run.walker.foot.clone();
-    const result = state.run.walker.update(dt, { forward: (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0),
-      right: (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0), yaw: this.yaw, sprint: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') });
+    const result = state.run.walker.update(dt, { forward: (isActionActive(this.bindings, 'moveForward', this.keys) ? 1 : 0) - (isActionActive(this.bindings, 'moveBackward', this.keys) ? 1 : 0),
+      right: (isActionActive(this.bindings, 'moveRight', this.keys) ? 1 : 0) - (isActionActive(this.bindings, 'moveLeft', this.keys) ? 1 : 0), yaw: this.yaw, sprint: isActionActive(this.bindings, 'sprint', this.keys) });
     state.run.walker.advanceEye(dt,this.preferences.reducedMotion);
     this.paintCamera(state.run);
     if (wasAirborne && state.run.walker.grounded) this.announce('Landed.');
     if (this.feedbackTime > 0) { this.feedbackTime -= Math.min(dt,.05);if (this.feedbackTime <= 0) { this.feedback = '';this.changed(); } }
-    const moving = this.keys.has('KeyW') !== this.keys.has('KeyS') || this.keys.has('KeyA') !== this.keys.has('KeyD');
+    const moving = isActionActive(this.bindings, 'moveForward', this.keys) !== isActionActive(this.bindings, 'moveBackward', this.keys) || isActionActive(this.bindings, 'moveLeft', this.keys) !== isActionActive(this.bindings, 'moveRight', this.keys);
     const translated = state.run.walker.foot.clone().sub(before).setY(0).length();
     const motion = !moving ? 'idle' : translated > state.run.walker.scale.speed * Math.min(dt, .05) * .05 ? 'walking' : state.run.walker.world.kind === 'virtual' ? 'boundary' : 'wall';
     if (motion !== this.motion && dt >= 1/120) { this.motion = motion; this.changed(); }
@@ -554,7 +578,7 @@ export class GameSession {
     // Keyboard fallback permits only our entry/resume controls, never arbitrary outside UI.
     const entryButton = active instanceof HTMLElement && /^(mode-game|game-start|game-keyboard)$/.test(active.id);
     return document.pointerLockElement === this.host.canvas || active === this.host.canvas || active === document.body ||
-      (this.state.kind === 'playing' && this.state.control === 'keyboard' && entryButton);
+      (entryButton && (this.state.kind === 'acquiring' || this.state.kind === 'playing' && this.state.control === 'keyboard'));
   }
   private onLock = (event: Event): void => {
     const state = this.state;
@@ -569,6 +593,7 @@ export class GameSession {
         this.mouseInput.reset();
         this.paintCamera(state.run);
         this.recordMouse('capture', event.isTrusted);
+        for(const action of this.pendingActions.splice(0))this.performAction(action);
         this.changed();
       }
       else if (state.kind !== 'playing')
@@ -594,9 +619,13 @@ export class GameSession {
       !(target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)));
   }
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (this.capturingBinding) return;
+    if (this.active && event.code === 'Slash' && !isBoundCode(this.bindings,'Slash') && this.canUseSessionCommand(event)) {
+      event.preventDefault();event.stopImmediatePropagation();this.showControls();return;
+    }
     if (event.key === 'Escape' && this.active) {
       if (!this.canUseSessionCommand(event)) {
-        this.keys.clear();
+        this.keys.clear();this.pendingActions.length=0;
         this.pause('Paused while a control is open.');
         return;
       }
@@ -606,31 +635,40 @@ export class GameSession {
       this.escape();
       return;
     }
-    if ((this.state.kind === 'setup' || this.state.kind === 'paused') && event.code === 'KeyR' && this.canUseSessionCommand(event)) {
+    if ((this.state.kind === 'setup' || this.state.kind === 'paused') && getActionForCode(this.bindings,event.code) === 'reset' && this.canUseSessionCommand(event)) {
       event.preventDefault(); event.stopImmediatePropagation();
       if (this.state.kind === 'setup' && !this.editingRun) this.host.navigation.reset(true);
       else this.reset();
       return;
     }
-    if (this.state.kind !== 'playing')
+    if (this.state.kind !== 'playing' && this.state.kind !== 'acquiring')
       return;
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || !this.ownsInput()) {
-      this.keys.clear();
+      this.keys.clear();this.pendingActions.length=0;
       return;
     }
-    if (event.code === 'Space' || event.code === 'Enter') { event.preventDefault();event.stopImmediatePropagation();return; }
-    if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'ShiftRight', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyR'].includes(event.code))
-      return;
-    if (event.repeat && !this.keys.has(event.code))
-      return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (event.code === 'KeyR') {
-      this.reset();
-      return;
-    }
+    const action = getActionForCode(this.bindings,event.code);
+    // Prevent the activating/resume button firing on Space/Enter, even after jump was remapped.
+    if (action === null && !['Space','Enter','NumpadEnter'].includes(event.code)) return;
+    event.preventDefault();event.stopImmediatePropagation();
+    if (!action || event.repeat || this.keys.has(event.code)) return;
     this.keys.add(event.code);
+    if(this.state.kind==='acquiring'){if(this.pendingActions.length<32)this.pendingActions.push(action);return;}
+    this.performAction(action);
   };
+  private performAction(action:GameAction):void {
+    const run = this.currentRun;
+    switch (action) {
+      case 'jump': this.jump();break;
+      case 'crouch': this.toggleCrouch();break;
+      case 'reset': this.reset();break;
+      case 'heightUp': if(run) this.setEyeHeight(run.config.eyeHeight*1.15);break;
+      case 'heightDown': if(run) this.setEyeHeight(run.config.eyeHeight/1.15);break;
+      case 'floorUp': if(run) this.setFloorOffset(this.floorOffset+run.config.eyeHeight*.25);break;
+      case 'floorDown': if(run) this.setFloorOffset(this.floorOffset-run.config.eyeHeight*.25);break;
+      default: break;
+    }
+  }
   private onKeyUp = (event: KeyboardEvent): void => { this.keys.delete(event.code); };
   private onFocus = (): void => { if (this.playing && !this.ownsInput())
     this.pause('Paused while a control has focus.'); };
@@ -660,7 +698,7 @@ export class GameSession {
     if (fit.normal.dot(this.state.config.normal) < 0)
       fit.normal.negate();
     this.picking = false;
-    this.host.navigation.setSuspended(false);
+    this.host.navigation.setSuspended(!!this.editingRun);
     this.state.config.evidence = 'User-picked local patch. Confirm floor, normal direction and body scale.';
     this.configure({ normal: fit.normal, point: center });
   };
@@ -722,6 +760,7 @@ export class GameSession {
     this.host.dirty();
   }
   dispose(): void {
+    this.capturingBinding = false;
     this.invalidate();
     this.clearPreview();
     this.preview.removeFromParent();

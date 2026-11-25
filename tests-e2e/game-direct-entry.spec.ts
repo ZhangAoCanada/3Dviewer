@@ -67,7 +67,7 @@ test('verified mesh wall blocks forward motion with feedback while sustained str
   await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');await page.keyboard.press('Escape');await page.click('#game-adjust');
   await expect(page.locator('#game-support option[value="mesh"]')).toHaveJSProperty('disabled',false);
   await page.selectOption('#game-support','mesh');await expect(page.locator('#game-candidates-row')).toBeVisible();await page.selectOption('#game-candidates','0');
-  await page.fill('#game-eye','1.7');await page.locator('#game-eye').press('Tab');await page.check('#game-confirm');await expect(page.locator('#game-start')).toBeEnabled();await page.click('#game-start');
+  await page.fill('#game-eye','1.7');await page.locator('#game-eye').press('Tab');await page.click('#game-selected-spawn');await page.check('#game-confirm');await expect(page.locator('#game-start')).toBeEnabled();await page.click('#game-start');
   await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');await expect(page.locator('#game-hud-capability')).toContainText('Static mesh');
   const reference='MeshPhongMaterial:modelViewMatrix';
   await renderFrame(page);
