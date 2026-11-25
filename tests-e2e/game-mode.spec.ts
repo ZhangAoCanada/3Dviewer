@@ -148,7 +148,7 @@ for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${
   await page.click('#mode-game');
   await expect(page.locator('#game-confirm')).toBeVisible();
   await expect(page.locator('#game-support')).toHaveValue('virtual');
-  await expect(page.locator('#game-support option[value="mesh"]')).toBeDisabled();
+  await expect(page.locator('#game-support option[value="mesh"]')).toHaveJSProperty('disabled', true);
   await expect(page.locator('#game-capability')).toContainText('no reconstructed walls');
   await page.check('#game-confirm');await page.click('#game-keyboard');
   await expect(page.locator('.game-hud')).toBeVisible();
