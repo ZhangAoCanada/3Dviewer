@@ -63,6 +63,16 @@ describe('bounded scene geometry', () => {
     expect(data.triangles).toBeNull();
     expect(data.positions.length).toBeGreaterThan(0);
   });
+  it('does not invent invisible collision for incomplete material-group coverage', async () => {
+    const geometry = floor().geometry;
+    // Only the first triangle is rendered with a material array. The second is an intentional hole.
+    geometry.clearGroups();
+    geometry.addGroup(0, 3, 0);
+    const mesh = new THREE.Mesh(geometry, [new THREE.MeshStandardMaterial()]);
+    const data = await prepareSceneGeometry([renderable(mesh)], signal());
+    expect(data.triangles).toBeNull();
+    expect(data.collisionReason).toContain('material');
+  });
   it('honors draw ranges in collision and samples', async () => {
     const mesh = floor();
     mesh.geometry.setDrawRange(0, 3);

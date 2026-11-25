@@ -93,6 +93,12 @@ export async function prepareSceneGeometry(items: readonly Renderable[], signal:
       const end = Math.min(total, start + geometry.drawRange.count);
       const count = Math.floor((end - start) / 3);
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      if (Array.isArray(mesh.material)) {
+        // Material groups may intentionally omit faces or reference missing materials. Do not
+        // fill those holes with collider triangles until group-aware extraction is supported.
+        triangles = null;
+        collisionReason = 'Multiple material groups need explicit virtual-floor mode.';
+      }
       if (mesh instanceof THREE.SkinnedMesh || mesh instanceof THREE.InstancedMesh || Object.keys(geometry.morphAttributes).length ||
         materials.some(m => !m.visible || m.transparent || m.opacity < 1 || m.alphaTest > 0) || start % 3 !== 0 || (end - start) % 3 !== 0) {
         triangles = null;
