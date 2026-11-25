@@ -45,7 +45,7 @@ export class GameUI {
       this.get('#game-trace-details').hidden = false;
       game.onInputTrace = () => {
         const rows = game.inputTrace;
-        const text = rows.map(row => `#${row.index} ${row.event} trusted=${row.trusted} dx=${row.dx ?? '-'} dy=${row.dy ?? '-'} yaw=${row.yawDegrees.toFixed(2)} pitch=${row.pitchDegrees.toFixed(2)} viewport=${row.width}x${row.height}`);
+        const text = rows.map(row => `#${row.index} ${row.event} trusted=${row.trusted} dx=${row.dx ?? '-'} dy=${row.dy ?? '-'} sensitivity=${row.sensitivity} yaw=${row.yawDegrees.toFixed(2)} pitch=${row.pitchDegrees.toFixed(2)} viewport=${row.width}x${row.height}`);
         this.get('#game-trace-paused').textContent = text.join('\n');
         output.textContent = [...text.slice(0, 3), ...(text.length > 7 ? ['…'] : []), ...text.slice(Math.max(3, text.length - 4))].join('\n');
       };

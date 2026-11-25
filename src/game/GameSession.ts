@@ -68,7 +68,7 @@ export interface GameHost {
 }
 export interface GameMouseTrace {
   event: 'capture' | 'motion' | 'ignored-nonfinite';
-  index: number; trusted: boolean; dx?: number; dy?: number;
+  index: number; trusted: boolean; dx?: number; dy?: number; sensitivity: number;
   yawDegrees: number; pitchDegrees: number; width: number; height: number;
 }
 export class GameSession {
@@ -83,7 +83,7 @@ export class GameSession {
   private recordMouse(event: GameMouseTrace['event'], trusted: boolean, dx?: number, dy?: number): void {
     if (!this.inputTraceEnabled) return;
     if (event === 'capture') { this.trace.length = 0; this.mouseEventIndex = 0; }
-    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy,
+    this.trace.push({ event, trusted, index: this.mouseEventIndex++, dx, dy, sensitivity: this.host.navigation.sensitivity,
       yawDegrees: THREE.MathUtils.radToDeg(this.yaw), pitchDegrees: THREE.MathUtils.radToDeg(this.pitch),
       width: this.host.canvas.clientWidth, height: this.host.canvas.clientHeight });
     if (this.trace.length > 32) this.trace.splice(9, 1);
@@ -207,7 +207,9 @@ export class GameSession {
     if (!config || !proposal)
       return;
     config.evidence = proposal.evidence;
-    this.configure({ normal: proposal.normal.clone(), point: proposal.point.clone() });
+    const point = config.support === 'virtual' ? virtualEntryPoint(config.geometry.bounds,
+      gameFrame(proposal.point, proposal.normal), new THREE.Vector3(0, 0, -1).applyQuaternion(config.saved.quaternion), playerScale(config.eyeHeight)?.radius ?? 0) : proposal.point.clone();
+    this.configure({ normal: proposal.normal.clone(), point });
   }
   pickFloor(): void {
     if (this.state.kind !== 'setup')
