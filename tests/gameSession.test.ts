@@ -353,3 +353,9 @@ it('scene invalidation aborts opportunistic analysis and cannot apply its late p
   game.invalidate();finish!();await new Promise(resolve=>setTimeout(resolve,10));
   expect(game.state.kind).toBe('inactive');game.suggestions=null;game.enterDirect();expect(game.config?.suggestions).toHaveLength(0);expect(game.config?.point.y).toBeCloseTo(0,10);
 });
+
+it('late pointer capture cannot steal an editable focus or modal opened during acquisition', async () => {
+  await ready();vi.spyOn(canvas,'requestPointerLock').mockResolvedValue();game.start('locked');
+  expect(game.state.kind).toBe('acquiring');const input=new ElementStub();input.tagName='INPUT';focusElement(input);lockElement(canvas);
+  expect(game.state.kind).toBe('paused');expect(active).toBe(input);expect(lock).toBeNull();
+});

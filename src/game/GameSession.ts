@@ -7,7 +7,7 @@ import { Walker, type WalkWorld } from './locomotion';
 import type { MeshCollision } from './meshCollision';
 import { defaultEyeHeight, directEntryPoint, entryLook, virtualEntryPoint, virtualFootprint } from './entryView';
 import { RelativeLookInput, type LookDecision } from './lookInput';
-import { collisionInFrameAsync, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
+import { collisionInFrameAsync, footprintInFrame, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
 import { captureGameView, restoreGameView, type GameViewSnapshot } from './viewSnapshot';
 export interface GroundSuggestion {
   normal: THREE.Vector3;
@@ -484,6 +484,10 @@ export class GameSession {
     const state = this.state;
     if (document.pointerLockElement === this.host.canvas) {
       if (state.kind === 'acquiring') {
+        const active = document.activeElement;
+        if (this.hasOpenDialogOrMenu() || active instanceof HTMLElement && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) {
+          this.pause('Paused while another control is open.'); return;
+        }
         this.host.canvas.focus({ preventScroll: true });
         this.state = { kind: 'playing', run: state.run, control: 'locked' };
         this.mouseInput.reset();
@@ -612,7 +616,7 @@ export class GameSession {
     const config = this.state.config;
     if (!playerScale(config.eyeHeight))
       return;
-    const frame = gameFrame(config.point, config.normal), footprint = virtualFootprint(config.geometry.bounds, frame, config.eyeHeight);
+    const frame = gameFrame(config.point, config.normal), footprint = config.support === 'virtual' ? virtualFootprint(config.geometry.bounds, frame, config.eyeHeight) : footprintInFrame(config.geometry.bounds, frame);
     const width = footprint.maxX - footprint.minX, depth = footprint.maxZ - footprint.minZ;
     if (!(width > 0 && depth > 0))
       return;

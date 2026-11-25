@@ -1,23 +1,5 @@
 import { expect, test } from './test';
-const room = `o Room
-v -5 0 -5
-v -5 0 5
-v 5 0 5
-v 5 0 -5
-v -5 4 -5
-v -5 4 5
-v 5 4 5
-v 5 4 -5
-v -3 0 -2
-v 3 0 -2
-v 3 3 -2
-v -3 3 -2
-f 1 2 3 4
-f 1 5 6 2
-f 4 3 7 8
-f 1 4 8 5
-f 9 10 11 12
-`;
+import { gameRoom as room } from './fixtures/gameRoom';
 async function frames(page: import('@playwright/test').Page, count = 20) {
   await page.evaluate(async (count) => { for (let i = 0; i < count; i++)
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); }, count);
