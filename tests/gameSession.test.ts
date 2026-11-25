@@ -5,6 +5,7 @@ import { NavigationController } from '../src/render/Navigation';
 import { MeshRenderable } from '../src/renderables/meshRenderable';
 class ElementStub extends EventTarget {
   tagName = 'CANVAS';
+  id = 'view';
   isContentEditable = false;
   clientWidth = 1000;
   clientHeight = 800;
@@ -280,4 +281,75 @@ describe('exclusive game session ownership', () => {
     await pending;
     expect(game.state.kind).toBe('inactive');
   });
+});
+
+describe('direct FPS entry and retained entry-control focus', () => {
+  function retainButton(id: string) {
+    const button = new ElementStub(); button.tagName = 'BUTTON'; button.id = id; active = button;
+    vi.spyOn(canvas, 'focus').mockImplementation(() => {});
+    return button;
+  }
+  for (const id of ['mode-game', 'game-start', 'game-keyboard']) it(`holds WASD with retained ${id} focus and actual canvas pointer capture, including resume`, async () => {
+    await ready(); retainButton(id); game.start('locked');
+    expect(lock).toBe(canvas);
+    for (const code of ['KeyW', 'KeyA', 'KeyD']) {
+      const before = host.camera.position.clone(); key('keydown', code); run(); key('keyup', code);
+      expect(game.state.kind).toBe('playing'); expect(host.camera.position.distanceTo(before)).toBeGreaterThan(1.2);
+    }
+    game.pause(); game.start('locked'); key('keydown','KeyW'); const before = foot(); run(); key('keyup','KeyW');
+    expect(foot().distanceTo(before)).toBeGreaterThan(1.2); expect(game.motion).toBe('walking');
+  });
+  it('keyboard look retains its own entry button without capturing arbitrary outside controls', async () => {
+    await ready(); retainButton('game-keyboard'); game.start('keyboard'); const before = foot();
+    key('keydown','KeyW'); run(); key('keyup','KeyW'); expect(foot().distanceTo(before)).toBeGreaterThan(1.2);
+    const other = new ElementStub(); other.tagName='BUTTON'; other.id='settings'; focusElement(other); expect(game.state.kind).toBe('paused');
+  });
+  it('pointer lock does not override editable focus or modal intent', async () => {
+    await ready(); game.start('locked'); const input = new ElementStub(); input.tagName='INPUT'; focusElement(input);
+    expect(game.state.kind).toBe('paused'); expect(lock).toBeNull();
+    game.start('locked'); modal=true; key('keydown','KeyW'); game.update(1/60); expect(game.state.kind).toBe('paused');
+  });
+  it('direct Game requests capture synchronously, without detector readiness or setup acknowledgement', () => {
+    let analyse: (() => void) | undefined;
+    game.suggestions = () => new Promise(resolve => { analyse = () => resolve({suggestions:[],message:''}); });
+    game.enterDirect();
+    const before = host.camera.position.clone();
+    expect(lock).toBe(canvas); expect(game.state.kind).toBe('playing'); expect(game.config?.confirmed).toBe(true);
+    expect(game.config?.support).toBe('virtual');
+    key('keydown','KeyW'); run(); key('keyup','KeyW'); expect(host.camera.position.distanceTo(before)).toBeGreaterThan(1);
+    analyse?.(); game.exit();
+  });
+  it('direct entry into thin vertical content has usable finite walking room, not a rejected spawn', () => {
+    frame.geometry.dispose(); frame.geometry = new THREE.BoxGeometry(.001, 5, 30);
+    game.enterDirect(); expect(game.state.kind).toBe('playing');
+    if (game.state.kind !== 'playing') throw Error('No direct player');
+    const before = foot(); key('keydown','KeyA'); run(); key('keyup','KeyA');
+    expect(foot().distanceTo(before)).toBeGreaterThan(game.state.run.walker.scale.eyeHeight);
+    expect(game.state.run.walker.world.kind).toBe('virtual');
+  });
+  it('reports real finite-boundary blocking separately from actual translation', async () => {
+    await ready(); game.start('keyboard');
+    if(game.state.kind !== 'playing') throw Error('No player');
+    const {walker}=game.state.run; if(walker.world.kind!=='virtual')throw Error('No finite floor');
+    const f=walker.world.footprint; walker.foot.set(f.maxX-walker.scale.radius,0,f.minZ+walker.scale.radius);
+    key('keydown','KeyW');key('keydown','KeyD');run();key('keyup','KeyW');key('keyup','KeyD');
+    expect(game.motion).toBe('boundary');
+  });
+});
+
+it('prepares verified mesh opportunistically without changing the active virtual walk, then reuses it on next entry', async () => {
+  game.suggestions = async () => ({ suggestions:[{point:new THREE.Vector3(),normal:new THREE.Vector3(0,1,0),evidence:'Synthetic floor hypothesis'}],message:'' });
+  game.enterDirect(); expect(game.config?.support).toBe('virtual'); const initial = host.camera.position.clone();
+  await vi.waitFor(() => expect(game.config?.suggestions).toHaveLength(1));
+  expect(game.config?.support).toBe('virtual');expect(host.camera.position.toArray()).toEqual(initial.toArray());
+  game.exit();game.enterDirect();expect(game.config?.support).toBe('mesh');expect(game.state.kind).toBe('playing');
+  key('keydown','KeyW');const before=host.camera.position.clone();run();key('keyup','KeyW');
+  expect(host.camera.position.distanceTo(before)).toBeGreaterThan(1);
+});
+it('scene invalidation aborts opportunistic analysis and cannot apply its late plane to a replacement', async () => {
+  let finish: (()=>void) | undefined;
+  game.suggestions = () => new Promise(resolve=>{finish=()=>resolve({suggestions:[{point:new THREE.Vector3(0,500,0),normal:new THREE.Vector3(0,1,0),evidence:'Stale scene'}],message:''});});
+  game.enterDirect();await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+  game.invalidate();finish!();await new Promise(resolve=>setTimeout(resolve,10));
+  expect(game.state.kind).toBe('inactive');game.suggestions=null;game.enterDirect();expect(game.config?.suggestions).toHaveLength(0);expect(game.config?.point.y).toBeCloseTo(0,10);
 });
