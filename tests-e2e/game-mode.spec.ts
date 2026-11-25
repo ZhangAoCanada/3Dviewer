@@ -93,6 +93,9 @@ test('manual virtual floor is explicit, keyboard look works and focus pauses mov
   await expect(page.locator('#game-eye')).toHaveValue('2');
   await page.keyboard.press('Escape');
   await expect(page.locator('#game-confirm')).toBeVisible();
+  await page.click('#game-start');await expect(page.locator('#game-status')).toContainText('Check');
+  await page.fill('#game-eye', '0');await page.locator('#game-eye').press('Tab');
+  await page.click('#game-start');await expect(page.locator('#game-status')).toContainText('Eye height');
   await page.click('#game-exit');
   await expect(page.locator('#mode-orbit')).toHaveAttribute('aria-pressed', 'true');
 });
@@ -159,6 +162,16 @@ for (const sample of ['cloud', 'torus-ply', 'torus-splat']) test(`real loaded ${
   await expect(page.locator('#game-capability')).toContainText('no reconstructed walls');
   await page.check('#game-confirm');await page.click('#game-keyboard');
   await expect(page.locator('.game-hud')).toBeVisible();
+  if (sample === 'cloud') {
+    // Thin content used to appear only at the bottom edge: entry must frame actual colored geometry.
+    await frames(page);
+    const {default:sharp} = await import('sharp');
+    const image = sharp(await canvasShot(page)), metadata = await image.metadata();
+    const width = metadata.width!, height = metadata.height!;
+    const pixels = await image.extract({left:Math.floor(width*.25),top:Math.floor(height*.25),width:Math.floor(width*.5),height:Math.floor(height*.5)}).removeAlpha().raw().toBuffer();
+    let colored=0;for(let i=0;i<pixels.length;i+=3)if(Math.max(pixels[i]!,pixels[i+1]!,pixels[i+2]!)-Math.min(pixels[i]!,pixels[i+1]!,pixels[i+2]!)>40)colored++;
+    expect(colored).toBeGreaterThan(50);
+  }
   await page.keyboard.press('Escape');await expect(page.locator('#game-paused')).toBeVisible();
   await page.click('#game-exit');await expect(page.locator('#mode-game')).toHaveAttribute('aria-pressed','false');
 });
