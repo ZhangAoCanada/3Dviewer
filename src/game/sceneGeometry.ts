@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Renderable } from '../core/types';
 import { GaussianRenderable } from '../renderables/gaussianRenderable';
 import { MAX_COLLISION_TRIANGLES, MeshCollision } from './meshCollision';
+import { runCooperatively } from './cooperative';
 import { toLocal, type GameFrame, type Footprint } from './frame';
 export const MAX_GROUND_SAMPLES = 24000;
 const MAX_SOURCES = 256;
@@ -149,6 +150,7 @@ export async function prepareSceneGeometry(items: readonly Renderable[], signal:
         const a = Math.sqrt(random()), b = random();
         const v = t.a.clone().multiplyScalar(1 - a).addScaledVector(t.b, a * (1 - b)).addScaledVector(t.c, a * b);
         values.push(v.x, v.y, v.z);
+        if (i % 1024 === 1023) { await yieldTask(); signal.throwIfAborted(); }
       }
       if (triangles)
         for (let face = 0; face < count; face++) {
@@ -177,6 +179,21 @@ export function collisionInFrame(geometry: SceneGeometry, frame: GameFrame): Mes
   if (!geometry.triangles)
     return null;
   return new MeshCollision(geometry.triangles.map(t => new THREE.Triangle(toLocal(frame, t.a.clone().add(geometry.anchor)), toLocal(frame, t.b.clone().add(geometry.anchor)), toLocal(frame, t.c.clone().add(geometry.anchor)))));
+}
+/** Production preparation: coordinate conversion and BVH construction are both cancellable. */
+export async function collisionInFrameAsync(geometry: SceneGeometry, frame: GameFrame, signal: AbortSignal): Promise<MeshCollision | null> {
+  signal.throwIfAborted();
+  if (!geometry.triangles) return null;
+  const converted: THREE.Triangle[] = [];
+  function* transform(): Generator<void, void, unknown> {
+    for (const t of geometry.triangles!) {
+      converted.push(new THREE.Triangle(toLocal(frame, t.a.clone().add(geometry.anchor)),
+        toLocal(frame, t.b.clone().add(geometry.anchor)), toLocal(frame, t.c.clone().add(geometry.anchor))));
+      yield;
+    }
+  }
+  await runCooperatively(transform(), signal);
+  return MeshCollision.create(converted, signal);
 }
 /** A previewed artificial rectangular floor, not inferred occupancy. */
 export function footprintInFrame(bounds: THREE.Box3, frame: GameFrame): Footprint {

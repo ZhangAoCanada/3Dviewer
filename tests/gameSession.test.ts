@@ -160,6 +160,28 @@ describe('exclusive game session ownership', () => {
     run();
     expect(foot().toArray()).toEqual(before.toArray());
   });
+  it('only starts mesh walking after complete asynchronous collision preparation', async () => {
+    await game.enter();
+    game.configure({ eyeHeight: 1.7 });
+    game.configure({ confirmed: true });
+    await vi.waitFor(() => expect(game.config?.collisionPreparing).toBe(false));
+    game.start('keyboard');
+    expect(game.state.kind).toBe('playing');
+    expect(foot().y).toBeGreaterThanOrEqual(0);
+  });
+  it('cancels pending capped collision work on exit without late state attachment', async () => {
+    frame.geometry.dispose();
+    frame.geometry = new THREE.PlaneGeometry(20, 20, 100, 100).rotateX(-Math.PI / 2);
+    await game.enter();
+    expect(game.config?.collisionPreparing).toBe(true);
+    game.configure({ confirmed: true });
+    game.start('keyboard');
+    expect(game.state.kind).toBe('setup');
+    game.exit();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(game.state.kind).toBe('inactive');
+    expect(lock).toBeNull();
+  });
   it('never enters playing merely because lock was requested or denied', async () => {
     await ready();
     canvas.requestPointerLock = () => Promise.reject(new Error('denied'));

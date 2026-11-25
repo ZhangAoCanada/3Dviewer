@@ -4,7 +4,8 @@ import type { NavigationController } from '../render/Navigation';
 import { fitPlane } from '../render/upright';
 import { gameFrame, playerScale, toWorld, type GameFrame } from './frame';
 import { Walker, type WalkWorld } from './locomotion';
-import { collisionInFrame, footprintInFrame, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
+import type { MeshCollision } from './meshCollision';
+import { collisionInFrameAsync, footprintInFrame, prepareSceneGeometry, type SceneGeometry } from './sceneGeometry';
 import { captureGameView, restoreGameView, type GameViewSnapshot } from './viewSnapshot';
 export interface GroundSuggestion {
   normal: THREE.Vector3;
@@ -22,6 +23,7 @@ export interface GameConfig {
   eyeHeight: number;
   support: 'mesh' | 'virtual';
   confirmed: boolean;
+  collisionPreparing: boolean;
   evidence: string;
   suggestions: GroundSuggestion[];
 }
@@ -66,6 +68,8 @@ export class GameSession {
   state: GameState = { kind: 'inactive' };
   suggestions: GroundSuggestions | null = null;
   private revision = 0;
+  private collisionAbort: AbortController | null = null;
+  private collision: { config: GameConfig; frame: GameFrame; collider: MeshCollision } | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly keys = new Set<string>();
   private readonly preview = new THREE.Group();
@@ -120,11 +124,12 @@ export class GameSession {
         return;
       const suggestion = suggestions[0];
       const config: GameConfig = { geometry, saved, normal: suggestion?.normal.clone() ?? up, point: suggestion?.point.clone() ?? point,
-        eyeHeight: span * .1, support: geometry.triangles ? 'mesh' : 'virtual', confirmed: false, suggestions,
+        eyeHeight: span * .1, support: geometry.triangles ? 'mesh' : 'virtual', confirmed: false, collisionPreparing: false, suggestions,
         evidence: suggestion?.evidence ?? `${analysis.message} Manual floor: starting at scene bounds, not detected. Adjust or pick a flat patch.`.trim() };
       this.state = { kind: 'setup', config, message: '' };
       this.updatePreview();
       this.changed();
+      this.prepareCollision(config);
     }
     catch (error) {
       if (revision !== this.revision)
@@ -135,6 +140,31 @@ export class GameSession {
     }
   }
   onError: (message: string) => void = () => { };
+  private prepareCollision(config: GameConfig): void {
+    this.collisionAbort?.abort();
+    this.collisionAbort = null;
+    this.collision = null;
+    config.collisionPreparing = false;
+    if (config.support !== 'mesh' || !config.geometry.triangles) return;
+    const abort = new AbortController(), frame = gameFrame(config.point, config.normal);
+    this.collisionAbort = abort;
+    config.collisionPreparing = true;
+    this.changed();
+    void collisionInFrameAsync(config.geometry, frame, abort.signal).then(collider => {
+      if (abort.signal.aborted || this.state.kind !== 'setup' || this.state.config !== config) return;
+      this.collisionAbort = null;
+      config.collisionPreparing = false;
+      this.collision = collider ? { config, frame, collider } : null;
+      this.changed();
+    }).catch(error => {
+      if (abort.signal.aborted || this.state.kind !== 'setup' || this.state.config !== config) return;
+      this.collisionAbort = null;
+      config.collisionPreparing = false;
+      this.state.message = `Static collision preparation failed (${error instanceof Error ? error.message : 'unavailable'}). Choose Virtual floor to continue.`;
+      this.changed();
+    });
+  }
+
   configure(change: Partial<Pick<GameConfig, 'normal' | 'point' | 'eyeHeight' | 'support' | 'confirmed'>>): void {
     if (this.state.kind !== 'setup')
       return;
@@ -144,6 +174,7 @@ export class GameSession {
     this.state.message = '';
     this.updatePreview();
     this.changed();
+    if (change.normal || change.point || change.support) this.prepareCollision(this.state.config);
   }
   chooseSuggestion(index: number): void {
     const config = this.config, proposal = config?.suggestions[index];
@@ -171,10 +202,11 @@ export class GameSession {
         this.changed();
         return;
       }
-      const frame = gameFrame(config.point, config.normal);
-      const collision = config.support === 'mesh' ? collisionInFrame(config.geometry, frame) : null;
+      const prepared = this.collision?.config === config ? this.collision : null;
+      const frame = config.support === 'mesh' && prepared ? prepared.frame : gameFrame(config.point, config.normal);
+      const collision = config.support === 'mesh' ? prepared?.collider ?? null : null;
       if (config.support === 'mesh' && !collision) {
-        this.state.message = 'Static collision unavailable. Explicitly choose Virtual floor to continue.';
+        this.state.message = config.collisionPreparing ? 'Preparing bounded static collision. Start will be available when ready.' : 'Static collision unavailable. Explicitly choose Virtual floor to continue.';
         this.changed();
         return;
       }
@@ -274,6 +306,9 @@ export class GameSession {
     if (state.kind === 'inactive')
       return;
     ++this.revision;
+    this.collisionAbort?.abort();
+    this.collisionAbort = null;
+    this.collision = null;
     const saved = state.kind === 'preparing' ? state.saved : state.kind === 'setup' ? state.config.saved : state.run.config.saved;
     if (state.kind === 'preparing')
       state.abort.abort();

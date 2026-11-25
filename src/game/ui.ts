@@ -121,9 +121,13 @@ export class GameUI {
     this.get('#game-paused').hidden = state.kind !== 'paused';
     this.get('#game-start-actions').hidden = state.kind !== 'setup' && state.kind !== 'paused';
     this.get('#game-status').textContent = state.kind === 'preparing' ? 'Preparing bounded floor evidence…' : state.kind === 'acquiring' ? 'Waiting for mouse capture…' :
-      state.kind === 'paused' ? state.message : state.kind === 'setup' ? state.message || 'Inspect the preview, then confirm your floor.' : '';
+      state.kind === 'paused' ? state.message : state.kind === 'setup' ? state.message || (c?.collisionPreparing && c.support === 'mesh' ? 'Preparing bounded static collision… You can still adjust or exit.' : 'Inspect the preview, then confirm your floor.') : '';
     this.get('#game-title').textContent = state.kind === 'paused' ? 'Exploration paused' : 'Find your footing';
     this.get('#game-start').textContent = state.kind === 'paused' ? 'Resume FPS' : 'Start FPS';
+    for (const selector of ['#game-start', '#game-keyboard']) {
+      const button = this.get(selector);
+      if (button instanceof HTMLButtonElement) button.disabled = state.kind === 'setup' && c?.support === 'mesh' && c.collisionPreparing;
+    }
     if (!c)
       return;
     const capability = c.support === 'mesh' ? 'Static mesh · solid-triangle collision' : 'Virtual floor · no wall collision';

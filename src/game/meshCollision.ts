@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { PlayerScale } from './frame';
+import { runCooperatively } from './cooperative';
+const DEFERRED = Symbol('deferred collision construction');
 export const MAX_COLLISION_TRIANGLES = 20000;
 const QUERY_LIMIT = 4096;
 const SLOPE_COS = Math.cos(Math.PI / 4);
@@ -29,41 +31,71 @@ export type Support = {
 };
 /** Static bounded triangle BVH. Never truncate triangles and pretend the missing walls are empty. */
 export class MeshCollision {
-  private readonly root: Node;
+  private root!: Node;
   private remainingTests = 8192;
 
   beginFrame(): void { this.remainingTests = 8192; }
   readonly bounds = new THREE.Box3();
-  constructor(private readonly triangles: readonly THREE.Triangle[]) {
+  constructor(private readonly triangles: readonly THREE.Triangle[], deferred?: typeof DEFERRED) {
     if (triangles.length === 0 || triangles.length > MAX_COLLISION_TRIANGLES)
       throw new Error('Collision triangle budget exceeded.');
-    for (const t of triangles) {
+    if (deferred !== DEFERRED) {
+      // Synchronous construction remains useful for small pure fixtures. Production uses create().
+      for (const unit of this.prepare()) void unit;
+    }
+  }
+  static async create(triangles: readonly THREE.Triangle[], signal: AbortSignal): Promise<MeshCollision> {
+    signal.throwIfAborted();
+    const collision = new MeshCollision(triangles, DEFERRED);
+    await runCooperatively(collision.prepare(), signal);
+    return collision;
+  }
+  private *prepare(): Generator<void, void, unknown> {
+    const indices: number[] = [];
+    for (let i = 0; i < this.triangles.length; i++) {
+      const t = this.triangles[i]!;
       for (const v of [t.a, t.b, t.c]) {
-        if (!v.toArray().every(Number.isFinite))
+        if (!Number.isFinite(v.x) || !Number.isFinite(v.y) || !Number.isFinite(v.z))
           throw new Error('Invalid collision geometry.');
         this.bounds.expandByPoint(v);
       }
+      indices.push(i);
+      yield;
     }
-    this.root = this.build(triangles.map((_, i) => i), 0);
+    this.root = yield* this.build(indices, 0);
   }
-  private build(indices: number[], depth: number): Node {
+  private *build(indices: number[], depth: number): Generator<void, Node, unknown> {
     const box = new THREE.Box3();
     for (const i of indices) {
-      const t = this.triangles[i];
-      if (t)
-        box.expandByPoint(t.a).expandByPoint(t.b).expandByPoint(t.c);
+      const t = this.triangles[i]!;
+      box.expandByPoint(t.a).expandByPoint(t.b).expandByPoint(t.c);
+      yield;
     }
     if (indices.length <= 12 || depth >= 18)
       return { box, indices, children: [] };
     const size = box.getSize(new THREE.Vector3());
     const axis = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
-    const center = (i: number) => {
-      const t = this.triangles[i];
-      return t ? (t.a[axis] + t.b[axis] + t.c[axis]) / 3 : 0;
-    };
-    indices.sort((a, b) => center(a) - center(b));
-    const half = Math.floor(indices.length / 2);
-    return { box, indices: [], children: [this.build(indices.slice(0, half), depth + 1), this.build(indices.slice(half), depth + 1)] };
+    const middle = box.min[axis] / 2 + box.max[axis] / 2;
+    let left: number[] = [], right: number[] = [];
+    for (const i of indices) {
+      const t = this.triangles[i]!;
+      const center = t.a[axis] / 3 + t.b[axis] / 3 + t.c[axis] / 3;
+      (center < middle ? left : right).push(i);
+      yield;
+    }
+    // Coincident/long triangles may have indistinguishable centroids. Preserve complete
+    // coverage with an ordered half split rather than an uninterruptible Array.sort.
+    if (!left.length || !right.length) {
+      left = []; right = [];
+      const half = Math.floor(indices.length / 2);
+      for (let i = 0; i < indices.length; i++) {
+        (i < half ? left : right).push(indices[i]!);
+        yield;
+      }
+    }
+    const first = yield* this.build(left, depth + 1);
+    const second = yield* this.build(right, depth + 1);
+    return { box, indices: [], children: [first, second] };
   }
   private query(box: THREE.Box3): number[] | null {
     const indices: number[] = [];
