@@ -4,8 +4,21 @@ Release availability and assets are determined by GitHub Releases, not by this f
 
 ## Unreleased
 
-- Follow-up to reviewed `84b33b6` (not a rewrite of that head): Fly locked look now uses Game's `RelativeLookInput` capture-handoff and discontinuity guard, calibrated to Fly's 0.005 rad/px scale, so a large first delta after the Fly click or recapture cannot throw the view off-scene. Later ordinary moves stay 1:1. Late-arriving locks after Orbit or blocking UI are exited when Fly does not own them. Locked Fly keeps WASD/Space if the Fly button retained focus, and Escape stops at releasing the mouse instead of also closing Make upright or a phone Settings sheet. Drag-look fallback, denial, keyboard `2` click-to-capture, Orbit and Game ownership are unchanged. Tracked residuals: window-blur does not itself release look (tab hide and dispose do); empty-start Fly no longer locks behind the start overlay; a second request while pending is ignored.
+## 0.5.1
+
+## What changed
+
 - **Fly starts mouse look in the same click** as the Fly toolbar button. Escape releases the mouse and stays in Fly; click the view or Fly to recapture. Drag-look remains when capture is unavailable or after a keyboard `2` entry, which cannot legally request pointer lock. Touch one-finger look is unchanged. Game one-click capture, Orbit, input ownership and prior-view restore are preserved. Inactive Game sessions no longer release a Fly pointer lock they did not own.
+- Follow-up to reviewed `84b33b6` (not a rewrite of that head): Fly locked look now uses Game's `RelativeLookInput` capture-handoff and discontinuity guard, calibrated to Fly's 0.005 rad/px scale, so a large first delta after the Fly click or recapture cannot throw the view off-scene. Later ordinary moves stay 1:1. Late-arriving locks after Orbit or blocking UI are exited when Fly does not own them. Locked Fly keeps WASD/Space if the Fly button retained focus, and Escape stops at releasing the mouse instead of also closing Make upright or a phone Settings sheet. Drag-look fallback, denial, keyboard `2` click-to-capture, Orbit and Game ownership are unchanged. Empty-start Fly no longer locks behind the start overlay; a second request while pending is ignored. Tracked residual: window-blur does not itself release look (tab hide and dispose do).
+- Preserved v5 identity, icon-only downloads, preferences/cache truth, previous Orbit/Fly restoration and waiting-update/no-automatic-reload behavior.
+
+## Verification and limits
+
+Product head `42cc2cc` (follow-up to `84b33b6`, not a rewrite of that head) is the approved Fly behavior. This v0.5.1 candidate is that product plus version and changelog metadata only; the metadata head itself is not Gemini-pre-approved. Independent Gemini Neon High review of exact `84b33b6` was BLOCKED for a missing first-lock/resume guard, which this product head addresses. Final exact-head gate counts for this release candidate are recorded with the publication report. This is not native install, runtime, upgrade, full-density or GPU certification. Browser checks used software SwiftShader.
+
+A desktop-tool path after a toolbar Fly click is not re-certified here. Operator review of `84b33b6` confirmed one-click Fly capture, Escape stay-in-Fly and keyboard-2 no auto-lock; a first Computer-tool move after the toolbar click looked off-scene, which the handoff guard is meant to prevent. Do not read that as a guarantee of visible follow-up look from the same desktop-tool gesture after capture (operator then saw no visible follow-up look until view recapture).
+
+Installers are **unsigned/not notarized**, with normal OS warnings (Windows SmartScreen / macOS Gatekeeper) and system-WebView dependencies. Download integrity is not native installation/runtime/upgrade certification. Existing scenes are not forcibly reloaded: choose Reload in the update notice when ready.
 
 ## 0.5.0
 
