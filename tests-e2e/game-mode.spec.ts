@@ -1,5 +1,6 @@
 import { expect, test } from './test';
 import { gameRoom as room } from './fixtures/gameRoom';
+import { releaseFlyLook } from './flyLook';
 async function frames(page: import('@playwright/test').Page, count = 20) {
   await page.evaluate(async (count) => { for (let i = 0; i < count; i++)
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); }, count);
@@ -182,8 +183,12 @@ test('setup navigation shortcuts do not abandon game setup, and R resets inspect
 test('quality reopen from paused game preserves an independently aimed Fly view',async({page})=>{
  await page.goto('/?sample=torus-ply');await expect(page.locator('#loading')).toBeHidden();
  await page.click('#mode-fly');
- const box=await page.locator('#view').boundingBox();if(!box)throw Error('No canvas');
- await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();await page.mouse.move(box.x+box.width*.5+45,box.y+box.height*.5,{steps:5});await page.mouse.up();await frames(page,30);
+ await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');
+ await page.evaluate(()=>{const event=new MouseEvent('mousemove',{bubbles:true,cancelable:true,view:window});Object.defineProperty(event,'movementX',{value:45});Object.defineProperty(event,'movementY',{value:0});document.dispatchEvent(event);});
+ await frames(page,30);
+ await releaseFlyLook(page);
+ const toastClose=page.locator('#toast-close');
+ if(await toastClose.isVisible()) await toastClose.click();
  const centroid=async()=>{const {default:sharp}=await import('sharp');const {data,info}=await sharp(await canvasShot(page)).removeAlpha().raw().toBuffer({resolveWithObject:true});let x=0,y=0,n=0;for(let i=0;i<data.length;i+=info.channels){const r=data[i]!,g=data[i+1]!,b=data[i+2]!;if(Math.max(r,g,b)-Math.min(r,g,b)>40){const pixel=i/info.channels;x+=pixel%info.width;y+=Math.floor(pixel/info.width);n++;}}expect(n).toBeGreaterThan(500);return {x:x/n,y:y/n};};
  const before=await centroid();
  await page.click('#mode-game');await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');await page.keyboard.press('Escape');

@@ -620,6 +620,7 @@ export class GameSession {
       (entryButton && (this.state.kind === 'acquiring' || this.state.kind === 'playing' && this.state.control === 'keyboard'));
   }
   private onLock = (event: Event): void => {
+    if (!this.active) return;
     const state = this.state;
     if (document.pointerLockElement === this.host.canvas) {
       if (state.kind === 'acquiring') {

@@ -247,6 +247,11 @@ export class SceneHost {
     this.navigation.setMode(mode);
   }
 
+  /** Same-gesture Fly capture. No-ops unless navigation is in Fly and unlocked. */
+  requestLookLock(): 'requested' | 'held' | 'unavailable' {
+    return this.navigation.requestLookLock();
+  }
+
   clear(): void {
     this.game.invalidate();
     for (const item of this.renderables) item.dispose();

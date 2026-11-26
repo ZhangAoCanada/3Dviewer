@@ -2,6 +2,10 @@
 
 Release availability and assets are determined by GitHub Releases, not by this file.
 
+## Unreleased
+
+- **Fly starts mouse look in the same click** as the Fly toolbar button. Escape releases the mouse and stays in Fly; click the view or Fly to recapture. Drag-look remains when capture is unavailable or after a keyboard `2` entry, which cannot legally request pointer lock. Touch one-finger look is unchanged. Game one-click capture, Orbit, input ownership and prior-view restore are preserved. Inactive Game sessions no longer release a Fly pointer lock they did not own.
+
 ## 0.5.0
 
 ## What changed
