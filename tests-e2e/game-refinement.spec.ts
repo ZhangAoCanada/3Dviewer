@@ -8,6 +8,8 @@ async function orientation(page:import('@playwright/test').Page) {
 test('Pause height/floor controls preserve explored position/look and independent actual walk speed',async({page})=>{
  await instrument(page);await page.goto('/?sample=cloud');await expect(page.locator('#loading')).toBeHidden();await page.click('#mode-game');
  await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');await expect(page.locator('#game-panel')).toBeHidden();
+ // Discard a cold first hold. hold() uses 1250ms wall-clock, but walking integrates 120Hz steps after a 50ms dt clamp, so a loaded-runner hitch on the first hold shortens baseline and makes a later warmer hold look too fast (1.5625≈25/16, 1.396≈148/106). KeyS is opposite KeyW so warmup does not stack toward a floor boundary.
+ await hold(page,'KeyS',reference);
  const baseline=await hold(page,'KeyW',reference);expect(baseline).toBeGreaterThan(.1);
  const before=await viewPosition(page,reference), rotation=await orientation(page), eye=Number(await page.locator('#game-eye').inputValue());
  await page.keyboard.press('Escape');await expect(page.locator('#game-paused')).toBeVisible();await page.fill('#game-quick-eye',String(eye*1.15));await page.click('#game-eye-apply');
