@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RelativeLookInput } from '../game/lookInput';
 import {
   blendReleaseVelocity,
   orbitCamera,
@@ -131,6 +132,7 @@ export class NavigationController {
   private pivotHideAt = 0;
   private flat = false;
   private lookLock: 'idle' | 'pending' | 'locked' = 'idle';
+  private readonly mouseInput = new RelativeLookInput();
   private maxPolar = Math.PI - 0.12;
   private readonly cursorRay = new THREE.Vector3();
   private readonly cursorNdc = new THREE.Vector3();
@@ -151,7 +153,7 @@ export class NavigationController {
     window.addEventListener('keydown', this.onLookLockEscape, true);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
-    document.addEventListener('visibilitychange', this.onBlur);
+    document.addEventListener('visibilitychange', this.onVisibility);
     document.addEventListener('focusin', this.onFocusChange);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('pointerlockerror', this.onPointerLockError);
@@ -169,6 +171,7 @@ export class NavigationController {
   requestLookLock(): 'requested' | 'held' | 'unavailable' {
     if (this.suspended || this.mode !== 'fly' || this.hasBlockingUi()) return 'unavailable';
     if (this.isLookLocked()) return 'held';
+    if (this.lookLock === 'pending') return 'requested';
     if (typeof this.dom.requestPointerLock !== 'function') {
       this.notifyLookLock('unavailable');
       return 'unavailable';
@@ -352,6 +355,7 @@ export class NavigationController {
   }
 
   dispose(): void {
+    this.releaseLookLock(true);
     this.dom.removeEventListener('pointerdown', this.onPointerDown);
     this.dom.removeEventListener('pointermove', this.onPointerMove);
     this.dom.removeEventListener('pointerup', this.onPointerUp);
@@ -363,7 +367,7 @@ export class NavigationController {
     window.removeEventListener('keydown', this.onLookLockEscape, true);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', this.onBlur);
-    document.removeEventListener('visibilitychange', this.onBlur);
+    document.removeEventListener('visibilitychange', this.onVisibility);
     document.removeEventListener('focusin', this.onFocusChange);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('pointerlockerror', this.onPointerLockError);
@@ -773,8 +777,11 @@ export class NavigationController {
   }
 
   private ownsKeyboard(target: EventTarget | null): boolean {
-    return !this.suspended && !document.querySelector('dialog[open], [role="menu"]:not([hidden])') &&
-      (target === this.dom || target === document.body);
+    if (this.suspended || this.hasBlockingUi()) return false;
+    if (target === this.dom || target === document.body) return true;
+    // Pointer capture owns Fly keys even if the activating Fly button retained focus.
+    // Other toolbar/dialog controls still take input and release the lock on focus.
+    return this.isLookLocked() && target instanceof HTMLElement && target.id === 'mode-fly';
   }
 
   private onFocusChange = (): void => {
@@ -798,15 +805,29 @@ export class NavigationController {
     this.notifyLookLock(reason);
   }
 
+  /** Complete a Fly lock once. A movement event can arrive before pointerlockchange;
+   * a late change must not re-arm the capture-handoff guard. */
+  private acquireLookLock(): void {
+    if (this.lookLock === 'locked') return;
+    this.lookLock = 'locked';
+    this.mouseInput.reset();
+    this.endDrag();
+    try { this.dom.focus({ preventScroll: true }); } catch { /* focus is best-effort after capture */ }
+    this.notifyLookLock('acquired');
+  }
+
   private onPointerLockChange = (): void => {
     if (document.pointerLockElement === this.dom) {
-      if (this.suspended || this.mode !== 'fly' || (this.lookLock !== 'pending' && this.lookLock !== 'locked')) {
+      const ownable = !this.suspended && this.mode === 'fly' && !this.hasBlockingUi() &&
+        (this.lookLock === 'pending' || this.lookLock === 'locked');
+      if (!ownable) {
         this.lookLock = 'idle';
+        // Late-arriving lock after Orbit/dialog/release must not stay unowned.
+        // Never exit a lock while suspended: Game may own the same canvas.
+        if (!this.suspended && typeof document.exitPointerLock === 'function') document.exitPointerLock();
         return;
       }
-      this.lookLock = 'locked';
-      this.endDrag();
-      this.notifyLookLock('acquired');
+      this.acquireLookLock();
       return;
     }
     if (this.lookLock === 'locked' || this.lookLock === 'pending') {
@@ -821,10 +842,18 @@ export class NavigationController {
   };
 
   private onLockedMouseMove = (event: MouseEvent): void => {
-    if (this.suspended || !this.isLookLocked()) return;
+    if (this.suspended || document.pointerLockElement !== this.dom) return;
+    // Movement can beat pointerlockchange. Acquire once so this first delta is the handoff.
+    if (this.lookLock === 'pending' && this.mode === 'fly' && !this.hasBlockingUi()) {
+      this.acquireLookLock();
+    }
+    if (!this.isLookLocked()) return;
     if (!Number.isFinite(event.movementX) || !Number.isFinite(event.movementY)) return;
-    if (event.movementX === 0 && event.movementY === 0) return;
-    this.lookFly(event.movementX, event.movementY);
+    // Same first-nonzero capture-handoff guard as Game. Zero events do not consume it.
+    // Drag-look is a separate path and stays 1:1, including the first pixel.
+    const decision = this.mouseInput.consume(event.movementX, event.movementY, this.sensitivity * 2);
+    if (decision.kind !== 'applied') return;
+    this.lookFly(decision.dx, decision.dy);
   };
 
   private onLookLockEscape = (event: KeyboardEvent): void => {
@@ -834,12 +863,14 @@ export class NavigationController {
     // Capture-phase, like Game: browsers may swallow Escape as a lock default
     // without delivering a bubble event or actually releasing in some WebViews.
     event.preventDefault();
+    event.stopImmediatePropagation();
     this.releaseLookLock();
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.code === 'Escape' && this.isLookLocked() && !this.hasBlockingUi()) {
       event.preventDefault();
+      event.stopImmediatePropagation();
       this.releaseLookLock();
       return;
     }
@@ -862,6 +893,11 @@ export class NavigationController {
       return;
     }
     this.keys.delete(event.code);
+  };
+
+  private onVisibility = (): void => {
+    if (document.hidden) this.releaseLookLock(true);
+    this.onBlur();
   };
 
   private onBlur = (): void => {

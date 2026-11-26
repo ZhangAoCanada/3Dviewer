@@ -341,7 +341,8 @@ export class ViewerApp {
     must('#mode-fly').addEventListener('click', () => {
       this.setMode('fly');
       // The click is the user gesture. Do not await anything before capture.
-      this.host?.requestLookLock();
+      // The empty start overlay can still show Fly; do not lock the pointer behind it.
+      if (must('#empty').hidden) this.host?.requestLookLock();
     });
     must('#focus-btn').addEventListener('click', () => {
       if (!this.needScene()) return;
@@ -1015,6 +1016,8 @@ export class ViewerApp {
   }
 
   private onEscape(event: KeyboardEvent): void {
+    // Fly (and Game) may already have consumed Escape to release pointer lock.
+    if (event.defaultPrevented) return;
     if (document.querySelector('dialog[open]')) return;
     const openMenu = this.menus.find((entry) => !entry.menu.hidden);
     if (openMenu) {

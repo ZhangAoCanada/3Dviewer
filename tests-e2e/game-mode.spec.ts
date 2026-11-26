@@ -184,7 +184,7 @@ test('quality reopen from paused game preserves an independently aimed Fly view'
  await page.goto('/?sample=torus-ply');await expect(page.locator('#loading')).toBeHidden();
  await page.click('#mode-fly');
  await expect.poll(()=>page.evaluate(()=>document.pointerLockElement?.id)).toBe('view');
- await page.evaluate(()=>{const event=new MouseEvent('mousemove',{bubbles:true,cancelable:true,view:window});Object.defineProperty(event,'movementX',{value:45});Object.defineProperty(event,'movementY',{value:0});document.dispatchEvent(event);});
+ await page.evaluate(()=>{for (const movementX of [1, 45]) {const event=new MouseEvent('mousemove',{bubbles:true,cancelable:true,view:window});Object.defineProperty(event,'movementX',{value:movementX});Object.defineProperty(event,'movementY',{value:0});document.dispatchEvent(event);}});
  await frames(page,30);
  await releaseFlyLook(page);
  const toastClose=page.locator('#toast-close');

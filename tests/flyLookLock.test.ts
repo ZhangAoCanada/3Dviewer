@@ -4,6 +4,7 @@ import { NavigationController } from '../src/render/Navigation';
 
 class ElementStub extends EventTarget {
   tagName = 'CANVAS';
+  id = '';
   isContentEditable = false;
   clientHeight = 800;
   clientWidth = 1200;
@@ -34,6 +35,13 @@ function focusElement(element: ElementStub): void {
 function lockElement(element: ElementStub): void {
   lock = element;
   doc.dispatchEvent(new Event('pointerlockchange'));
+}
+
+function key(code: string, target = active): Event {
+  const event = new Event('keydown', { cancelable: true });
+  Object.defineProperties(event, { code: { value: code }, target: { value: target } });
+  win.dispatchEvent(event);
+  return event;
 }
 
 function mouseMove(movementX: number, movementY: number): void {
@@ -112,13 +120,74 @@ describe('fly default mouse look', () => {
     nav.requestLookLock();
     const before = camera.quaternion.clone();
     mouseMove(40, 0);
+    expect(camera.quaternion.toArray()).toEqual(before.toArray());
+    mouseMove(40, 0);
     expect(camera.quaternion.angleTo(before)).toBeGreaterThan(0.01);
     expect(nav.isMoving()).toBe(false);
+  });
+
+  it('ignores the first nonzero locked move, including a large toolbar-handoff impulse, then applies later moves 1:1', () => {
+    nav.setMode('fly');
+    nav.requestLookLock();
+    const start = camera.quaternion.clone();
+    for (let i = 0; i < 20; i += 1) mouseMove(0, 0);
+    expect(camera.quaternion.toArray()).toEqual(start.toArray());
+    mouseMove(-960, 40);
+    expect(camera.quaternion.toArray()).toEqual(start.toArray());
+    mouseMove(20, 0);
+    const once = camera.quaternion.angleTo(start);
+    expect(once).toBeGreaterThan(0.01);
+    const mid = camera.quaternion.clone();
+    mouseMove(20, 0);
+    expect(camera.quaternion.angleTo(mid)).toBeCloseTo(once, 6);
+    // A later super-threshold event is a discontinuity, not a second handoff, and does not rotate.
+    const afterOrdinary = camera.quaternion.clone();
+    mouseMove(-960, 0);
+    expect(camera.quaternion.toArray()).toEqual(afterOrdinary.toArray());
+    mouseMove(20, 0);
+    expect(camera.quaternion.angleTo(afterOrdinary)).toBeCloseTo(once, 6);
+  });
+
+  it('rearms the capture-handoff guard on recapture so resume cannot warp the view', () => {
+    nav.setMode('fly');
+    nav.requestLookLock();
+    mouseMove(-960, 0);
+    mouseMove(24, 0);
+    const aimed = camera.quaternion.clone();
+    document.exitPointerLock();
+    expect(nav.requestLookLock()).toBe('requested');
+    expect(nav.isLookLocked()).toBe(true);
+    mouseMove(-960, 80);
+    expect(camera.quaternion.toArray()).toEqual(aimed.toArray());
+    mouseMove(24, 0);
+    expect(camera.quaternion.angleTo(aimed)).toBeGreaterThan(0.01);
+  });
+
+  it('treats a movement that arrives before pointerlockchange as the handoff and does not re-arm when the change follows', () => {
+    canvas.requestPointerLock = () => {
+      requests.push('pending');
+      lock = canvas;
+      return Promise.resolve();
+    };
+    nav.setMode('fly');
+    expect(nav.requestLookLock()).toBe('requested');
+    expect(nav.isLookLocked()).toBe(false);
+    expect(lock).toBe(canvas);
+    const start = camera.quaternion.clone();
+    mouseMove(-960, 40);
+    expect(nav.isLookLocked()).toBe(true);
+    expect(notices).toEqual(['acquired']);
+    expect(camera.quaternion.toArray()).toEqual(start.toArray());
+    // A late pointerlockchange must not reset the guard after the handoff was already consumed.
+    doc.dispatchEvent(new Event('pointerlockchange'));
+    mouseMove(20, 0);
+    expect(camera.quaternion.angleTo(start)).toBeGreaterThan(0.01);
   });
 
   it('keeps the explored pose when leaving lock, and drag-look still works afterwards', () => {
     nav.setMode('fly');
     nav.requestLookLock();
+    mouseMove(30, -10);
     mouseMove(30, -10);
     const held = camera.quaternion.clone();
     document.exitPointerLock();
@@ -161,6 +230,7 @@ describe('fly default mouse look', () => {
     nav.setMode('fly');
     nav.requestLookLock();
     mouseMove(20, 8);
+    mouseMove(20, 8);
     const held = camera.quaternion.clone();
     const event = new Event('keydown', { cancelable: true });
     Object.defineProperties(event, { code: { value: 'Escape' }, target: { value: canvas } });
@@ -170,6 +240,73 @@ describe('fly default mouse look', () => {
     expect(notices.at(-1)).toBe('released');
     expect(camera.quaternion.toArray()).toEqual(held.toArray());
     expect(nav.mode).toBe('fly');
+  });
+
+  it('does not let the same Escape close upright or a phone sheet after releasing look', () => {
+    nav.setMode('fly');
+    nav.requestLookLock();
+    let closedChrome = false;
+    win.addEventListener('keydown', (event) => {
+      // Same contract as ViewerApp.onEscape: do not dismiss upright/sheet after Fly consumes Escape.
+      if (event.defaultPrevented) return;
+      closedChrome = true;
+    });
+    const event = new Event('keydown', { cancelable: true, bubbles: true });
+    Object.defineProperties(event, { code: { value: 'Escape' }, target: { value: canvas } });
+    win.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(closedChrome).toBe(false);
+    expect(nav.isLookLocked()).toBe(false);
+    expect(nav.mode).toBe('fly');
+  });
+
+  it('still moves with WASD and Space when the Fly button retains focus under lock', () => {
+    nav.setMode('fly');
+    nav.requestLookLock();
+    mouseMove(-960, 0);
+    const fly = new ElementStub();
+    fly.tagName = 'BUTTON';
+    fly.id = 'mode-fly';
+    focusElement(fly);
+    expect(nav.isLookLocked()).toBe(true);
+    const before = camera.position.clone();
+    key('KeyW', fly);
+    nav.update(0.1);
+    expect(camera.position.distanceTo(before)).toBeGreaterThan(0);
+    const mid = camera.position.clone();
+    key('Space', fly);
+    nav.update(0.1);
+    expect(camera.position.y).toBeGreaterThan(mid.y);
+  });
+
+  it('exits a late-arriving lock after switching to Orbit or opening a dialog during pending capture', () => {
+    let grant: (() => void) | undefined;
+    canvas.requestPointerLock = () => {
+      requests.push('pending');
+      return new Promise<void>((resolve) => {
+        grant = () => { lockElement(canvas); resolve(); };
+      });
+    };
+    nav.setMode('fly');
+    expect(nav.requestLookLock()).toBe('requested');
+    expect(nav.requestLookLock()).toBe('requested');
+    expect(requests).toEqual(['pending']);
+    expect(lock).toBeNull();
+    nav.setMode('orbit');
+    grant?.();
+    expect(nav.mode).toBe('orbit');
+    expect(nav.isLookLocked()).toBe(false);
+    expect(lock).toBeNull();
+
+    requests.length = 0;
+    nav.setMode('fly');
+    expect(nav.requestLookLock()).toBe('requested');
+    const field = new ElementStub();
+    field.tagName = 'INPUT';
+    focusElement(field);
+    grant?.();
+    expect(nav.isLookLocked()).toBe(false);
+    expect(lock).toBeNull();
   });
 
   it('drops Fly lock ownership when Game suspends navigation', () => {
@@ -217,6 +354,8 @@ describe('fly default mouse look', () => {
     const afterLock = camera.quaternion.clone();
     pointer('pointerdown', 100, 100);
     pointer('pointermove', 180, 40);
+    expect(camera.quaternion.toArray()).toEqual(afterLock.toArray());
+    mouseMove(-960, 0);
     expect(camera.quaternion.toArray()).toEqual(afterLock.toArray());
     mouseMove(24, 0);
     expect(camera.quaternion.angleTo(afterLock)).toBeGreaterThan(0.01);

@@ -14,6 +14,10 @@ async function viewMatrix(page: import('@playwright/test').Page): Promise<number
   return matrix!;
 }
 
+function matricesClose(a: number[], b: number[], epsilon = 1e-8): boolean {
+  return a.length === b.length && a.every((value, index) => Math.abs(value - (b[index] ?? 0)) <= epsilon);
+}
+
 async function lookRight(page: import('@playwright/test').Page, movementX = 56): Promise<void> {
   await page.evaluate((movementX) => {
     const event = new MouseEvent('mousemove', { bubbles: true, cancelable: true, view: window });
@@ -36,16 +40,25 @@ test('Fly button captures the mouse in the same click, without a second view cli
   const entered = await viewMatrix(page);
   // Entering Fly keeps the current camera; look is enabled, not respawned.
   expect(entered).toEqual(before);
+  // First nonzero relative motion after capture is a handoff impulse, including a large toolbar delta.
+  await lookRight(page, -960);
+  expect(matricesClose(await viewMatrix(page), entered)).toBe(true);
   await lookRight(page);
   const looked = await viewMatrix(page);
-  expect(looked).not.toEqual(entered);
+  expect(matricesClose(looked, entered)).toBe(false);
   await page.screenshot({ path: info.outputPath('fly-locked-look.png') });
   await releaseFlyLook(page);
   await expect(page.locator('#mode-fly')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#toast-msg')).toContainText('Click the view or Fly to look around again');
-  expect(await viewMatrix(page)).toEqual(looked);
+  expect(matricesClose(await viewMatrix(page), looked)).toBe(true);
   await page.click('#mode-fly');
   await expect.poll(() => page.evaluate(() => document.pointerLockElement?.id)).toBe('view');
+  await lookRight(page, -960);
+  expect(matricesClose(await viewMatrix(page), looked)).toBe(true);
+  await lookRight(page);
+  const recaptured = await viewMatrix(page);
+  expect(matricesClose(recaptured, looked)).toBe(false);
+  await page.screenshot({ path: info.outputPath('fly-recapture-handoff.png') });
   await releaseFlyLook(page);
 });
 
@@ -60,6 +73,32 @@ test('keyboard 2 enters Fly without auto-locking, and a view click recaptures', 
   if (!box) throw new Error('No canvas');
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
   await expect.poll(() => page.evaluate(() => document.pointerLockElement?.id)).toBe('view');
+  await releaseFlyLook(page);
+});
+
+test('first locked move after Fly click or keyboard-2 recapture is ignored; later small moves apply', async ({ page }, info) => {
+  await instrument(page);
+  await openCrate(page);
+  await page.locator('#view').focus();
+  await page.keyboard.press('Digit2');
+  await expect(page.locator('#mode-fly')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => page.evaluate(() => document.pointerLockElement)).toBeNull();
+  const box = await page.locator('#view').boundingBox();
+  if (!box) throw new Error('No canvas');
+  const unlocked = await viewMatrix(page);
+  await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
+  await expect.poll(() => page.evaluate(() => document.pointerLockElement?.id)).toBe('view');
+  const captured = await viewMatrix(page);
+  expect(captured).toEqual(unlocked);
+  await lookRight(page, -960);
+  expect(await viewMatrix(page)).toEqual(captured);
+  await lookRight(page, 20);
+  const once = await viewMatrix(page);
+  expect(once).not.toEqual(captured);
+  await lookRight(page, 20);
+  const twice = await viewMatrix(page);
+  expect(twice).not.toEqual(once);
+  await page.screenshot({ path: info.outputPath('fly-keyboard2-handoff.png') });
   await releaseFlyLook(page);
 });
 

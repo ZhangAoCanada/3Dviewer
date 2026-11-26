@@ -4,6 +4,7 @@ Release availability and assets are determined by GitHub Releases, not by this f
 
 ## Unreleased
 
+- Follow-up to reviewed `84b33b6` (not a rewrite of that head): Fly locked look now uses Game's `RelativeLookInput` capture-handoff and discontinuity guard, calibrated to Fly's 0.005 rad/px scale, so a large first delta after the Fly click or recapture cannot throw the view off-scene. Later ordinary moves stay 1:1. Late-arriving locks after Orbit or blocking UI are exited when Fly does not own them. Locked Fly keeps WASD/Space if the Fly button retained focus, and Escape stops at releasing the mouse instead of also closing Make upright or a phone Settings sheet. Drag-look fallback, denial, keyboard `2` click-to-capture, Orbit and Game ownership are unchanged. Tracked residuals: window-blur does not itself release look (tab hide and dispose do); empty-start Fly no longer locks behind the start overlay; a second request while pending is ignored.
 - **Fly starts mouse look in the same click** as the Fly toolbar button. Escape releases the mouse and stays in Fly; click the view or Fly to recapture. Drag-look remains when capture is unavailable or after a keyboard `2` entry, which cannot legally request pointer lock. Touch one-finger look is unchanged. Game one-click capture, Orbit, input ownership and prior-view restore are preserved. Inactive Game sessions no longer release a Fly pointer lock they did not own.
 
 ## 0.5.0
