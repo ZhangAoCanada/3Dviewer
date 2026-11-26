@@ -1,10 +1,12 @@
 import { expect, test } from './test';
+import { releaseFlyLook } from './flyLook';
 
 test('Fly leaves Space activation and menu arrows to focused controls', async ({ page }) => {
   await page.goto('/?sample=crate');
   await expect(page.locator('#file-name')).toHaveText('crate.glb');
   await page.click('#mode-fly');
   await expect(page.locator('#view')).toBeFocused();
+  await releaseFlyLook(page);
   await page.click('#help-btn');
   const close = page.locator('#help-dialog').getByRole('button', { name: 'Close', exact: true });
   await close.focus();

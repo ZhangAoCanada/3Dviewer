@@ -1,4 +1,5 @@
 import { expect, test } from './test';
+import { releaseFlyLook } from './flyLook';
 const api = 'https://api.github.com/repos/ZhangAoCanada/3Dviewer/releases/latest';
 for (const status of [200, 403, 404, 429]) {
   test(`optional lookup gracefully degrades for ${status === 200 ? 'missing tag' : status} without hiding scene errors`, async ({ page }) => {
@@ -12,6 +13,7 @@ for (const status of [200, 403, 404, 429]) {
     await expect(page.locator('#download-version')).toHaveText('');
     await expect(page.locator('#download-version')).toHaveAttribute('data-release-state', 'unavailable');
     await page.click('#mode-fly'); await expect(page.locator('#mode-fly')).toHaveAttribute('aria-pressed', 'true');
+    await releaseFlyLook(page);
     await page.click('#reset-btn'); await expect(page.locator('#loading')).toBeHidden();
     expect(pageErrors).toEqual([]);
     // Only Chromium's exact expected HTTP failure for this fixture is allowed.

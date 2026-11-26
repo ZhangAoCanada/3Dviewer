@@ -1,6 +1,7 @@
 import { expect, test } from './test';
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
+import { releaseFlyLook } from './flyLook';
 
 const sizes = [
   { name: 'short-phone', width: 360, height: 420 },
@@ -80,6 +81,7 @@ for (const size of sizes) {
     await expect(page.locator('#toolbar')).toBeVisible();
     await page.locator('#mode-fly').click();
     await expect(page.locator('#mode-fly')).toHaveAttribute('aria-pressed', 'true');
+    await releaseFlyLook(page);
     await page.locator('#mode-orbit').click();
     await expect(page.locator('#mode-orbit')).toHaveAttribute('aria-pressed', 'true');
     // The same native pointer/filechooser path can also adopt a normal local scene.

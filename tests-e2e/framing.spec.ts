@@ -1,6 +1,7 @@
 import { expect, test, type Page } from './test';
 import sharp from 'sharp';
 import path from 'node:path';
+import { releaseFlyLook } from './flyLook';
 
 async function sceneBounds(page: Page): Promise<{ left: number; top: number; right: number; bottom: number; width: number; height: number }> {
   const image = await page.locator('#view').screenshot();
@@ -50,6 +51,7 @@ test('portrait fit is complete, resize preserves a user view, and Reset fits the
   await page.setViewportSize({ width: 390, height: 844 }); await frames(page, 2);
   expect(await sceneBounds(page)).toEqual(moved);
   await page.setViewportSize({ width: 844, height: 390 });
+  await releaseFlyLook(page);
   await page.click('#reset-btn');
   await expect.poll(async () => fits(await sceneBounds(page))).toBe(true);
   const landscape = info.outputPath('landscape-reset.png');

@@ -425,3 +425,21 @@ it('advanced draft surface changes cannot mutate the explored live world before 
  game.configure({point:new THREE.Vector3(0,9,0),normal:new THREE.Vector3(0,0,1)});expect(live.config.point.toArray()).toEqual(point.toArray());expect(live.config.normal.toArray()).toEqual(normal.toArray());expect(host.camera.position.toArray()).toEqual(pose.toArray());
  game.setBindingCapture(true);game.invalidate();expect(game.capturingBinding).toBe(false);
 });
+
+describe('inactive game lock ownership', () => {
+  it('does not release a Fly pointer lock it did not acquire', () => {
+    nav.setMode('fly');
+    expect(game.state.kind).toBe('inactive');
+    const requested: string[] = [];
+    const original = canvas.requestPointerLock.bind(canvas);
+    canvas.requestPointerLock = () => { requested.push('fly'); return original(); };
+    expect(nav.requestLookLock()).toBe('requested');
+    expect(requested).toEqual(['fly']);
+    expect(lock).toBe(canvas);
+    expect(nav.isLookLocked()).toBe(true);
+    doc.dispatchEvent(new Event('pointerlockchange'));
+    expect(lock).toBe(canvas);
+    expect(nav.isLookLocked()).toBe(true);
+    expect(game.state.kind).toBe('inactive');
+  });
+});

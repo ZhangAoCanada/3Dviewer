@@ -211,6 +211,13 @@ export class ViewerApp {
       this.gameUI?.dispose();
       this.gameUI = new GameUI(host.game, () => host.navigation.mode);
       host.game.onError = (message) => this.toast(message, 'warn');
+      host.navigation.onLookLock = (reason) => {
+        if (reason === 'denied' || reason === 'unavailable') {
+          this.toast('Mouse capture unavailable. Drag to look, or click the view or Fly to try again.', 'info');
+        } else if (reason === 'released') {
+          this.toast('Mouse released. Click the view or Fly to look around again.', 'info');
+        }
+      };
       document.body.classList.remove('no-graphics');
       host.start((stats) => this.renderPerf(stats));
       this.renderPerf(host.stats());
@@ -331,7 +338,12 @@ export class ViewerApp {
     this.bindSheetSwipe();
     must('#mode-game').addEventListener('click', () => this.closeUpright());
     must('#mode-orbit').addEventListener('click', () => this.setMode('orbit'));
-    must('#mode-fly').addEventListener('click', () => this.setMode('fly'));
+    must('#mode-fly').addEventListener('click', () => {
+      this.setMode('fly');
+      // The click is the user gesture. Do not await anything before capture.
+      // The empty start overlay can still show Fly; do not lock the pointer behind it.
+      if (must('#empty').hidden) this.host?.requestLookLock();
+    });
     must('#focus-btn').addEventListener('click', () => {
       if (!this.needScene()) return;
       this.focusCenter();
@@ -475,6 +487,10 @@ export class ViewerApp {
         this.setMode('orbit');
       } else if (event.code === 'Digit2') {
         this.setMode('fly');
+        // Keyboard entry is not a pointer-lock gesture. Drag-look still works.
+        if (this.host && !this.host.navigation.isLookLocked()) {
+          this.toast('Click the view or Fly to look around with the mouse.', 'info');
+        }
       } else if (event.code === 'KeyH') {
         this.togglePanel();
       }
@@ -1000,6 +1016,8 @@ export class ViewerApp {
   }
 
   private onEscape(event: KeyboardEvent): void {
+    // Fly (and Game) may already have consumed Escape to release pointer lock.
+    if (event.defaultPrevented) return;
     if (document.querySelector('dialog[open]')) return;
     const openMenu = this.menus.find((entry) => !entry.menu.hidden);
     if (openMenu) {
@@ -1011,6 +1029,11 @@ export class ViewerApp {
     if (!must('#loading').hidden) {
       event.preventDefault();
       this.cancelLoad();
+      return;
+    }
+    if (this.host?.navigation.isLookLocked()) {
+      event.preventDefault();
+      this.host.navigation.releaseLookLock();
       return;
     }
     if (!must('#upright').hidden) {
